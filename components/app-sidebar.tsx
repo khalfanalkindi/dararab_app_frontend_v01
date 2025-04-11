@@ -33,6 +33,27 @@ const data = {
       isActive: true,
       items: [], // Empty items array means no submenu
     },
+    {
+      title: "Projects",
+      url: "/projects",
+      icon: SquareTerminal,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
+    {
+      title: "Projects Contracts",
+      url: "/projects-contracts",
+      icon: SquareTerminal,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
+    {
+      title: "Products",
+      url: "/products",
+      icon: SquareTerminal,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
     // {
     //   title: "Playground",
     //   url: "#",
@@ -143,6 +164,10 @@ const data = {
         {
           title: "User Permissions",
           url: "/admin/user-permissions",
+        },
+        {
+          title: "Common Definitions",
+          url: "/admin/common",
         },
       ],
     },
