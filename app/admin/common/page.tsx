@@ -31,6 +31,7 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
@@ -49,6 +50,10 @@ export default function ListManagementPage() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+  const [genreOptions, setGenreOptions] = useState<any[]>([])
+  const [statusOptions, setStatusOptions] = useState<any[]>([])
+  const [selectedGenre, setSelectedGenre] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<string | null>(null)
 
   // Show alert message
   const showAlert = (type, message) => {
@@ -61,6 +66,8 @@ export default function ListManagementPage() {
 
   useEffect(() => {
     fetchListTypes()
+    fetchGenreOptions()
+    fetchStatusOptions()
   }, [])
 
   useEffect(() => {
@@ -94,6 +101,30 @@ export default function ListManagementPage() {
     } catch {
       toast({ title: "Error", description: "Failed to load list items", variant: "destructive" })
       showAlert("error", "Failed to load list items. Please try again later.")
+    }
+  }
+
+  const fetchGenreOptions = async () => {
+    try {
+      const res = await fetch(`${API_URL}/common/list-items/genre/`, { headers })
+      if (!res.ok) throw new Error("Failed to fetch genre options")
+      const data = await res.json()
+      setGenreOptions(data)
+    } catch (error) {
+      console.error("Error fetching genre options:", error)
+      showAlert("error", "Failed to load genre options")
+    }
+  }
+
+  const fetchStatusOptions = async () => {
+    try {
+      const res = await fetch(`${API_URL}/common/list-items/product_status/`, { headers })
+      if (!res.ok) throw new Error("Failed to fetch status options")
+      const data = await res.json()
+      setStatusOptions(data)
+    } catch (error) {
+      console.error("Error fetching status options:", error)
+      showAlert("error", "Failed to load status options")
     }
   }
 
@@ -351,11 +382,11 @@ export default function ListManagementPage() {
                         listItems.map((item) => (
                           <div key={item.id} className="p-3 border rounded-md flex justify-between items-center">
                             <div>
-                              <div className="font-semibold">{item.display_name_en}</div>
-                              <div className="text-sm text-muted-foreground">{item.value}</div>
+                              <div className="font-semibold">{item.display_name_en || ''}</div>
+                              <div className="text-sm text-muted-foreground">{item.value || ''}</div>
                             </div>
                             <div className="flex gap-2">
-                              <Button size="icon" variant="ghost" onClick={() => setEditItem(item)}>
+                              <Button size="icon" variant="ghost" onClick={() => setEditItem({...item})}>
                                 <Edit className="w-4 h-4" />
                               </Button>
                               <Button
@@ -406,6 +437,80 @@ export default function ListManagementPage() {
                   ) : (
                     <div className="py-8 text-center">Select a List Type to manage its items.</div>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Genre and Status Options */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Genre and Status Options</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <h3 className="font-semibold mb-2">Genre Options</h3>
+                    {genreOptions.length === 0 ? (
+                      <div className="py-4 text-center text-muted-foreground">No genre options available</div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        {genreOptions.map((genre) => (
+                          <div key={genre.id} className="p-2 border rounded-md">
+                            <div className="font-medium">{genre.display_name_en}</div>
+                            <div className="text-sm text-muted-foreground">{genre.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <Separator />
+                  <div>
+                    <h3 className="font-semibold mb-2">Status Options</h3>
+                    {statusOptions.length === 0 ? (
+                      <div className="py-4 text-center text-muted-foreground">No status options available</div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        {statusOptions.map((status) => (
+                          <div key={status.id} className="p-2 border rounded-md">
+                            <div className="font-medium">{status.display_name_en}</div>
+                            <div className="text-sm text-muted-foreground">{status.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Filter</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Select value={selectedGenre || ""} onValueChange={(value) => setSelectedGenre(value || null)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Filter by genre" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Genres</SelectItem>
+                      {genreOptions.map((genre) => (
+                        <SelectItem key={genre.id} value={genre.id.toString()}>
+                          {genre.display_name_en}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={statusFilter || "all"} onValueChange={(value) => setStatusFilter(value || null)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Filter by status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Statuses</SelectItem>
+                      {statusOptions.map((status) => (
+                        <SelectItem key={status.id} value={status.id.toString()}>
+                          {status.display_name_en}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </CardContent>
               </Card>
             </div>
@@ -540,7 +645,9 @@ export default function ListManagementPage() {
               {deleteItemId && (
                 <>
                   You are about to delete{" "}
-                  <strong>{listItems.find((i) => i.id === deleteItemId)?.display_name_en}</strong>. This will
+                  <strong>
+                    {listItems.find((i) => i.id === deleteItemId)?.display_name_en || 'this item'}
+                  </strong>. This will
                   permanently delete this list item. This action cannot be undone.
                 </>
               )}

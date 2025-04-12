@@ -3,11 +3,15 @@ import "./globals.css"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthCheck } from "@/components/auth-check"
+import { headers } from 'next/headers'
 
-export const metadata = {
-  title: "Admin Dashboard",
-  description: "Admin dashboard with language switching and user management",
+// Add headers configuration
+export async function generateMetadata() {
+  return {
+    title: "Admin Dashboard",
+    description: "Admin dashboard with language switching and user management",
     generator: 'v0.dev'
+  }
 }
 
 export default function RootLayout({
