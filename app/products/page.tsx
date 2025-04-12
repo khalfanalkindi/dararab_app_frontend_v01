@@ -313,14 +313,20 @@ export default function BookManagement() {
 
         // Enhance inventory with warehouse names for easier display
         const enhancedInventory = inventoryData.map((item: Inventory) => {
-          const warehouse = warehousesData.find((w: Warehouse) => w.id === item.warehouse)
-          return {
-            ...item,
-            warehouse_name: warehouse ? warehouse.name_en : "Unknown",
-          }
-        })
+        const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
+        const productId = typeof item.product === 'object' ? item.product.id : item.product;
 
-        setInventory(enhancedInventory)
+        const warehouse = warehousesData.find((w: Warehouse) => w.id === warehouseId);
+
+        return {
+          ...item,
+          product: productId,
+          warehouse: warehouseId,
+          warehouse_name: warehouse ? warehouse.name_en : "Unknown",
+        };
+      });
+
+      setInventory(enhancedInventory);
       } catch (error) {
         console.error("Error loading data:", error)
         toast({
@@ -360,16 +366,17 @@ export default function BookManagement() {
     if (!response.ok) throw new Error("Failed to fetch book inventory");
     const inventoryData = await response.json();
 
-    const enhancedInventory = inventoryData.map((item: Inventory) => {
-      const warehouse = currentWarehouses.find((w) => w.id === (typeof item.warehouse === "object" ? item.warehouse.id : item.warehouse));
-      return {
-        ...item,
-        warehouse_name: warehouse ? warehouse.name_en : "Unknown",
-        warehouse: typeof item.warehouse === "object" ? item.warehouse.id : item.warehouse,
-      };
-    });
+const enhancedInventory = inventoryData.map((item: Inventory) => {
+  const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
+  const warehouse = warehouses.find((w) => w.id === warehouseId);
 
-    setSelectedBookInventory(enhancedInventory);
+  return {
+    ...item,
+    warehouse: warehouseId,
+    warehouse_name: warehouse ? warehouse.name_en : "Unknown",
+  };
+});
+setSelectedBookInventory(enhancedInventory);
   } catch (error) {
     console.error("Error fetching book inventory:", error);
     toast({
@@ -773,16 +780,35 @@ const openEditBook = async (book: BookInterface) => {
         throw new Error("Source and destination warehouses cannot be the same")
       }
 
-      // Check if there's enough inventory in the source warehouse
-      const sourceInventory = inventory.find(
-        (i) => i.product === transfer.product && i.warehouse === transfer.from_warehouse,
-      )
+      // Check if there's enough inventory in the source warehouse using the correct API endpoint
+      console.log('Checking inventory for product:', transfer.product, 'in warehouse:', transfer.from_warehouse);
+      const inventoryCheckResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${transfer.product}`, {
+        headers,
+      });
+
+      if (!inventoryCheckResponse.ok) {
+        throw new Error("Failed to check inventory");
+      }
+
+      const inventoryData = await inventoryCheckResponse.json();
+      console.log('Inventory data:', inventoryData);
+
+      // Find the inventory item for the source warehouse
+      const sourceInventory = inventoryData.find(
+        (item: any) => {
+          const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
+          return warehouseId === transfer.from_warehouse;
+        }
+      );
+
+      console.log('Source inventory:', sourceInventory);
 
       if (!sourceInventory || sourceInventory.quantity < (transfer.quantity || 0)) {
         throw new Error("Not enough inventory in the source warehouse")
       }
 
-      const response = await fetch(`${API_URL}/transfers/`, {
+      // Create the transfer
+      const response = await fetch(`${API_URL}/inventory/transfers/`, {
         method: "POST",
         headers,
         body: JSON.stringify(transfer),
@@ -792,8 +818,131 @@ const openEditBook = async (book: BookInterface) => {
         throw new Error("Failed to create transfer")
       }
 
+      const transferResult = await response.json();
+      console.log('Transfer result:', transferResult);
+
+      // After successful transfer, manually update the inventory
+      // First, update the source warehouse (decrease quantity)
+      const sourceWarehouseId = typeof sourceInventory.warehouse === 'object' ? sourceInventory.warehouse.id : sourceInventory.warehouse;
+      const updatedSourceQuantity = sourceInventory.quantity - (transfer.quantity || 0);
+      
+      console.log('Updating source warehouse:', sourceWarehouseId, 'new quantity:', updatedSourceQuantity);
+      
+      // Get the product ID correctly
+      const productId = typeof sourceInventory.product === 'object' ? sourceInventory.product.id : sourceInventory.product;
+      
+      // Log the data being sent to the API
+      const updateSourceData = {
+        product: productId,
+        warehouse: sourceWarehouseId,
+        quantity: updatedSourceQuantity,
+      };
+      console.log('Sending update data to source warehouse:', updateSourceData);
+      
+      // Use the standard inventory update endpoint
+      const updateSourceResponse = await fetch(`${API_URL}/inventory/inventory/product/${productId}/update/`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+        },
+        body: JSON.stringify({
+          product_id: productId,
+          warehouse_id: sourceWarehouseId,
+          quantity: updatedSourceQuantity,
+        }),
+      });
+
+      if (!updateSourceResponse.ok) {
+        const errorData = await updateSourceResponse.json();
+        console.error('Failed to update source warehouse inventory:', errorData);
+      } else {
+        console.log('Successfully updated source warehouse inventory');
+      }
+
+      // Find if destination warehouse already has inventory for this product
+      const destInventory = inventoryData.find(
+        (item: any) => {
+          const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
+          return warehouseId === transfer.to_warehouse;
+        }
+      );
+
+      if (destInventory) {
+        // Update existing destination warehouse inventory
+        const destWarehouseId = typeof destInventory.warehouse === 'object' ? destInventory.warehouse.id : destInventory.warehouse;
+        const updatedDestQuantity = destInventory.quantity + (transfer.quantity || 0);
+        
+        console.log('Updating destination warehouse:', destWarehouseId, 'new quantity:', updatedDestQuantity);
+        
+        // Get the product ID correctly
+        const destProductId = typeof destInventory.product === 'object' ? destInventory.product.id : destInventory.product;
+        
+        // Log the data being sent to the API
+        const updateDestData = {
+          product: destProductId,
+          warehouse: destWarehouseId,
+          quantity: updatedDestQuantity,
+        };
+        console.log('Sending update data to destination warehouse:', updateDestData);
+        
+        // Use the standard inventory update endpoint
+        const updateDestResponse = await fetch(`${API_URL}/inventory/inventory/product/${destProductId}/update/`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+          },
+          body: JSON.stringify({
+            product_id: destProductId,
+            warehouse_id: destWarehouseId,
+            quantity: updatedDestQuantity,
+          }),
+        });
+        
+
+        if (!updateDestResponse.ok) {
+          const errorData = await updateDestResponse.json();
+          const errorText = await updateDestResponse.text();
+          console.error('❌ Raw error from backend:', errorText);
+          //console.error('Failed to update destination warehouse inventory:', errorData);
+        } else {
+          console.log('Successfully updated destination warehouse inventory');
+        }
+      } else {
+        // Create new inventory entry for destination warehouse
+        console.log('Creating new inventory for destination warehouse:', transfer.to_warehouse);
+        
+        // Get the product ID correctly
+        const productId = typeof sourceInventory.product === 'object' ? sourceInventory.product.id : sourceInventory.product;
+        
+        // Log the data being sent to the API
+        const createDestData = {
+          product: productId,
+          warehouse: transfer.to_warehouse,
+          quantity: transfer.quantity,
+        };
+        console.log('Sending create data to destination warehouse:', createDestData);
+        
+        const createDestResponse = await fetch(`${API_URL}/inventory/inventory/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+          },
+          body: JSON.stringify(createDestData),
+        });
+
+        if (!createDestResponse.ok) {
+          const errorData = await createDestResponse.json();
+          console.error('Failed to create destination warehouse inventory:', errorData);
+        } else {
+          console.log('Successfully created destination warehouse inventory');
+        }
+      }
+
       // Refresh inventory data after transfer
-      const inventoryResponse = await fetch(`${API_URL}/inventory/`, {
+      const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${transfer.product}`, {
         headers,
       })
 
@@ -801,13 +950,16 @@ const openEditBook = async (book: BookInterface) => {
         throw new Error("Failed to refresh inventory")
       }
 
-      const inventoryData = await inventoryResponse.json()
+      const updatedInventoryData = await inventoryResponse.json()
+      console.log('Updated inventory data:', updatedInventoryData);
 
       // Enhance inventory with warehouse names
-      const enhancedInventory = inventoryData.map((item: Inventory) => {
-        const warehouse = warehouses.find((w) => w.id === item.warehouse)
+      const enhancedInventory = updatedInventoryData.map((item: any) => {
+        const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
+        const warehouse = warehouses.find((w) => w.id === warehouseId);
         return {
           ...item,
+          warehouse: warehouseId,
           warehouse_name: warehouse ? warehouse.name_en : "Unknown",
         }
       })
@@ -816,8 +968,7 @@ const openEditBook = async (book: BookInterface) => {
 
       // If the selected book is open, update its inventory
       if (selectedBook && selectedBook.id === transfer.product) {
-        const bookInventory = enhancedInventory.filter((i: Inventory) => i.product === selectedBook.id)
-        setSelectedBookInventory(bookInventory)
+        setSelectedBookInventory(enhancedInventory)
       }
 
       setIsTransferOpen(false)
