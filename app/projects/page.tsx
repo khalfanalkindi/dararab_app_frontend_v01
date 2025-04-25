@@ -169,9 +169,13 @@ export default function ProjectManagement() {
     try {
       const res = await fetch(`${API_URL}/inventory/projects/`, { headers })
       const data = await res.json()
-      setProjects(data)
+      // Ensure data is an array
+      const projectsData = Array.isArray(data) ? data : data.results || []
+      setProjects(projectsData)
     } catch (error) {
       console.error("Error fetching projects:", error)
+      // Set empty array on error
+      setProjects([])
       throw error
     }
   }
@@ -180,9 +184,13 @@ export default function ProjectManagement() {
     try {
       const res = await fetch(`${API_URL}/common/list-items/progress_status/`, { headers })
       const data = await res.json()
-      setProgressOptions(data)
+      // Ensure data is an array
+      const options = Array.isArray(data) ? data : data.results || []
+      setProgressOptions(options)
     } catch (error) {
       console.error("Error fetching progress options:", error)
+      // Set empty array on error
+      setProgressOptions([])
       throw error
     }
   }
@@ -191,9 +199,14 @@ export default function ProjectManagement() {
     try {
       const res = await fetch(`${API_URL}/common/list-items/projects_status/`, { headers })
       const data = await res.json()
-      setStatusOptions(Array.isArray(data) ? data : [])
+      // Ensure data is an array
+      const options = Array.isArray(data) ? data : data.results || []
+      setStatusOptions(options)
+      console.log('Status options:', options) // Debug log
     } catch (error) {
       console.error("Error fetching status options:", error)
+      // Set empty array on error
+      setStatusOptions([])
       throw error
     }
   }
@@ -202,9 +215,14 @@ export default function ProjectManagement() {
     try {
       const res = await fetch(`${API_URL}/common/list-items/projects_type/`, { headers })
       const data = await res.json()
-      setTypeOptions(Array.isArray(data) ? data : [])
+      // Ensure data is an array
+      const options = Array.isArray(data) ? data : data.results || []
+      setTypeOptions(options)
+      console.log('Type options:', options) // Debug log
     } catch (error) {
       console.error("Error fetching type options:", error)
+      // Set empty array on error
+      setTypeOptions([])
       throw error
     }
   }

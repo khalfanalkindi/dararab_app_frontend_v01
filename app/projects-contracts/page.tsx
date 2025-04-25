@@ -58,7 +58,9 @@ interface ContractType {
 interface ContractStatus {
   id: number
   display_name_en: string
-  code: string
+  value: string
+  display_name_ar?: string
+  is_active?: boolean
 }
 
 interface ApiUser {
@@ -185,8 +187,20 @@ export default function ProjectContract() {
         if (!res.ok) throw new Error("Failed to fetch projects")
 
         const data = await res.json()
+        // Handle different possible response formats
+        let projectsData: Project[] = []
+        if (Array.isArray(data)) {
+          projectsData = data
+        } else if (data && data.results && Array.isArray(data.results)) {
+          projectsData = data.results
+        } else if (data && data.projects && Array.isArray(data.projects)) {
+          projectsData = data.projects
+        } else {
+          console.error("Unexpected projects data format:", data)
+        }
+
         // Filter to only show approved projects
-        const approvedProjects = data.filter((project: Project) => project.approval_status === true)
+        const approvedProjects = projectsData.filter((project: Project) => project.approval_status === true)
         setProjects(approvedProjects)
       } catch (error) {
         console.error("Error fetching projects:", error)
@@ -206,9 +220,23 @@ export default function ProjectContract() {
         const res = await fetch(`${API_URL}/common/list-items/contract_type/`, { headers })
         if (!res.ok) throw new Error("Failed to fetch contract types")
         const data = await res.json()
-        setContractTypes(data)
+        
+        // Handle different possible response formats
+        let typesData: ContractType[] = []
+        if (Array.isArray(data)) {
+          typesData = data
+        } else if (data && data.results && Array.isArray(data.results)) {
+          typesData = data.results
+        } else if (data && data.types && Array.isArray(data.types)) {
+          typesData = data.types
+        } else {
+          console.error("Unexpected contract types data format:", data)
+        }
+        
+        setContractTypes(typesData)
       } catch (error) {
         console.error("Error fetching contract types:", error)
+        setContractTypes([])
       }
     }
 
@@ -217,9 +245,23 @@ export default function ProjectContract() {
         const res = await fetch(`${API_URL}/common/list-items/contract_status/`, { headers })
         if (!res.ok) throw new Error("Failed to fetch contract statuses")
         const data = await res.json()
-        setContractStatuses(data)
+        
+        // Handle different possible response formats
+        let statusesData: ContractStatus[] = []
+        if (Array.isArray(data)) {
+          statusesData = data
+        } else if (data && data.results && Array.isArray(data.results)) {
+          statusesData = data.results
+        } else if (data && data.statuses && Array.isArray(data.statuses)) {
+          statusesData = data.statuses
+        } else {
+          console.error("Unexpected contract statuses data format:", data)
+        }
+        
+        setContractStatuses(statusesData)
       } catch (error) {
         console.error("Error fetching contract statuses:", error)
+        setContractStatuses([])
       }
     }
 
@@ -255,8 +297,13 @@ export default function ProjectContract() {
         const data = await res.json()
         console.log("Signatories data:", data)
         
+        // Handle different possible response formats
         if (Array.isArray(data)) {
           setSignatories(data)
+        } else if (data && data.results && Array.isArray(data.results)) {
+          setSignatories(data.results)
+        } else if (data && data.users && Array.isArray(data.users)) {
+          setSignatories(data.users)
         } else {
           console.error("Unexpected data format:", data)
           setSignatories([])
@@ -343,8 +390,21 @@ export default function ProjectContract() {
       if (!res.ok) throw new Error("Failed to fetch contracts")
       const data = await res.json()
       console.log("Fetched contracts:", data)
+      
+      // Handle different possible response formats
+      let contractsData: Contract[] = []
+      if (Array.isArray(data)) {
+        contractsData = data
+      } else if (data && data.results && Array.isArray(data.results)) {
+        contractsData = data.results
+      } else if (data && data.contracts && Array.isArray(data.contracts)) {
+        contractsData = data.contracts
+      } else {
+        console.error("Unexpected contracts data format:", data)
+      }
+
       // Filter contracts to ensure they belong to the selected project
-      const projectContracts = data.filter((contract: Contract) => contract.project.id === projectId)
+      const projectContracts = contractsData.filter((contract: Contract) => contract.project.id === projectId)
       setContracts(projectContracts)
     } catch (error) {
       console.error("Error fetching contracts:", error)
@@ -386,6 +446,7 @@ export default function ProjectContract() {
 
   const getTypeIcon = (typeId: number | undefined) => {
     if (!typeId) return <FileText className="h-4 w-4" />
+    if (!contractTypes || !Array.isArray(contractTypes)) return <FileText className="h-4 w-4" />
 
     const type = contractTypes.find((t) => t.id === typeId)
     if (!type) return <FileText className="h-4 w-4" />
@@ -402,6 +463,7 @@ export default function ProjectContract() {
 
   const getTypeColor = (typeId: number | undefined) => {
     if (!typeId) return "bg-gray-100 text-gray-800 border-gray-300"
+    if (!contractTypes || !Array.isArray(contractTypes)) return "bg-gray-100 text-gray-800 border-gray-300"
 
     const type = contractTypes.find((t) => t.id === typeId)
     if (!type) return "bg-gray-100 text-gray-800 border-gray-300"
@@ -441,8 +503,9 @@ export default function ProjectContract() {
 
   const getStatusCode = (statusId: number | null) => {
     if (!statusId) return ""
-    const status = contractStatuses.find((s) => s.id === statusId)
-    return status ? status.code : ""
+    if (!contractStatuses || !Array.isArray(contractStatuses)) return ""
+    const status = contractStatuses.find((s) => s && s.id === statusId)
+    return status?.value || ""
   }
 
   const getTypeName = (typeId: number | null) => {
@@ -492,52 +555,127 @@ export default function ProjectContract() {
 
   // Add function to get contracted party options based on contract type
   const getContractedPartyOptions = (contractedPartyType?: string | null) => {
+    console.log('getContractedPartyOptions called with:', {
+      contractedPartyType,
+      selectedContractType,
+      authors: authors?.length,
+      translators: translators?.length,
+      rightsOwners: rightsOwners?.length,
+      reviewers: reviewers?.length
+    })
+
+    // Helper function to extract items from paginated response
+    const getItems = (data: any) => {
+      if (!data) return []
+      if (Array.isArray(data)) return data
+      if (data.results && Array.isArray(data.results)) return data.results
+      return []
+    }
+
     // If a specific type is provided, use that
     if (contractedPartyType) {
-      switch (contractedPartyType) {
+      console.log('Using provided contracted party type:', contractedPartyType)
+      switch (contractedPartyType.toLowerCase()) {
         case 'author':
-          return authors
+          const authorItems = getItems(authors)
+          console.log('Returning authors:', authorItems)
+          return authorItems
         case 'translator':
-          return translators
+          const translatorItems = getItems(translators)
+          console.log('Returning translators:', translatorItems)
+          return translatorItems
         case 'rightsowner':
-          return rightsOwners
+          const rightsOwnerItems = getItems(rightsOwners)
+          console.log('Returning rights owners:', rightsOwnerItems)
+          return rightsOwnerItems
         case 'reviewer':
-          return reviewers
+          const reviewerItems = getItems(reviewers)
+          console.log('Returning reviewers:', reviewerItems)
+          return reviewerItems
         default:
+          console.log('Unknown contracted party type:', contractedPartyType)
           return []
       }
     }
     
     // Otherwise use the selected contract type
-    if (!selectedContractType) return []
+    if (!selectedContractType) {
+      console.log('No selected contract type')
+      return []
+    }
 
     const contractType = contractTypes.find((t) => t.id === selectedContractType)
-    if (!contractType) return []
+    if (!contractType) {
+      console.log('No contract type found for ID:', selectedContractType)
+      return []
+    }
 
+    console.log('Using contract type:', contractType)
     const typeName = contractType.display_name_en.toLowerCase()
+    console.log('Contract type name:', typeName)
 
-    if (typeName.includes("author")) return authors
-    if (typeName.includes("translator")) return translators
-    if (typeName.includes("rights")) return rightsOwners
-    if (typeName.includes("reviewer")) return reviewers
+    if (typeName.includes("author")) {
+      const authorItems = getItems(authors)
+      console.log('Returning authors based on contract type:', authorItems)
+      return authorItems
+    }
+    if (typeName.includes("translator")) {
+      const translatorItems = getItems(translators)
+      console.log('Returning translators based on contract type:', translatorItems)
+      return translatorItems
+    }
+    if (typeName.includes("rights")) {
+      const rightsOwnerItems = getItems(rightsOwners)
+      console.log('Returning rights owners based on contract type:', rightsOwnerItems)
+      return rightsOwnerItems
+    }
+    if (typeName.includes("reviewer")) {
+      const reviewerItems = getItems(reviewers)
+      console.log('Returning reviewers based on contract type:', reviewerItems)
+      return reviewerItems
+    }
 
+    console.log('No matching contract type found')
     return []
   }
 
   // Helper function to determine contracted party type from contract type
   const getContractedPartyTypeFromContractType = (contractTypeId: number | null) => {
-    if (!contractTypeId) return null
+    console.log('getContractedPartyTypeFromContractType called with:', contractTypeId)
+    
+    if (!contractTypeId) {
+      console.log('No contract type ID provided')
+      return null
+    }
     
     const contractType = contractTypes.find(type => type.id === contractTypeId)
-    if (!contractType) return null
+    if (!contractType) {
+      console.log('No contract type found for ID:', contractTypeId)
+      return null
+    }
     
+    console.log('Found contract type:', contractType)
     const typeName = contractType.display_name_en.toLowerCase()
+    console.log('Contract type name:', typeName)
     
-    if (typeName.includes('author')) return 'author'
-    if (typeName.includes('translator')) return 'translator'
-    if (typeName.includes('rights')) return 'rightsowner'
-    if (typeName.includes('reviewer')) return 'reviewer'
+    if (typeName.includes('author')) {
+      console.log('Returning author type')
+      return 'author'
+    }
+    if (typeName.includes('translator')) {
+      console.log('Returning translator type')
+      return 'translator'
+    }
+    if (typeName.includes('rights')) {
+      console.log('Returning rightsowner type')
+      return 'rightsowner'
+    }
+    if (typeName.includes('reviewer')) {
+      console.log('Returning reviewer type')
+      return 'reviewer'
+    }
     
+    console.log('No matching type found')
     return null
   }
 

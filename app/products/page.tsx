@@ -73,47 +73,70 @@ import React from 'react'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
 // Book interface
+interface PrintRun {
+  id?: number;
+  product: number;
+  edition_number: number;
+  price: number;
+  print_cost: number;
+  status: Status | null;
+  notes: string;
+  published_at?: string;
+}
+
 interface BookInterface {
-  id: number
-  project?: number | null
-  isbn: string
-  title_ar: string
-  title_en: string
-  cover_design: string | null
-  cover_image: string | null
-  print_cost: number
-  published_at: string
-  price: number
-  status: { id: number; value: string; display_name_en: string } | number | null
-  genre: { id: number; value: string; display_name_en: string } | number | null
-  is_direct_product: boolean
-  created_at?: string
-  updated_at?: string
+  id?: number;
+  isbn: string;
+  title_en: string;
+  title_ar: string;
+  genre: Genre | null;
+  status: Status | null;
+  cover_design: string | null;
+  cover_image?: string | null;
+  author: Author | null;
+  translator: Translator | null;
+  rights_owner: RightsOwner | null;
+  reviewer: Reviewer | null;
+  is_direct_product: boolean;
+  print_runs: PrintRun[];
+  price?: number;
+  print_cost?: number;
+  editions?: {
+    published_at: string;
+  }[];
 }
 
 // Genre interface
 interface Genre {
-  id: number
-  display_name_en: string
-  description?: string
+  id: number;
+  value: string;
+  display_name_en: string;
+}
+
+// Status interface
+interface Status {
+  id: number;
+  value: string;
+  display_name_en: string;
 }
 
 // Warehouse interface
 interface Warehouse {
-  id: number
-  name_en: string
-  name_ar: string
-  type: number | null
-  location: string
+  id: number;
+  name_en: string;
+  name_ar: string;
+  type: number | null;
+  location: string;
 }
 
 // Inventory interface
 interface Inventory {
-  id: number
-  product: number
-  warehouse: number
-  quantity: number
-  warehouse_name?: string // For UI display
+  id?: number;  // Make id optional since new inventory items won't have an id
+  product: number;
+  warehouse: number;
+  quantity: number;
+  notes: string;
+  warehouse_name?: string; // For UI display
 }
 
 // Transfer interface
@@ -139,10 +162,37 @@ interface InventoryItem {
   quantity: number;
 }
 
+// Add these interfaces at the top with other interfaces
+interface Author {
+  id: number;
+  name: string;
+}
+
+interface Translator {
+  id: number;
+  name: string;
+}
+
+interface RightsOwner {
+  id: number;
+  name: string;
+}
+
+interface Reviewer {
+  id: number;
+  name: string;
+}
+
+// Add this interface near the other interfaces
+interface NewInventory {
+  warehouse: string;
+  quantity: number;
+}
+
 export default function BookManagement() {
   // State for books and filters
-  const [books, setBooks] = useState<BookInterface[]>([])
-  const [filteredBooks, setFilteredBooks] = useState<BookInterface[]>([])
+  const [books, setBooks] = useState<BookInterface[]>([]);
+  const [filteredBooks, setFilteredBooks] = useState<BookInterface[]>([]);
   const [genres, setGenres] = useState<Genre[]>([])
   const [statusOptions, setStatusOptions] = useState<StatusObject[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -163,6 +213,8 @@ export default function BookManagement() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
+  const [printRunStatusOptions, setPrintRunStatusOptions] = useState<StatusObject[]>([]);
+  const [activeTab, setActiveTab] = useState("basic");
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -172,17 +224,20 @@ export default function BookManagement() {
   })
 
   // New book state with default values
-  const [newBook, setNewBook] = useState<Partial<BookInterface>>({
+  const [newBook, setNewBook] = useState<BookInterface>({
     isbn: "",
-    title_ar: "",
     title_en: "",
-    print_cost: 0,
-    published_at: format(new Date(), "yyyy-MM-dd"),
-    price: 0,
-    status: null,
+    title_ar: "",
     genre: null,
+    status: null,
+    cover_design: null,
     is_direct_product: false,
-  })
+    author: null,
+    translator: null,
+    rights_owner: null,
+    reviewer: null,
+    print_runs: []
+  });
 
   // Transfer state
   const [transfer, setTransfer] = useState<Partial<Transfer>>({
@@ -196,6 +251,18 @@ export default function BookManagement() {
 
   // New book inventory state
   const [newBookInventory, setNewBookInventory] = useState<InventoryItem[]>([])
+
+  // Add these state variables in the BookManagement component
+  const [authors, setAuthors] = useState<Author[]>([]);
+  const [translators, setTranslators] = useState<Translator[]>([]);
+  const [rightsOwners, setRightsOwners] = useState<RightsOwner[]>([]);
+  const [reviewers, setReviewers] = useState<Reviewer[]>([]);
+
+  // Add this state declaration with the other useState calls
+  const [newInventory, setNewInventory] = useState<NewInventory>({
+    warehouse: "",
+    quantity: 0,
+  });
 
   // Show alert message
   const showAlert = (type: "success" | "error" | "warning", message: string) => {
@@ -213,12 +280,17 @@ export default function BookManagement() {
   }
 
   // Filter books based on search query, genre, and status
-  useEffect(() => {
-    const filtered = books.filter((book) => {
-      const matchesSearch = searchQuery === '' || 
-        book.title_en.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        book.title_ar.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        book.isbn.toLowerCase().includes(searchQuery.toLowerCase());
+
+    useEffect(() => {
+      const filtered = books.filter((book) => {
+         const q = searchQuery.toLowerCase();
+          const matchesSearch =
+            q === "" ||
+            book.isbn.toLowerCase().includes(q) ||
+            book.title_en.toLowerCase().includes(q) ||
+           book.title_ar.toLowerCase().includes(q) ||
+            book.author?.name.toLowerCase().includes(q) ||
+     book.translator?.name.toLowerCase().includes(q);
 
       const bookGenre = typeof book.genre === 'object' ? book.genre?.id : book.genre;
       const bookStatus = typeof book.status === 'object' ? book.status?.id : book.status;
@@ -243,195 +315,245 @@ export default function BookManagement() {
   }, [books, searchQuery, selectedGenre, selectedStatus]);
 
   // Get status name by ID
-  const getStatusName = (status: any) => {
-    if (!status) return "N/A"
-    const statusId = typeof status === 'object' ? status.id : status
-    const statusObj = statusOptions.find((s) => s.id === statusId)
-    return statusObj ? statusObj.display_name_en : "N/A"
-  }
+  const getStatusName = (status: Status | number | null) => {
+    if (!status) return 'Unknown';
+    const statusId = typeof status === 'object' ? status.id : status;
+    const statusObj = statusOptions.find(s => s.id === statusId);
+    return statusObj?.display_name_en || 'Unknown';
+  };
 
   // Get genre name by ID
-  const getGenreName = (genre: any) => {
-    if (!genre) return "N/A"
-    const genreId = typeof genre === 'object' ? genre.id : genre
-    const genreObj = genres.find((g) => g.id === genreId)
-    return genreObj ? genreObj.display_name_en : "N/A"
-  }
+  const getGenreName = (genre: Genre | number | null) => {
+    if (!genre) return 'Unknown';
+    const genreId = typeof genre === 'object' ? genre.id : genre;
+    const genreObj = genres.find(g => g.id === genreId);
+    return genreObj?.display_name_en || 'Unknown';
+  };
 
   // Load data on component mount
   useEffect(() => {
     const loadData = async () => {
-      setIsLoading(true)
       try {
-        // Fetch books
-        const booksResponse = await fetch(`${API_URL}/inventory/products/`, {
-          headers,
-        })
-        if (!booksResponse.ok) throw new Error("Failed to fetch books")
-        const booksData = await booksResponse.json()
-        console.log('Books data structure:', booksData.map((book: BookInterface) => ({
-          id: book.id,
-          isbn: book.isbn,
-          genre: book.genre,
-          status: book.status
-        })))
-        setBooks(booksData)
-        setFilteredBooks(booksData)
+        setIsLoading(true);
+        const [
+          booksRes,
+          genresRes,
+          statusRes,
+          warehousesRes,
+          authorsRes,
+          translatorsRes,
+          rightsOwnersRes,
+          reviewersRes
+        ] = await Promise.all([
+          fetch(`${API_URL}/inventory/products/`, { headers }),
+          fetch(`${API_URL}/common/list-items/genre/`, { headers }),
+          fetch(`${API_URL}/common/list-items/status/`, { headers }),
+          fetch(`${API_URL}/inventory/warehouses/`, { headers }),
+          fetch(`${API_URL}/inventory/authors/`, { headers }),
+          fetch(`${API_URL}/inventory/translators/`, { headers }),
+          fetch(`${API_URL}/inventory/rights-owners/`, { headers }),
+          fetch(`${API_URL}/inventory/reviewers/`, { headers })
+        ]);
 
-        // Fetch genres (list items)
-        const genresResponse = await fetch(`${API_URL}/common/list-items/genre/`, {
-          headers,
-        })
-        if (!genresResponse.ok) throw new Error("Failed to fetch genres")
-        const genresData = await genresResponse.json()
-        console.log('Genres data structure:', genresData)
-        setGenres(genresData)
+        if (!booksRes.ok) throw new Error("Failed to fetch books");
+        if (!genresRes.ok) throw new Error("Failed to fetch genres");
+        if (!statusRes.ok) throw new Error("Failed to fetch status options");
+        if (!warehousesRes.ok) throw new Error("Failed to fetch warehouses");
+        if (!authorsRes.ok) throw new Error("Failed to fetch authors");
+        if (!translatorsRes.ok) throw new Error("Failed to fetch translators");
+        if (!rightsOwnersRes.ok) throw new Error("Failed to fetch rights owners");
+        if (!reviewersRes.ok) throw new Error("Failed to fetch reviewers");
 
-        // Fetch status options
-        const statusResponse = await fetch(`${API_URL}/common/list-items/product_status/`, {
-          headers,
-        })
-        if (!statusResponse.ok) throw new Error("Failed to fetch status options")
-        const statusData = await statusResponse.json()
-        console.log('Status data structure:', statusData)
-        setStatusOptions(statusData)
+        const booksData = await booksRes.json();
+        const genresData = await genresRes.json();
+        const statusData = await statusRes.json();
+        const warehousesData = await warehousesRes.json();
+        const authorsData = await authorsRes.json();
+        const translatorsData = await translatorsRes.json();
+        const rightsOwnersData = await rightsOwnersRes.json();
+        const reviewersData = await reviewersRes.json();
 
-        // Fetch warehouses
-        const warehousesResponse = await fetch(`${API_URL}/inventory/warehouses/`, {
-          headers,
-        })
-        if (!warehousesResponse.ok) throw new Error("Failed to fetch warehouses")
-        const warehousesData = await warehousesResponse.json()
-        setWarehouses(warehousesData)
+        setBooks(Array.isArray(booksData) ? booksData : booksData.results ?? []);
+        setGenres(Array.isArray(genresData) ? genresData : genresData.results ?? []);
+        setStatusOptions(Array.isArray(statusData) ? statusData : statusData.results ?? []);
+        setWarehouses(Array.isArray(warehousesData) ? warehousesData : warehousesData.results ?? []);
+        setAuthors(Array.isArray(authorsData) ? authorsData : authorsData.results ?? []);
+        setTranslators(Array.isArray(translatorsData) ? translatorsData : translatorsData.results ?? []);
+        setRightsOwners(Array.isArray(rightsOwnersData) ? rightsOwnersData : rightsOwnersData.results ?? []);
+        setReviewers(Array.isArray(reviewersData) ? reviewersData : reviewersData.results ?? []);
 
-        // Fetch inventory
-        const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/`, {
-          headers,
-        })
-        if (!inventoryResponse.ok) throw new Error("Failed to fetch inventory")
-        const inventoryData = await inventoryResponse.json()
-
-        // Enhance inventory with warehouse names for easier display
-        const enhancedInventory = inventoryData.map((item: Inventory) => {
-        const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
-        const productId = typeof item.product === 'object' ? item.product.id : item.product;
-
-        const warehouse = warehousesData.find((w: Warehouse) => w.id === warehouseId);
-
-        return {
-          ...item,
-          product: productId,
-          warehouse: warehouseId,
-          warehouse_name: warehouse ? warehouse.name_en : "Unknown",
-        };
-      });
-
-      setInventory(enhancedInventory);
+        setFilteredBooks(Array.isArray(booksData) ? booksData : booksData.results ?? []);
+        setIsLoading(false);
       } catch (error) {
-        console.error("Error loading data:", error)
+        console.error("Error loading data:", error);
         toast({
           title: "Error",
-          description: "Failed to load books",
+          description: "Failed to load data",
           variant: "destructive",
-        })
-        showAlert("error", "Failed to load books. Please try again later.")
-      } finally {
-        setIsLoading(false)
+        });
+        setIsLoading(false);
       }
-    }
-
-    loadData()
-  }, [])
+    };
+  
+    loadData();
+  }, []);
+  
+  
 
   // Open book details modal
   const openBookDetails = async (book: BookInterface) => {
-  try {
-    setSelectedBook(book);
-    setIsBookDetailsOpen(true);
+    try {
+      // First set the selected book without print runs
+      setSelectedBook({
+        ...book,
+        print_runs: [] // Initialize with empty print runs
+      });
+      setIsBookDetailsOpen(true);
 
-    // 🔁 Wait for warehouses if not yet loaded
-    if (warehouses.length === 0) {
-      const warehousesResponse = await fetch(`${API_URL}/inventory/warehouses/`, { headers });
-      if (!warehousesResponse.ok) throw new Error("Failed to fetch warehouses");
-      const warehousesData = await warehousesResponse.json();
-      setWarehouses(warehousesData);
+      // 🔁 Wait for warehouses if not yet loaded
+      if (warehouses.length === 0) {
+        const warehousesResponse = await fetch(`${API_URL}/inventory/warehouses/`, { headers });
+        if (!warehousesResponse.ok) throw new Error("Failed to fetch warehouses");
+        const warehousesData = await warehousesResponse.json();
+        setWarehouses(warehousesData);
+      }
+
+      // ✅ Ensure we have the latest warehouse list
+      const currentWarehouses = warehouses.length > 0 ? warehouses : JSON.parse(localStorage.getItem("cached_warehouses") || "[]");
+      
+      // Fetch inventory data
+      const inventoryResponse = await fetch(
+        `${API_URL}/inventory/inventory/?product_id=${book.id}`,
+        { headers }
+      );
+      if (!inventoryResponse.ok) throw new Error("Failed to fetch book inventory");
+      
+      const inventoryData = await inventoryResponse.json();
+      const invArr = Array.isArray(inventoryData) ? inventoryData : inventoryData.results ?? [];
+      
+      const enhancedInventory = invArr.map((item: any) => {
+        const wid = typeof item.warehouse === "object"
+          ? item.warehouse.id
+          : item.warehouse;
+        const wh = warehouses.find((w: Warehouse) => w.id === wid);
+        return {
+          ...item,
+          warehouse:      wid,
+          warehouse_name: wh?.name_en ?? "Unknown",
+        };
+      });
+      
+      setSelectedBookInventory(enhancedInventory);
+
+      // Fetch print runs data
+      const printRunsResponse = await fetch(
+        `${API_URL}/inventory/print-runs/?product_id=${book.id}`,
+        { headers }
+      );
+      if (!printRunsResponse.ok) throw new Error("Failed to fetch print runs");
+      
+      const printRunsData = await printRunsResponse.json();
+      const printRunsArr = Array.isArray(printRunsData) ? printRunsData : printRunsData.results ?? [];
+      
+      // Only update the selected book with print runs if we have data
+      if (printRunsArr.length > 0) {
+        setSelectedBook(prev => ({
+          ...prev!,
+          print_runs: printRunsArr
+        }));
+      }
+
+    } catch (error) {
+      console.error("Error fetching book details:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load book details",
+        variant: "destructive",
+      });
     }
-
-    // ✅ Ensure we have the latest warehouse list
-    const currentWarehouses = warehouses.length > 0 ? warehouses : JSON.parse(localStorage.getItem("cached_warehouses") || "[]");
-
-    const response = await fetch(`${API_URL}/inventory/inventory/?product_id=${book.id}`, {
-      headers,
-    });
-    if (!response.ok) throw new Error("Failed to fetch book inventory");
-    const inventoryData = await response.json();
-
-const enhancedInventory = inventoryData.map((item: Inventory) => {
-  const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
-  const warehouse = warehouses.find((w) => w.id === warehouseId);
-
-  return {
-    ...item,
-    warehouse: warehouseId,
-    warehouse_name: warehouse ? warehouse.name_en : "Unknown",
   };
-});
-setSelectedBookInventory(enhancedInventory);
-  } catch (error) {
-    console.error("Error fetching book inventory:", error);
+
+
+  // Open edit book modal
+// Open edit book modal
+const openEditBook = async (book: BookInterface) => {
+  try {
+    // 1) Fetch authors, translators, rights owners, reviewers & print-run statuses in parallel
+    const [authorsRes, translatorsRes, rightsOwnersRes, reviewersRes, prStatusRes] = await Promise.all([
+      fetch(`${API_URL}/inventory/authors/`, { headers }),
+      fetch(`${API_URL}/inventory/translators/`, { headers }),
+      fetch(`${API_URL}/inventory/rights-owners/`, { headers }),
+      fetch(`${API_URL}/inventory/reviewers/`, { headers }),
+      fetch(`${API_URL}/common/list-items/printrun_status/`, { headers }),
+    ]);
+    if (!authorsRes.ok) throw new Error("Failed to fetch authors");
+    if (!translatorsRes.ok) throw new Error("Failed to fetch translators");
+    if (!rightsOwnersRes.ok) throw new Error("Failed to fetch rights owners");
+    if (!reviewersRes.ok) throw new Error("Failed to fetch reviewers");
+    if (!prStatusRes.ok) throw new Error("Failed to fetch print-run statuses");
+
+    const authorsJson = await authorsRes.json();
+    const translatorsJson = await translatorsRes.json();
+    const rightsOwnersJson = await rightsOwnersRes.json();
+    const reviewersJson = await reviewersRes.json();
+    const prStatusJson = await prStatusRes.json();
+
+    setAuthors(Array.isArray(authorsJson) ? authorsJson : authorsJson.results ?? []);
+    setTranslators(Array.isArray(translatorsJson) ? translatorsJson : translatorsJson.results ?? []);
+    setRightsOwners(Array.isArray(rightsOwnersJson) ? rightsOwnersJson : rightsOwnersJson.results ?? []);
+    setReviewers(Array.isArray(reviewersJson) ? reviewersJson : reviewersJson.results ?? []);
+    setPrintRunStatusOptions(Array.isArray(prStatusJson) ? prStatusJson : prStatusJson.results ?? []);
+  const list = Array.isArray(prStatusJson)
+  ? prStatusJson
+  : prStatusJson.results ?? [];
+console.log("✅ fetched printRunStatusOptions:", list);
+setPrintRunStatusOptions(list);
+    
+    // 2) Map genre & status objects
+    const genreObj  = genres.find(g => g.id === (typeof book.genre === "object" ? book.genre.id : book.genre))   || null;
+    const statusObj = statusOptions.find(s => s.id === (typeof book.status === "object" ? book.status.id : book.status)) || null;
+
+    // 3) Fetch existing inventory
+    const invRes  = await fetch(`${API_URL}/inventory/inventory/?product_id=${book.id}`, { headers });
+    if (!invRes.ok) throw new Error("Failed to fetch book inventory");
+    const invData = await invRes.json();
+    // normalize to array
+    const invList = Array.isArray(invData) ? invData : invData.results ?? [];
+    const existingInventory = invList.map((item: any) => {
+      const wid     = typeof item.warehouse === "object" ? item.warehouse.id : item.warehouse;
+      const whName  = warehouses.find(w => w.id === wid)?.name_en ?? "Unknown";
+      return {
+        warehouse:      wid,
+        quantity:       item.quantity,
+        warehouse_name: whName,
+      };
+    });
+    setNewBookInventory(existingInventory);
+
+    // 4) Fetch existing print runs
+    const prRes  = await fetch(`${API_URL}/inventory/print-runs/?product_id=${book.id}`, { headers });
+    if (!prRes.ok) throw new Error("Failed to fetch print runs");
+    const prData = await prRes.json();
+    const prList = Array.isArray(prData) ? prData : prData.results ?? [];
+
+    // 5) Finally set selectedBook with all three pieces
+    setSelectedBook({
+      ...book,
+      genre:      genreObj,
+      status:     statusObj,
+      print_runs: prList,
+    });
+
+    setIsEditBookOpen(true);
+  } catch (error: any) {
+    console.error("Error opening edit modal:", error);
     toast({
       title: "Error",
-      description: "Failed to load book inventory",
+      description: error.message || "Failed to load book data",
       variant: "destructive",
     });
   }
 };
-
-
-  // Open edit book modal
-const openEditBook = async (book: BookInterface) => {
-  try {
-    const genreObj = genres.find(g => g.id === (typeof book.genre === "object" ? book.genre.id : book.genre))
-    const statusObj = statusOptions.find(s => s.id === (typeof book.status === "object" ? book.status.id : book.status))
-
-
-    setSelectedBook({
-      ...book,
-      genre: genreObj || null,
-      status: statusObj || null,
-    })
-
-    setIsEditBookOpen(true)
-
-    const response = await fetch(`${API_URL}/inventory/inventory/?product_id=${book.id}`, {
-      headers,
-    })
-
-    if (!response.ok) throw new Error("Failed to fetch book inventory")
-    const inventoryData = await response.json()
-
-  const getWarehouseName = (id: number) => {
-    const warehouse = warehouses.find(w => w.id === id)
-    return warehouse ? warehouse.name_en : "Unknown"
-  }
-
-    const existingInventory = inventoryData.map((item: any) => ({
-      warehouse: typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse,
-      quantity: item.quantity,
-      warehouse_name: typeof item.warehouse === 'object' ? item.warehouse.name_en : getWarehouseName(item.warehouse)
-    }))
-
-
-    setNewBookInventory(existingInventory)
-  } catch (error) {
-    console.error("Error opening edit modal:", error)
-    toast({
-      title: "Error",
-      description: "Failed to load book inventory",
-      variant: "destructive",
-    })
-  }
-}
 
 
   // Open transfer modal
@@ -458,20 +580,20 @@ const openEditBook = async (book: BookInterface) => {
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (bookId: number) => {
-    try {
-      setDeleteBookId(bookId)
-      setDeleteConfirm("")
-      setIsDeleteAlertOpen(true)
-    } catch (error) {
-      console.error("Error opening delete dialog:", error)
-      toast({
-        title: "Error",
-        description: "Failed to open delete dialog",
-        variant: "destructive",
-      })
+  const openDeleteDialog = (bookId: number | undefined) => {
+    if (!bookId) {
+      showAlert("error", "Invalid book ID");
+      return;
     }
-  }
+    try {
+      setDeleteBookId(bookId);
+      setDeleteConfirm("");
+      setIsDeleteAlertOpen(true);
+    } catch (error) {
+      console.error("Error opening delete dialog:", error);
+      showAlert("error", "Failed to open delete dialog");
+    }
+  };
 
   // Close all modals
   const closeAllModals = () => {
@@ -493,515 +615,336 @@ const openEditBook = async (book: BookInterface) => {
 
   // Handle adding a new book
   const handleAddBook = async () => {
-    setIsSubmitting(true);
     try {
-      // Create FormData object
-      const formData = new FormData();
-      
-      // Log the newBook state before processing
-      console.log('Current newBook state:', newBook);
-      
-      // Add all book data to FormData with correct field names
-      Object.entries(newBook).forEach(([key, value]) => {
-        if (value !== null && value !== undefined) {
-          // Map the field names to match server expectations
-          const fieldName = key === 'genre' ? 'genre_id' : 
-                           key === 'status' ? 'status_id' : 
-                           key;
-          formData.append(fieldName, value.toString());
-          console.log(`Adding to FormData - ${fieldName}:`, value);
-        }
-      });
-
-      // If there's a cover image, add it to FormData
-      if (newBook.cover_image) {
-        console.log('Processing cover image...');
-        // Convert base64 to blob
-        const response = await fetch(newBook.cover_image);
-        const blob = await response.blob();
-        formData.append('cover_image', blob, 'cover.jpg');
-        console.log('Cover image added to FormData');
+      setIsSubmitting(true);
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        showAlert("error", "Authentication token not found");
+        return;
       }
 
-      // Log the final FormData contents
-      console.log('FormData contents:');
-      for (let [key, value] of formData.entries()) {
-        console.log(`${key}:`, value);
-      }
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
 
-      console.log('Sending request to:', `${API_URL}/inventory/products/`);
-      const response = await fetch(`${API_URL}/inventory/products/`, {
+      // 1. Create basic book information
+      const basicInfoResponse = await fetch(`${API_URL}/inventory/products/`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
-        body: formData,
+        headers,
+        body: JSON.stringify({
+          isbn: newBook.isbn,
+          title_en: newBook.title_en,
+          title_ar: newBook.title_ar,
+          genre_id: newBook.genre?.id,
+          status_id: newBook.status?.id,
+          author_id: newBook.author?.id,
+          translator_id: newBook.translator?.id,
+          rights_owner_id: newBook.rights_owner?.id,
+          reviewer_id: newBook.reviewer?.id,
+          is_direct_product: newBook.is_direct_product,
+          cover_design: newBook.cover_design,
+        }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error response:', errorData);
-        throw new Error(errorData.message || "Failed to add book");
+      if (!basicInfoResponse.ok) {
+        const errorData = await basicInfoResponse.json();
+        throw new Error(errorData.message || "Failed to create basic information");
       }
 
-      const addedBook = await response.json();
-      console.log('Successfully added book:', addedBook);
+      const createdBook = await basicInfoResponse.json();
 
-      // Create inventory entries for the new book
-      if (newBookInventory.length > 0) {
-        console.log('Creating inventory entries...');
-        for (const inv of newBookInventory) {
-          const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/`, {
+      // 2. Create print runs
+      for (const printRun of newBook.print_runs) {
+        const printRunData = {
+          product_id: createdBook.id,
+          edition_number: printRun.edition_number,
+          price: printRun.price,
+          print_cost: printRun.print_cost,
+          status_id: printRun.status?.id,
+          notes: printRun.notes,
+          published_at: printRun.published_at,
+        };
+
+        const printRunResponse = await fetch(
+          `${API_URL}/inventory/print-runs/`,
+          {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-            },
-            body: JSON.stringify({
-              product: addedBook.id,
-              warehouse: inv.warehouse,
-              quantity: inv.quantity,
-            }),
-          });
-
-          if (!inventoryResponse.ok) {
-            console.error('Failed to create inventory entry:', await inventoryResponse.json());
+        headers,
+            body: JSON.stringify(printRunData),
           }
+        );
+
+        if (!printRunResponse.ok) {
+          const errorData = await printRunResponse.json();
+          throw new Error(errorData.message || "Failed to create print run");
         }
       }
 
-      // Update the books list with the new book
-      setBooks(prevBooks => [...prevBooks, addedBook]);
-      setFilteredBooks(prevBooks => [...prevBooks, addedBook]);
-      
-      // Close the modal
-      setIsAddBookOpen(false);
+      // 3. Create inventory
+      for (const item of newBookInventory) {
+        const inventoryData = {
+          product: createdBook.id,
+          warehouse: item.warehouse,
+          quantity: item.quantity,
+        };
 
-      // Reset form
+        const inventoryResponse = await fetch(
+          `${API_URL}/inventory/inventory/`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify(inventoryData),
+          }
+        );
+
+      if (!inventoryResponse.ok) {
+        const errorData = await inventoryResponse.json();
+          throw new Error(errorData.message || "Failed to create inventory");
+        }
+      }
+
+      // Refresh the books list
+      const booksResponse = await fetch(`${API_URL}/inventory/products/`, { headers });
+      if (!booksResponse.ok) throw new Error("Failed to refresh books list");
+      
+      const booksData = await booksResponse.json();
+      const booksArray = Array.isArray(booksData) ? booksData : booksData.results || [];
+      setBooks(booksArray);
+      setFilteredBooks(booksArray);
+
+      // Reset form and close modal
       setNewBook({
         isbn: "",
-        title_ar: "",
         title_en: "",
-        print_cost: 0,
-        published_at: format(new Date(), "yyyy-MM-dd"),
-        price: 0,
-        status: null,
+        title_ar: "",
         genre: null,
+        status: null,
+        cover_design: null,
+        author: null,
+        translator: null,
+        rights_owner: null,
+        reviewer: null,
         is_direct_product: false,
-        cover_image: null,
+        print_runs: [],
       });
       setNewBookInventory([]);
-
-      toast({
-        title: "Book Added",
-        description: `${addedBook.isbn} has been added to the inventory.`,
-        variant: "default",
-      });
-
-      showAlert("success", `New book "${addedBook.isbn}" has been successfully added to the inventory.`);
-    } catch (error) {
-      console.error("Error adding book:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to add book",
-        variant: "destructive",
-      });
-      showAlert("error", "Failed to add book. Please try again.");
+      setIsAddBookOpen(false);
+      showAlert("success", "Book created successfully");
+    } catch (error: any) {
+      console.error("Error creating book:", error);
+      showAlert("error", error.message || "Failed to create book");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Handle updating a book
-  const handleUpdateBook = async () => {
-    if (!selectedBook) return
-    setIsSubmitting(true)
+  // 1) Basic info
+async function handleUpdateBasic() {
+  if (!selectedBook?.id) return;
+  const formData = new FormData();
   
-    try {
-      // Log the selected book data before processing
-      console.log('Selected book before update:', selectedBook);
-      
-      // Create a clean data object for the API
-      const updatedData = {
-        isbn: selectedBook.isbn,
-        title_ar: selectedBook.title_ar,
-        title_en: selectedBook.title_en,
-        print_cost: selectedBook.print_cost,
-        published_at: selectedBook.published_at,
-        price: selectedBook.price,
-        is_direct_product: selectedBook.is_direct_product,
-        genre_id: typeof selectedBook.genre === 'object' ? selectedBook.genre.id : selectedBook.genre,
-        status_id: typeof selectedBook.status === 'object' ? selectedBook.status.id : selectedBook.status,
-      }
-      
-      // Log the data being sent to the API
-      console.log('Data being sent to API:', updatedData);
-      
-      // Log the API URL
-      console.log('API URL:', `${API_URL}/inventory/products/${selectedBook.id}/`);
-      
-      const response = await fetch(`${API_URL}/inventory/products/${selectedBook.id}/`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
-        body: JSON.stringify(updatedData),
-      })
+  // Required fields
+  formData.append("isbn", selectedBook.isbn);
+  formData.append("title_ar", selectedBook.title_ar);
+  formData.append("title_en", selectedBook.title_en);
   
-      // Log the response status
-      console.log('Response status:', response.status);
-      
-      if (!response.ok) {
-        const errData = await response.json()
-        console.error("Update error details:", errData)
-        throw new Error(`Failed to update book: ${errData.message || 'Unknown error'}`)
-      }
+  // Optional fields with null handling
+  if (selectedBook.genre?.id) {
+    formData.append("genre_id", selectedBook.genre.id.toString());
+  }
+  if (selectedBook.status?.id) {
+    formData.append("status_id", selectedBook.status.id.toString());
+  }
+  if (selectedBook.author?.id) {
+    formData.append("author_id", selectedBook.author.id.toString());
+  }
+  if (selectedBook.translator?.id) {
+    formData.append("translator_id", selectedBook.translator.id.toString());
+  }
+  if (selectedBook.rights_owner?.id) {
+    formData.append("rights_owner_id", selectedBook.rights_owner.id.toString());
+  }
+  if (selectedBook.reviewer?.id) {
+    formData.append("reviewer_id", selectedBook.reviewer.id.toString());
+  }
   
-      const updatedBook = await response.json()
-      console.log('Successfully updated book:', updatedBook);
+  // Boolean field
+  formData.append("is_direct_product", selectedBook.is_direct_product.toString());
+  
+  // Image field
+  if (selectedBook.cover_image) {
+    formData.append("cover_design", selectedBook.cover_image);
+  }
 
-      // First, delete existing inventory entries for this book
-      console.log('Deleting existing inventory for product ID:', selectedBook.id);
-      const deleteResponse = await fetch(`${API_URL}/inventory/product/${selectedBook.id}/delete/`, {
-        method: "DELETE",
-        headers,
-      });
-      
-      console.log('Delete response status:', deleteResponse.status);
-      if (!deleteResponse.ok) {
-        console.error('Failed to delete existing inventory');
-      }
+  // Log the data being sent
+  for (let [key, value] of formData.entries()) {
+    console.log(`${key}: ${value}`);
+  }
 
-      // Then create new inventory entries
-      console.log('Creating new inventory entries:', newBookInventory);
-      for (const inv of newBookInventory) {
-        const inventoryData = {
-          product: selectedBook.id,
-          warehouse: inv.warehouse,
-          quantity: inv.quantity,
+  const res = await fetch(
+    `${API_URL}/inventory/products/${selectedBook.id}/`,
+    { 
+      method: "PUT", 
+      headers: { 
+        Authorization: `Bearer ${localStorage.getItem("accessToken")}` 
+      }, 
+      body: formData 
+    }
+  );
+  
+  if (!res.ok) {
+    const errorData = await res.json();
+    console.error('Update error:', errorData);
+    throw new Error(errorData.message || "Failed to update basic info");
+  }
+
+  // After successful update, refresh the books data
+  const response = await fetch(`${API_URL}/inventory/products/`, { headers });
+  if (!response.ok) throw new Error("Failed to refresh books");
+  const data = await response.json();
+  const booksArray = Array.isArray(data) ? data : data.results || [];
+  setBooks(booksArray);
+  setFilteredBooks(booksArray);
+}
+
+async function handleUpdateDetails() {
+  if (!selectedBook?.id) return;
+  const token = localStorage.getItem("accessToken");
+  if (!token) {
+    showAlert("error", "Authentication token not found");
+      return;
+    }
+
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  }
+
+  try {
+    for (const run of selectedBook.print_runs) {
+      if (run.id) {
+        // Update existing print run
+        const updateData = {
+          product_id: selectedBook.id,
+          edition_number: run.edition_number,
+          price: run.price,
+          print_cost: run.print_cost,
+          status_id: run.status?.id,
+          notes: run.notes,
+          published_at: run.published_at,
         };
-        console.log('Sending inventory data:', inventoryData);
-        
-        const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-          },
-          body: JSON.stringify(inventoryData),
-        });
-
-        console.log('Inventory creation response:', inventoryResponse.status);
-        if (!inventoryResponse.ok) {
-          const errorData = await inventoryResponse.json();
-          console.error('Failed to create inventory:', errorData);
+        console.log('Updating print run:', updateData);
+        const response = await fetch(
+          `${API_URL}/inventory/print-runs/${run.id}/`,
+          { method: 'PUT', headers, body: JSON.stringify(updateData) }
+        )
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Update failed:', errorData);
+          throw new Error(`Failed updating run ${run.edition_number}: ${JSON.stringify(errorData)}`)
+        }
+      } else {
+        // Create new print run
+        const createData = {
+          product_id: selectedBook.id,
+          edition_number: run.edition_number,
+          price: run.price,
+          print_cost: run.print_cost,
+          status_id: run.status?.id,
+          notes: run.notes,
+          published_at: run.published_at,
+        };
+        console.log('Creating print run:', createData);
+        const response = await fetch(
+          `${API_URL}/inventory/print-runs/`,
+          { method: 'POST', headers, body: JSON.stringify(createData) }
+        )
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Creation failed:', errorData);
+          throw new Error(`Failed creating run ${run.edition_number}: ${JSON.stringify(errorData)}`)
         }
       }
-
-      const updatedBooks = books.map((b) => (b.id === updatedBook.id ? updatedBook : b))
-      setBooks(updatedBooks)
-      setFilteredBooks(updatedBooks)
-      setIsEditBookOpen(false)
-  
-      toast({
-        title: "Book Updated",
-        description: `${updatedBook.isbn} has been updated.`,
-      })
-  
-      showAlert("success", `Book "${updatedBook.isbn}" has been successfully updated.`)
-    } catch (error) {
-      console.error("Error updating book:", error)
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to update book",
-        variant: "destructive",
-      })
-      showAlert("error", "Failed to update book. Please try again.")
-    } finally {
-      setIsSubmitting(false)
     }
+
+    showAlert("success", "Print runs synchronized successfully")
+  } catch (error: any) {
+    console.error('Error in handleUpdateDetails:', error)
+    showAlert("error", error.message)
+    throw error
   }
-  
+}
 
-  // Handle deleting a book
-  const handleDeleteBook = async () => {
-    if (deleteBookId === null) return
-    setIsSubmitting(true)
 
-    try {
-      const bookToDelete = books.find((b) => b.id === deleteBookId)
-      if (!bookToDelete) return
 
-      const response = await fetch(`${API_URL}/inventory/products/${deleteBookId}/delete/`, {
-        method: "DELETE",
-        headers,
-      })
+// 3) Inventory & warehouses
+async function handleUpdateInventory() {
+  if (!selectedBook) return;
 
-      if (!response.ok) {
-        throw new Error("Failed to delete book")
-      }
-
-      setBooks(books.filter((b) => b.id !== deleteBookId))
-      setDeleteBookId(null)
-      setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
-
-      toast({
-        title: "Book Deleted",
-        description: `${bookToDelete.isbn} has been removed from the inventory.`,
-        variant: "destructive",
-      })
-
-      showAlert("warning", `Book "${bookToDelete.isbn}" has been permanently deleted from the inventory.`)
-    } catch (error) {
-      console.error("Error deleting book:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete book",
-        variant: "destructive",
-      })
-      showAlert("error", "Failed to delete book. Please try again.")
-    } finally {
-      setIsSubmitting(false)
+  const token = localStorage.getItem("accessToken");
+  if (!token) {
+    showAlert("error", "Authentication required");
+      return;
     }
-  }
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
 
-  // Handle book transfer
-  const handleTransfer = async () => {
-    setIsSubmitting(true)
-    try {
-      // Validate transfer data
-      if (!transfer.product || !transfer.from_warehouse || !transfer.to_warehouse || !transfer.quantity) {
-        throw new Error("Please fill all required fields")
-      }
-
-      if (transfer.from_warehouse === transfer.to_warehouse) {
-        throw new Error("Source and destination warehouses cannot be the same")
-      }
-
-      // Check if there's enough inventory in the source warehouse using the correct API endpoint
-      console.log('Checking inventory for product:', transfer.product, 'in warehouse:', transfer.from_warehouse);
-      const inventoryCheckResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${transfer.product}`, {
-        headers,
-      });
-
-      if (!inventoryCheckResponse.ok) {
-        throw new Error("Failed to check inventory");
-      }
-
-      const inventoryData = await inventoryCheckResponse.json();
-      console.log('Inventory data:', inventoryData);
-
-      // Find the inventory item for the source warehouse
-      const sourceInventory = inventoryData.find(
-        (item: any) => {
-          const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
-          return warehouseId === transfer.from_warehouse;
-        }
-      );
-
-      console.log('Source inventory:', sourceInventory);
-
-      if (!sourceInventory || sourceInventory.quantity < (transfer.quantity || 0)) {
-        throw new Error("Not enough inventory in the source warehouse")
-      }
-
-      // Create the transfer
-      const response = await fetch(`${API_URL}/inventory/transfers/`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(transfer),
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to create transfer")
-      }
-
-      const transferResult = await response.json();
-      console.log('Transfer result:', transferResult);
-
-      // After successful transfer, manually update the inventory
-      // First, update the source warehouse (decrease quantity)
-      const sourceWarehouseId = typeof sourceInventory.warehouse === 'object' ? sourceInventory.warehouse.id : sourceInventory.warehouse;
-      const updatedSourceQuantity = sourceInventory.quantity - (transfer.quantity || 0);
-      
-      console.log('Updating source warehouse:', sourceWarehouseId, 'new quantity:', updatedSourceQuantity);
-      
-      // Get the product ID correctly
-      const productId = typeof sourceInventory.product === 'object' ? sourceInventory.product.id : sourceInventory.product;
-      
-      // Log the data being sent to the API
-      const updateSourceData = {
-        product: productId,
-        warehouse: sourceWarehouseId,
-        quantity: updatedSourceQuantity,
+  try {
+    for (const record of selectedBookInventory) {
+      const payload = {
+        product: selectedBook.id,
+        warehouse: record.warehouse,
+        quantity: record.quantity,
       };
-      console.log('Sending update data to source warehouse:', updateSourceData);
-      
-      // Use the standard inventory update endpoint
-      const updateSourceResponse = await fetch(`${API_URL}/inventory/inventory/product/${productId}/update/`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
-        body: JSON.stringify({
-          product_id: productId,
-          warehouse_id: sourceWarehouseId,
-          quantity: updatedSourceQuantity,
-        }),
+
+      const isUpdate = Boolean(record.id);
+      const url = isUpdate
+        ? `${API_URL}/inventory/inventory/${record.id}/`
+        : `${API_URL}/inventory/inventory/`;
+      const method = isUpdate ? "PUT" : "POST";
+
+      console.log(`${method} →`, url, payload);
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(payload),
       });
 
-      if (!updateSourceResponse.ok) {
-        const errorData = await updateSourceResponse.json();
-        console.error('Failed to update source warehouse inventory:', errorData);
-      } else {
-        console.log('Successfully updated source warehouse inventory');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error(`${method} inventory failed:`, errData);
+        throw new Error(errData.detail || `Failed to ${method} inventory`);
       }
-
-      // Find if destination warehouse already has inventory for this product
-      const destInventory = inventoryData.find(
-        (item: any) => {
-          const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
-          return warehouseId === transfer.to_warehouse;
-        }
-      );
-
-      if (destInventory) {
-        // Update existing destination warehouse inventory
-        const destWarehouseId = typeof destInventory.warehouse === 'object' ? destInventory.warehouse.id : destInventory.warehouse;
-        const updatedDestQuantity = destInventory.quantity + (transfer.quantity || 0);
-        
-        console.log('Updating destination warehouse:', destWarehouseId, 'new quantity:', updatedDestQuantity);
-        
-        // Get the product ID correctly
-        const destProductId = typeof destInventory.product === 'object' ? destInventory.product.id : destInventory.product;
-        
-        // Log the data being sent to the API
-        const updateDestData = {
-          product: destProductId,
-          warehouse: destWarehouseId,
-          quantity: updatedDestQuantity,
-        };
-        console.log('Sending update data to destination warehouse:', updateDestData);
-        
-        // Use the standard inventory update endpoint
-        const updateDestResponse = await fetch(`${API_URL}/inventory/inventory/product/${destProductId}/update/`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-          },
-          body: JSON.stringify({
-            product_id: destProductId,
-            warehouse_id: destWarehouseId,
-            quantity: updatedDestQuantity,
-          }),
-        });
-        
-
-        if (!updateDestResponse.ok) {
-          const errorData = await updateDestResponse.json();
-          const errorText = await updateDestResponse.text();
-          console.error('❌ Raw error from backend:', errorText);
-          //console.error('Failed to update destination warehouse inventory:', errorData);
-        } else {
-          console.log('Successfully updated destination warehouse inventory');
-        }
-      } else {
-        // Create new inventory entry for destination warehouse
-        console.log('Creating new inventory for destination warehouse:', transfer.to_warehouse);
-        
-        // Get the product ID correctly
-        const productId = typeof sourceInventory.product === 'object' ? sourceInventory.product.id : sourceInventory.product;
-        
-        // Log the data being sent to the API
-        const createDestData = {
-          product: productId,
-          warehouse: transfer.to_warehouse,
-          quantity: transfer.quantity,
-        };
-        console.log('Sending create data to destination warehouse:', createDestData);
-        
-        const createDestResponse = await fetch(`${API_URL}/inventory/inventory/`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-          },
-          body: JSON.stringify(createDestData),
-        });
-
-        if (!createDestResponse.ok) {
-          const errorData = await createDestResponse.json();
-          console.error('Failed to create destination warehouse inventory:', errorData);
-        } else {
-          console.log('Successfully created destination warehouse inventory');
-        }
-      }
-
-      // Refresh inventory data after transfer
-      const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${transfer.product}`, {
-        headers,
-      })
-
-      if (!inventoryResponse.ok) {
-        throw new Error("Failed to refresh inventory")
-      }
-
-      const updatedInventoryData = await inventoryResponse.json()
-      console.log('Updated inventory data:', updatedInventoryData);
-
-      // Enhance inventory with warehouse names
-      const enhancedInventory = updatedInventoryData.map((item: any) => {
-        const warehouseId = typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse;
-        const warehouse = warehouses.find((w) => w.id === warehouseId);
-        return {
-          ...item,
-          warehouse: warehouseId,
-          warehouse_name: warehouse ? warehouse.name_en : "Unknown",
-        }
-      })
-
-      setInventory(enhancedInventory)
-
-      // If the selected book is open, update its inventory
-      if (selectedBook && selectedBook.id === transfer.product) {
-        setSelectedBookInventory(enhancedInventory)
-      }
-
-      setIsTransferOpen(false)
-
-      // Reset transfer form
-      setTransfer({
-        product: 0,
-        from_warehouse: 0,
-        to_warehouse: 0,
-        quantity: 1,
-        shipping_cost: 0,
-        transfer_date: format(new Date(), "yyyy-MM-dd'T'HH:mm:ss"),
-      })
-
-      toast({
-        title: "Transfer Complete",
-        description: "Book transfer has been processed successfully.",
-        variant: "default",
-      })
-
-      showAlert("success", "Book transfer has been processed successfully.")
-    } catch (error: any) {
-      console.error("Error processing transfer:", error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to process transfer",
-        variant: "destructive",
-      })
-      showAlert("error", error.message || "Failed to process transfer. Please try again.")
-    } finally {
-      setIsSubmitting(false)
     }
+
+    // re‑fetch to sync UI
+    const verifyRes = await fetch(
+      `${API_URL}/inventory/inventory/?product_id=${selectedBook.id}`,
+      { headers }
+    );
+    const fresh = await verifyRes.json();
+    setSelectedBookInventory(
+      fresh.map((i: any) => ({
+        id: i.id,
+        warehouse: typeof i.warehouse === "object" ? i.warehouse.id : i.warehouse,
+        quantity: i.quantity,
+        warehouse_name:
+          typeof i.warehouse === "object"
+            ? i.warehouse.name_en
+            : warehouses.find((w) => w.id === i.warehouse)?.name_en || "Unknown",
+      }))
+    );
+
+    showAlert("success", "Inventory saved successfully");
+  } catch (err: any) {
+    console.error("Inventory error:", err);
+    showAlert("error", err.message);
   }
+}
+
 
   // Reset filters
   const resetFilters = () => {
@@ -1022,79 +965,513 @@ const openEditBook = async (book: BookInterface) => {
 
   // Handle adding inventory
   const handleAddInventory = async () => {
-    if (isAddBookOpen) {
-      // For new book, just update the state
-      // The inventory will be created when the book is saved
-      setIsAddInventoryOpen(false);
-      return;
-    }
-    
     if (!selectedBook) return;
-    setIsSubmitting(true);
+
+    try {
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        showAlert("error", "Authentication token not found");
+        return;
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // Create new inventory item
+      const payload = {
+        product: selectedBook.id,
+        warehouse: newInventory.warehouse,
+        quantity: newInventory.quantity,
+      };
+
+      const response = await fetch(`${API_URL}/inventory/inventory/`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to create inventory");
+      }
+
+      // Refresh the inventory data
+      const inventoryResponse = await fetch(
+        `${API_URL}/inventory/inventory/?product_id=${selectedBook.id}`,
+        { headers }
+      );
+
+      if (!inventoryResponse.ok) {
+        throw new Error("Failed to refresh inventory data");
+      }
+
+      const inventoryData = await inventoryResponse.json();
+      const invArr = Array.isArray(inventoryData) ? inventoryData : inventoryData.results ?? [];
+
+      const enhancedInventory = invArr.map((item: any) => {
+        const wid = typeof item.warehouse === "object"
+          ? item.warehouse.id
+          : item.warehouse;
+        const wh = warehouses.find((w) => w.id === wid);
+        return {
+          ...item,
+          warehouse: wid,
+          warehouse_name: wh?.name_en ?? "Unknown",
+        };
+      });
+
+      setSelectedBookInventory(enhancedInventory);
+      setNewInventory({ warehouse: "", quantity: 0 });
+      showAlert("success", "Inventory added successfully");
+    } catch (error: any) {
+      console.error("Error adding inventory:", error);
+      showAlert("error", error.message || "Failed to add inventory");
+    }
+  };
+
+  const handleUpdatePrintRun = async (productId: number, printRun: PrintRun) => {
+    try {
+      const response = await fetch(`${API_URL}/inventory/products/${productId}/print-runs/update/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(printRun),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update print run');
+      }
+
+      const updatedPrintRun = await response.json();
+      return updatedPrintRun;
+    } catch (error) {
+      console.error('Error updating print run:', error);
+      throw error;
+    }
+  };
+
+  const handleDeletePrintRun = async (productId: number, editionNumber: number) => {
+    try {
+      const response = await fetch(`${API_URL}/inventory/products/${productId}/print-runs/delete/`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ edition_number: editionNumber }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete print run');
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error deleting print run:', error);
+      throw error;
+    }
+  };
+
+  const handleDeleteBook = async () => {
+    if (!deleteBookId) return;
     
     try {
-      // Create inventory entries for the book
-      for (const inv of newBookInventory) {
-        const response = await fetch(`${API_URL}/inventory/inventory/`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-          },
-          body: JSON.stringify({
-            product: selectedBook.id,
-            warehouse: inv.warehouse,
-            quantity: inv.quantity,
-          }),
-        });
+    setIsSubmitting(true);
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        showAlert("error", "Authentication token not found");
+        return;
+      }
 
-        if (!response.ok) {
-          throw new Error("Failed to add inventory");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      const response = await fetch(`${API_URL}/inventory/products/${deleteBookId}/`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to delete book");
+      }
+
+      // Remove the deleted book from the state
+      setBooks(books.filter(book => book.id !== deleteBookId));
+      setFilteredBooks(filteredBooks.filter(book => book.id !== deleteBookId));
+      
+      // Close the delete dialog
+      setIsDeleteAlertOpen(false);
+      setDeleteBookId(null);
+      setDeleteConfirm("");
+      
+      showAlert("success", "Book deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting book:", error);
+      showAlert("error", error.message || "Failed to delete book");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Add this function before the return statement
+  const handleSaveChanges = async () => {
+    if (!selectedBook) return;
+
+    try {
+      console.log('🔄 Starting save changes for book:', selectedBook.id);
+      console.log('📦 Current book state:', selectedBook);
+      console.log('📦 Current inventory state:', selectedBookInventory);
+
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        console.error('❌ No access token found');
+        showAlert("error", "Authentication token not found");
+        return;
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // 1. Update basic book information
+      console.log('📝 Updating basic book info...');
+      const basicInfoResponse = await fetch(`${API_URL}/inventory/products/${selectedBook.id}/`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          isbn: selectedBook.isbn,
+          title_en: selectedBook.title_en,
+          title_ar: selectedBook.title_ar,
+          genre_id: selectedBook.genre?.id,
+          status_id: selectedBook.status?.id,
+          author_id: selectedBook.author?.id,
+          translator_id: selectedBook.translator?.id,
+          rights_owner_id: selectedBook.rights_owner?.id,
+          reviewer_id: selectedBook.reviewer?.id,
+          is_direct_product: selectedBook.is_direct_product,
+        }),
+      });
+
+      if (!basicInfoResponse.ok) {
+        const errorData = await basicInfoResponse.json();
+        console.error('❌ Book update failed:', {
+          status: basicInfoResponse.status,
+          statusText: basicInfoResponse.statusText,
+          error: errorData
+        });
+        throw new Error(errorData.message || "Failed to update basic information");
+      }
+
+      // 2. Update print runs
+      console.log('📝 Updating print runs...');
+      for (const printRun of selectedBook.print_runs) {
+        console.log('📦 Processing print run:', printRun);
+        const printRunData = {
+          product_id: selectedBook.id,
+          edition_number: printRun.edition_number,
+          price: printRun.price,
+          print_cost: printRun.print_cost,
+          status_id: printRun.status?.id,
+          notes: printRun.notes,
+          published_at: printRun.published_at,
+        };
+
+        if (printRun.id) {
+          // Update existing print run
+          const printRunResponse = await fetch(
+            `${API_URL}/inventory/print-runs/${printRun.id}/`,
+            {
+              method: "PUT",
+            headers,
+              body: JSON.stringify(printRunData),
+            }
+          );
+
+          if (!printRunResponse.ok) {
+            const errorData = await printRunResponse.json();
+            console.error('❌ Print run update failed:', {
+              status: printRunResponse.status,
+              statusText: printRunResponse.statusText,
+              error: errorData
+            });
+            throw new Error(errorData.message || "Failed to update print run");
+          }
+        } else {
+          // Create new print run
+          const printRunResponse = await fetch(
+            `${API_URL}/inventory/print-runs/`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify(printRunData),
+            }
+          );
+
+          if (!printRunResponse.ok) {
+            const errorData = await printRunResponse.json();
+            console.error('❌ Print run creation failed:', {
+              status: printRunResponse.status,
+              statusText: printRunResponse.statusText,
+              error: errorData
+            });
+            throw new Error(errorData.message || "Failed to create print run");
+          }
         }
       }
 
-      // Refresh the book inventory
-      const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${selectedBook.id}`, {
+      // 3. Update inventory
+      console.log('📝 Updating inventory items...');
+      for (const item of selectedBookInventory) {
+        console.log('📦 Processing inventory item:', {
+          id: item.id,
+          product_id: selectedBook.id,
+              warehouse: item.warehouse,
+              quantity: item.quantity
+        });
+
+        const inventoryData = {
+          product_id: selectedBook.id,
+          warehouse_id: item.warehouse,
+          quantity: item.quantity,
+        };
+
+        if (item.id) {
+          // Update existing inventory
+          console.log('🔄 Updating existing inventory:', inventoryData);
+          const inventoryResponse = await fetch(
+            `${API_URL}/inventory/inventory/product/${selectedBook.id}/update/`,
+            {
+              method: "PUT",
+              headers,
+              body: JSON.stringify(inventoryData),
+            }
+          );
+
+        if (!inventoryResponse.ok) {
+          const errorData = await inventoryResponse.json();
+            console.error('❌ Inventory update failed:', {
+              status: inventoryResponse.status,
+              statusText: inventoryResponse.statusText,
+              error: errorData,
+              requestData: inventoryData
+            });
+            throw new Error(errorData.message || "Failed to update inventory");
+          }
+
+          const responseData = await inventoryResponse.json();
+          console.log('✅ Inventory update response:', responseData);
+        } else {
+          // Create new inventory
+          console.log('➕ Creating new inventory:', inventoryData);
+          const inventoryResponse = await fetch(
+            `${API_URL}/inventory/inventory/product/${selectedBook.id}/update/`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify(inventoryData),
+            }
+          );
+
+          if (!inventoryResponse.ok) {
+            const errorData = await inventoryResponse.json();
+            console.error('❌ Inventory creation failed:', {
+              status: inventoryResponse.status,
+              statusText: inventoryResponse.statusText,
+              error: errorData,
+              requestData: inventoryData
+            });
+            throw new Error(errorData.message || "Failed to create inventory");
+          }
+
+          const responseData = await inventoryResponse.json();
+          console.log('✅ Inventory creation response:', responseData);
+        }
+
+        // Verify the update by fetching the latest inventory
+        console.log('🔄 Verifying inventory update...');
+        const verifyResponse = await fetch(
+          `${API_URL}/inventory/inventory/?product_id=${selectedBook.id}`,
+          { headers }
+        );
+
+        if (!verifyResponse.ok) {
+          console.error('❌ Failed to verify inventory update:', {
+            status: verifyResponse.status,
+            statusText: verifyResponse.statusText
+          });
+      } else {
+          const verifyData = await verifyResponse.json();
+          console.log('✅ Current inventory after update:', verifyData);
+        }
+      }
+
+      // Refresh the books list
+      console.log('🔄 Refreshing books list...');
+      const booksResponse = await fetch(`${API_URL}/inventory/products/`, { headers });
+      if (!booksResponse.ok) {
+        console.error('❌ Failed to refresh books list:', {
+          status: booksResponse.status,
+          statusText: booksResponse.statusText
+        });
+        throw new Error("Failed to refresh books list");
+      }
+      
+      const booksData = await booksResponse.json();
+      const booksArray = Array.isArray(booksData) ? booksData : booksData.results || [];
+      setBooks(booksArray);
+      setFilteredBooks(booksArray);
+
+      console.log('✅ All updates completed successfully');
+      showAlert("success", "Book updated successfully");
+      setIsEditBookOpen(false);
+    } catch (error: any) {
+      console.error("❌ Error saving changes:", error);
+      showAlert("error", error.message || "Failed to save changes");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Add this function before the return statement
+  const handleTransfer = async () => {
+    if (!selectedBook || !transfer.from_warehouse || !transfer.to_warehouse) {
+      showAlert("error", "Please select both source and destination warehouses");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        showAlert("error", "Authentication token not found");
+        return;
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // Create the transfer
+      const transferResponse = await fetch(`${API_URL}/inventory/transfers/`, {
+        method: "POST",
         headers,
+        body: JSON.stringify({
+          product: selectedBook.id,
+          from_warehouse: transfer.from_warehouse,
+          to_warehouse: transfer.to_warehouse,
+          quantity: transfer.quantity,
+          shipping_cost: transfer.shipping_cost,
+          transfer_date: transfer.transfer_date,
+        }),
       });
+
+      if (!transferResponse.ok) {
+        const errorData = await transferResponse.json();
+        throw new Error(errorData.message || "Failed to create transfer");
+      }
+
+      // Refresh the inventory data
+      const inventoryResponse = await fetch(
+        `${API_URL}/inventory/inventory/?product_id=${selectedBook.id}`,
+        { headers }
+      );
       
       if (!inventoryResponse.ok) {
-        throw new Error("Failed to fetch updated inventory");
+        throw new Error("Failed to refresh inventory data");
       }
       
       const inventoryData = await inventoryResponse.json();
+      const invArr = Array.isArray(inventoryData) ? inventoryData : inventoryData.results ?? [];
       
-      // Enhance inventory with warehouse names
-      const enhancedInventory = inventoryData.map((item: Inventory) => {
-        const warehouse = warehouses.find((w) => w.id === item.warehouse);
+      const enhancedInventory = invArr.map((item: any) => {
+        const wid = typeof item.warehouse === "object"
+          ? item.warehouse.id
+          : item.warehouse;
+        const wh = warehouses.find((w) => w.id === wid);
         return {
           ...item,
-          warehouse_name: warehouse ? warehouse.name_en : "Unknown",
+          warehouse: wid,
+          warehouse_name: wh?.name_en ?? "Unknown",
         };
       });
       
       setSelectedBookInventory(enhancedInventory);
-      setIsAddInventoryOpen(false);
-      setNewBookInventory([]);
-      
-      toast({
-        title: "Inventory Added",
-        description: "Inventory has been added successfully.",
-        variant: "default",
-      });
-      
-      showAlert("success", "Inventory has been added successfully.");
-    } catch (error) {
-      console.error("Error adding inventory:", error);
-      toast({
-        title: "Error",
-        description: "Failed to add inventory",
-        variant: "destructive",
-      });
-      showAlert("error", "Failed to add inventory. Please try again.");
+
+      // Close the transfer modal and show success message
+      setIsTransferOpen(false);
+      showAlert("success", "Transfer created successfully");
+    } catch (error: any) {
+      console.error("Error creating transfer:", error);
+      showAlert("error", error.message || "Failed to create transfer");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Update the warehouse find function type
+  const findWarehouse = (warehouses: Warehouse[], wid: number): Warehouse | undefined => {
+    return warehouses.find((w: Warehouse) => w.id === wid);
+  };
+
+  // Update the handleAddPrintRun function with proper type checking
+  const handleAddPrintRun = () => {
+    if (!selectedBook || !selectedBook.id) return;
+    
+    const newEdition: PrintRun = {
+      product: selectedBook.id,
+      edition_number: selectedBook.print_runs.length + 1,
+      price: 0,
+      print_cost: 0,
+      status: null,
+      notes: "",
+    };
+
+    const updatedBook: BookInterface = {
+      ...selectedBook,
+      print_runs: [...selectedBook.print_runs, newEdition],
+    };
+
+    setSelectedBook(updatedBook);
+  };
+
+  
+  // Update the inventory item handling functions
+  const handleInventoryItemChange = (index: number, field: string, value: any) => {
+    if (!selectedBookInventory) return;
+    
+    const updatedInventory = [...selectedBookInventory];
+    updatedInventory[index] = {
+      ...updatedInventory[index],
+      [field]: value
+    };
+    setSelectedBookInventory(updatedInventory);
+  };
+
+  const handleRemoveInventoryItem = (index: number) => {
+    if (!selectedBookInventory) return;
+    
+    const updatedInventory = selectedBookInventory.filter((_, i) => i !== index);
+    setSelectedBookInventory(updatedInventory);
+  };
+
+  const handleAddInventoryItem = () => {
+    if (!selectedBookInventory) return;
+    
+    const newItem = {
+      product: selectedBook?.id || 0,
+      warehouse: warehouses[0]?.id || 0,
+      quantity: 0,
+      notes: ""
+    };
+    
+    setSelectedBookInventory([...selectedBookInventory, newItem]);
   };
 
   return (
@@ -1161,7 +1538,7 @@ const openEditBook = async (book: BookInterface) => {
                 <div className="relative">
                   <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search by ISBN or title..."
+                    placeholder="Search by ISBN, title, author or translator..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-8"
@@ -1229,14 +1606,16 @@ const openEditBook = async (book: BookInterface) => {
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse">
                     <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-3">Book</th>
-                        <th className="text-left font-medium p-3">ISBN</th>
-                        <th className="text-left font-medium p-3">Genre</th>
-                        <th className="text-left font-medium p-3">Price</th>
-                        <th className="text-left font-medium p-3">Status</th>
-                        <th className="text-right font-medium p-3">Actions</th>
-                      </tr>
+  <tr className="text-sm border-b">
+    <th className="p-3 text-left font-medium">Book</th>
+    <th className="p-3 text-left font-medium">Authors</th>
+    <th className="p-3 text-left font-medium">Translators</th>
+    <th className="p-3 text-left font-medium">ISBN</th>
+    <th className="p-3 text-left font-medium">Genre</th>
+    <th className="p-3 text-left font-medium">Price</th>
+    <th className="p-3 text-left font-medium">Status</th>
+    <th className="p-3 text-right  font-medium">Actions</th>
+  </tr>
                     </thead>
                     <tbody>
                       {isLoading ? (
@@ -1302,6 +1681,15 @@ const openEditBook = async (book: BookInterface) => {
                                 </div>
                               </div>
                             </td>
+                            
+                           <td className="p-3">             
+                                             <span className="text-sm">{book.author?.name || "-"}</span>
+                           </td>
+
+                            
+                            <td className="p-3">
+                              <span className="text-sm">{book.translator?.name || "-"}</span>
+                           </td>
                             <td className="p-3">
                               <p className="font-mono text-sm">{book.isbn}</p>
                             </td>
@@ -1319,14 +1707,14 @@ const openEditBook = async (book: BookInterface) => {
                             <td className="p-3">
                               <Badge
                                 className={`${
-                                  book.status === 1
+                                  selectedBook && selectedBook.status?.id === 1
                                     ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
-                                    : book.status === 2
+                                    : selectedBook && selectedBook.status?.id === 2
                                       ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
                                       : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
                                 }`}
                               >
-                                {book.status !== null ? getStatusName(book.status) : 'Unknown'}
+                                {selectedBook && selectedBook.status !== null ? getStatusName(selectedBook.status) : 'Unknown'}
                               </Badge>
                             </td>
                             <td className="p-3 text-right">
@@ -1481,93 +1869,168 @@ const openEditBook = async (book: BookInterface) => {
                         <div className="mt-1">
                           <Badge
                             className={`${
-                              selectedBook.status === 1
+                              selectedBook && selectedBook.status?.id === 1
                                 ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
-                                : selectedBook.status === 2
+                                : selectedBook && selectedBook.status?.id === 2
                                   ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
                                   : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
                             }`}
                           >
-                            {selectedBook.status !== null ? getStatusName(selectedBook.status) : 'Unknown'}
+                            {selectedBook && selectedBook.status !== null ? getStatusName(selectedBook.status) : 'Unknown'}
                           </Badge>
                         </div>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Published Date</p>
-                        <p className="font-medium">{format(new Date(selectedBook.published_at), "MMM dd, yyyy")}</p>
+                        <p className="font-medium">
+                          {selectedBook?.print_runs?.[0]?.published_at
+                            ? format(new Date(selectedBook.print_runs[0].published_at), "MMM dd, yyyy")
+                            : "Not set"}
+                        </p>
                       </div>
                     </div>
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-medium mb-2">Internal Layout</h3>
-                    <p className="text-muted-foreground whitespace-pre-line">{selectedBook.title_ar}</p>
-                  </div>
+  <h3 className="text-lg font-medium mb-2">Authors & Translators</h3>
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <p className="text-sm text-muted-foreground mb-1">Authors</p>
+      <p className="whitespace-pre-line">{selectedBook.author?.name}</p>
+    </div>
+    <div>
+      <p className="text-sm text-muted-foreground mb-1">Translators</p>
+      <p className="whitespace-pre-line">{selectedBook.translator?.name}</p>
+    </div>
+  </div>
+</div>
 
                   <div>
-                    <h3 className="text-lg font-medium mb-2">Cover Design</h3>
-                    <p className="text-muted-foreground whitespace-pre-line">{selectedBook.title_en}</p>
+                    <h3 className="text-lg font-medium mb-2">Warehouse Inventory</h3>
+                    <div className="border-t pt-6">
+                      <h3 className="text-lg font-medium mb-4">Warehouse Inventory</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {selectedBookInventory.length > 0 ? (
+                          selectedBookInventory.map((inv) => (
+                            <div
+                              key={inv.id}
+                              className={`border rounded-lg p-4 ${
+                                inv.quantity > 0 ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
+                              }`}
+                            >
+                              <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-medium">{inv.warehouse_name}</h4>
+                                <Badge
+                                  variant={inv.quantity > 0 ? "default" : "outline"}
+                                  className={
+                                    inv.quantity > 0
+                                      ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
+                                      : "text-red-600 border-red-200"
+                                  }
+                                >
+                                  {inv.quantity > 0 ? `${inv.quantity} in stock` : "Out of stock"}
+                                </Badge>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="col-span-full text-center py-4 text-muted-foreground">
+                            No inventory records found for this book.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Editions Information */}
+                  <div className="border-t pt-6">
+                    <h3 className="text-lg font-medium mb-4">Editions</h3>
+                    <div className="border rounded-md">
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="text-sm border-b">
+                              <th className="text-left font-medium p-3">Edition Number</th>
+                              <th className="text-left font-medium p-3">Price ($)</th>
+                              <th className="text-left font-medium p-3">Print Cost ($)</th>
+                              <th className="text-left font-medium p-3">Status</th>
+                              <th className="text-left font-medium p-3">Published Date</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedBook?.print_runs && selectedBook.print_runs.length > 0 ? (
+                              selectedBook.print_runs.map((printRun, index) => (
+                                <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
+                                  <td className="p-3">
+                                    <span className="font-medium">Edition {printRun.edition_number}</span>
+                                  </td>
+                                  <td className="p-3">
+                                    <span className="font-medium">${printRun.price}</span>
+                                  </td>
+                                  <td className="p-3">
+                                    <span className="font-medium">${printRun.print_cost}</span>
+                                  </td>
+                                  <td className="p-3">
+                                    <Badge
+                                      className={`${
+                                        printRun.status?.id === 1
+                                          ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
+                                          : printRun.status?.id === 2
+                                            ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
+                                            : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
+                                      }`}
+                                    >
+                                      {printRun.status?.display_name_en || "Not set"}
+                                    </Badge>
+                                  </td>
+                                  <td className="p-3">
+                                    <span className="font-medium">
+                                      {printRun.published_at
+                                        ? format(new Date(printRun.published_at), "MMM dd, yyyy")
+                                        : "Not set"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={5} className="py-8 text-center">
+                                  <div className="flex flex-col items-center">
+                                    <p className="text-muted-foreground">No editions available for this book.</p>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end space-x-2 pt-4">
+                    <Button variant="outline" onClick={() => setIsBookDetailsOpen(false)}>
+                      Close
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setIsBookDetailsOpen(false)
+                        openEditBook(selectedBook)
+                      }}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit Book
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setIsBookDetailsOpen(false)
+                        openTransferModal(selectedBook)
+                      }}
+                    >
+                      <MoveRight className="h-4 w-4 mr-2" />
+                      Transfer
+                    </Button>
                   </div>
                 </div>
-              </div>
-
-              {/* Warehouse Inventory */}
-              <div className="border-t pt-6">
-                <h3 className="text-lg font-medium mb-4">Warehouse Inventory</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {selectedBookInventory.length > 0 ? (
-                    selectedBookInventory.map((inv) => (
-                      <div
-                        key={inv.id}
-                        className={`border rounded-lg p-4 ${
-                          inv.quantity > 0 ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
-                        }`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-medium">{inv.warehouse_name}</h4>
-                          <Badge
-                            variant={inv.quantity > 0 ? "default" : "outline"}
-                            className={
-                              inv.quantity > 0
-                                ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
-                                : "text-red-600 border-red-200"
-                            }
-                          >
-                            {inv.quantity > 0 ? `${inv.quantity} in stock` : "Out of stock"}
-                          </Badge>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="col-span-full text-center py-4 text-muted-foreground">
-                      No inventory records found for this book.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-4">
-                <Button variant="outline" onClick={() => setIsBookDetailsOpen(false)}>
-                  Close
-                </Button>
-                <Button
-                  onClick={() => {
-                    setIsBookDetailsOpen(false)
-                    openEditBook(selectedBook)
-                  }}
-                >
-                  <Edit className="h-4 w-4 mr-2" />
-                  Edit Book
-                </Button>
-                <Button
-                  onClick={() => {
-                    setIsBookDetailsOpen(false)
-                    openTransferModal(selectedBook)
-                  }}
-                >
-                  <MoveRight className="h-4 w-4 mr-2" />
-                  Transfer
-                </Button>
               </div>
             </>
           )}
@@ -1585,7 +2048,8 @@ const openEditBook = async (book: BookInterface) => {
                 ref={formRef}
                 className="space-y-6 py-4"
                 onSubmit={(e) => {
-                  e.preventDefault()
+                  console.log('Form submitted');
+                  e.preventDefault();
                   handleAddBook()
                 }}
               >
@@ -1597,7 +2061,8 @@ const openEditBook = async (book: BookInterface) => {
               </TabsList>
 
               <TabsContent value="basic" className="space-y-4 pt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
+                  {/* Row 1: ISBN */}
                   <div>
                     <Label htmlFor="isbn">ISBN</Label>
                     <Input
@@ -1609,75 +2074,152 @@ const openEditBook = async (book: BookInterface) => {
                     />
                   </div>
 
+                  {/* Row 2: Title Arabic and English */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="title_ar">Title (Arabic)</Label>
+                      <Textarea
+                        id="title_ar"
+                        value={newBook.title_ar || ""}
+                        onChange={(e) => setNewBook({ ...newBook, title_ar: e.target.value })}
+                        placeholder="Enter title in Arabic"
+                        rows={4}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="title_en">Title (English)</Label>
+                      <Textarea
+                        id="title_en"
+                        value={newBook.title_en || ""}
+                        onChange={(e) => setNewBook({ ...newBook, title_en: e.target.value })}
+                        placeholder="Enter title in English"
+                        rows={4}
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 3: Genre, Status, and Product Type */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <Label htmlFor="genre">Genre</Label>
+                      <Select
+                        value={newBook.genre?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const genreObj = genres.find(g => g.id === parseInt(value))
+                          setNewBook(prev => ({ ...prev, genre: genreObj || null }))
+                        }}
+                      >
+                        <SelectTrigger id="genre" className="mt-1">
+                          <SelectValue placeholder="Select genre" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {genres.map((genre) => (
+                            <SelectItem key={genre.id} value={genre.id.toString()}>
+                              {genre.display_name_en}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="status">Product Status</Label>
+                      <Select
+                        value={newBook.status?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const statusObj = statusOptions.find(s => s.id === parseInt(value))
+                          setNewBook(prev => ({ ...prev, status: statusObj || null }))
+                        }}
+                      >
+                        <SelectTrigger id="status" className="mt-1">
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {statusOptions.map((status) => (
+                            <SelectItem key={status.id} value={status.id.toString()}>
+                              {status.display_name_en}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="is_direct_product">Product Type</Label>
+                      <div className="flex items-center space-x-2 mt-1">
+                        <Switch
+                          id="is_direct_product"
+                          checked={newBook.is_direct_product}
+                          onCheckedChange={(checked) => 
+                            setNewBook({ ...newBook, is_direct_product: checked })
+                          }
+                        />
+                        <Label htmlFor="is_direct_product" className="text-sm">
+                          Direct Product
+                        </Label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 4: Author and Translator */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="authors">Authors</Label>
+                      <Select
+                        value={newBook.author?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const authorObj = authors.find(a => a.id === parseInt(value));
+                          setNewBook(prev => ({ ...prev, author: authorObj || null }));
+                        }}
+                      >
+                        <SelectTrigger id="authors" className="mt-1">
+                          <SelectValue placeholder="Select author" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {authors.map((author) => (
+                            <SelectItem key={author.id} value={author.id.toString()}>
+                              {author.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="translators">Translators</Label>
+                      <Select
+                        value={newBook.translator?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const translatorObj = translators.find(t => t.id === parseInt(value));
+                          setNewBook(prev => ({ ...prev, translator: translatorObj || null }));
+                        }}
+                      >
+                        <SelectTrigger id="translators" className="mt-1">
+                          <SelectValue placeholder="Select translator" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {translators.map((translator) => (
+                            <SelectItem key={translator.id} value={translator.id.toString()}>
+                              {translator.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Row 5: Cover Design */}
                   <div>
-                    <Label htmlFor="genre">Genre</Label>
-                    <Select
-                      value={newBook.genre?.toString() || ""}
-                      onValueChange={(value) => setNewBook({ ...newBook, genre: Number.parseInt(value) })}
-                    >
-                      <SelectTrigger id="genre" className="mt-1">
-                        <SelectValue placeholder="Select genre" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {genres.map((genre) => (
-                          <SelectItem key={genre.id} value={genre.id.toString()}>
-                            {genre.display_name_en}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <Label htmlFor="title_ar">Title (Arabic)</Label>
-                    <Textarea
-                      id="title_ar"
-                      value={newBook.title_ar || ""}
-                      onChange={(e) => setNewBook({ ...newBook, title_ar: e.target.value })}
-                      placeholder="Enter title in Arabic"
-                      rows={4}
-                      className="mt-1"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <Label htmlFor="title_en">Title (English)</Label>
-                    <Textarea
-                      id="title_en"
-                      value={newBook.title_en || ""}
-                      onChange={(e) => setNewBook({ ...newBook, title_en: e.target.value })}
-                      placeholder="Enter title in English"
-                      rows={4}
-                      className="mt-1"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
                     <Label>Book Cover Image</Label>
                     <div className="border rounded-md p-4 bg-muted/30 mt-1">
-                      <div className="text-center mb-4">
-                        {newBook.cover_image ? (
-                          <div className="relative w-32 h-32 mx-auto">
-                            <img
-                              src={newBook.cover_image}
-                              alt="Book cover preview"
-                              className="w-full h-full object-cover rounded-md"
-                            />
-                            <Button
-                              variant="destructive"
-                              size="icon"
-                              className="absolute -top-2 -right-2 h-6 w-6"
-                              onClick={() => setNewBook({ ...newBook, cover_image: null })}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <>
-                            <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                            <p className="text-sm font-medium">Book Cover Image</p>
-                          </>
-                        )}
+                      <div className="aspect-square rounded-md overflow-hidden mb-2 w-24 h-24 mx-auto">
+                        <img
+                          src={newBook.cover_image || "/placeholder.svg"}
+                          alt="Book cover"
+                          className="w-full h-full object-contain"
+                        />
                       </div>
                       <div className="flex justify-center">
                         <input
@@ -1690,23 +2232,24 @@ const openEditBook = async (book: BookInterface) => {
                             if (file) {
                               const reader = new FileReader();
                               reader.onloadend = () => {
-                                setNewBook({ ...newBook, cover_image: reader.result as string });
+                                setNewBook({
+                                  ...newBook,
+                                  cover_image: reader.result as string
+                                });
                               };
                               reader.readAsDataURL(file);
                             }
                           }}
                         />
                         <Button
-                        type="button"
+                          type="button"
                           variant="outline"
                           size="sm"
-                          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                            e.preventDefault();
-                            e.stopPropagation();
+                          onClick={() => {
                             document.getElementById('cover-image')?.click();
                           }}
                         >
-                          {newBook.cover_image ? 'Change Image' : 'Upload Image'}
+                          Upload Image
                         </Button>
                       </div>
                     </div>
@@ -1715,88 +2258,305 @@ const openEditBook = async (book: BookInterface) => {
               </TabsContent>
 
               <TabsContent value="details" className="space-y-4 pt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="price">Price ($)</Label>
-                    <Input
-                      id="price"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={newBook.price || ""}
-                      onChange={(e) => setNewBook({ ...newBook, price: Number.parseFloat(e.target.value) })}
-                      placeholder="0.00"
-                      className="mt-1"
-                    />
-                  </div>
+                <div className="grid grid-cols-1 gap-4">
+                  {/* Row 1: Genre and Status */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="genre">Genre</Label>
+                      <Select
+                        value={newBook.genre?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const genreObj = genres.find(g => g.id === parseInt(value))
+                          setNewBook(prev => ({ ...prev, genre: genreObj || null }))
+                        }}
+                      >
+                        <SelectTrigger id="genre" className="mt-1">
+                          <SelectValue placeholder="Select genre" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {genres.map((genre) => (
+                            <SelectItem key={genre.id} value={genre.id.toString()}>
+                              {genre.display_name_en}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                  <div>
-                    <Label htmlFor="print_cost">Print Cost ($)</Label>
-                    <Input
-                      id="print_cost"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={newBook.print_cost || ""}
-                      onChange={(e) => setNewBook({ ...newBook, print_cost: Number.parseFloat(e.target.value) })}
-                      placeholder="0.00"
-                      className="mt-1"
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="status">Status</Label>
-                    <Select
-                      value={newBook.status?.toString() || ""}
-                      onValueChange={(value) => setNewBook({ ...newBook, status: value ? parseInt(value) : null })}
-                    >
-                      <SelectTrigger id="status" className="mt-1">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statusOptions.map((status) => (
-                          <SelectItem key={status.id} value={status.id.toString()}>
-                            {status.display_name_en}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="published_at">Published Date</Label>
-                    <div className="mt-1">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button variant={"outline"} className="w-full justify-start text-left font-normal">
-                            <CalendarIcon className="mr-2 h-4 w-4" />
-                            {newBook.published_at ? format(new Date(newBook.published_at), "PPP") : "Select date"}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0">
-                          <CalendarComponent
-                            mode="single"
-                            selected={newBook.published_at ? new Date(newBook.published_at) : undefined}
-                            onSelect={(date) =>
-                              setNewBook({
-                                ...newBook,
-                                published_at: date ? format(date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd"),
-                              })
-                            }
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
+                    <div>
+                      <Label htmlFor="status">Product Status</Label>
+                      <Select
+                        value={newBook.status?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const statusObj = statusOptions.find(s => s.id === parseInt(value))
+                          setNewBook(prev => ({ ...prev, status: statusObj || null }))
+                        }}
+                      >
+                        <SelectTrigger id="status" className="mt-1">
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {statusOptions.map((status) => (
+                            <SelectItem key={status.id} value={status.id.toString()}>
+                              {status.display_name_en}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="is_direct_product"
-                      checked={newBook.is_direct_product || false}
-                      onCheckedChange={(checked) => setNewBook({ ...newBook, is_direct_product: checked })}
-                    />
-                    <Label htmlFor="is_direct_product">Direct Product</Label>
+                  {/* Row 2: Author and Translator */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="authors">Authors</Label>
+                      <Select
+                        value={newBook.author?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const authorObj = authors.find(a => a.id === parseInt(value));
+                          setNewBook(prev => ({ ...prev, author: authorObj || null }));
+                        }}
+                      >
+                        <SelectTrigger id="authors" className="mt-1">
+                          <SelectValue placeholder="Select author" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {authors.map((author) => (
+                            <SelectItem key={author.id} value={author.id.toString()}>
+                              {author.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="translators">Translators</Label>
+                      <Select
+                        value={newBook.translator?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const translatorObj = translators.find(t => t.id === parseInt(value));
+                          setNewBook(prev => ({ ...prev, translator: translatorObj || null }));
+                        }}
+                      >
+                        <SelectTrigger id="translators" className="mt-1">
+                          <SelectValue placeholder="Select translator" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {translators.map((translator) => (
+                            <SelectItem key={translator.id} value={translator.id.toString()}>
+                              {translator.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Row 3: Rights Owner and Reviewer */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="rights_owners">Rights Owner</Label>
+                      <Select
+                        value={newBook.rights_owner?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const rightsOwnerObj = rightsOwners.find(r => r.id === parseInt(value));
+                          setNewBook(prev => ({ ...prev, rights_owner: rightsOwnerObj || null }));
+                        }}
+                      >
+                        <SelectTrigger id="rights_owners" className="mt-1">
+                          <SelectValue placeholder="Select rights owner" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {rightsOwners.map((rightsOwner) => (
+                            <SelectItem key={rightsOwner.id} value={rightsOwner.id.toString()}>
+                              {rightsOwner.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="reviewers">Reviewer</Label>
+                      <Select
+                        value={newBook.reviewer?.id?.toString() || ""}
+                        onValueChange={(value) => {
+                          const reviewerObj = reviewers.find(r => r.id === parseInt(value));
+                          setNewBook(prev => ({ ...prev, reviewer: reviewerObj || null }));
+                        }}
+                      >
+                        <SelectTrigger id="reviewers" className="mt-1">
+                          <SelectValue placeholder="Select reviewer" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {reviewers.map((reviewer) => (
+                            <SelectItem key={reviewer.id} value={reviewer.id.toString()}>
+                              {reviewer.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Row 4: Print Runs Table */}
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-medium">Editions</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAddPrintRun}
+                      >
+                        Add New Edition
+                      </Button>
+                    </div>
+                    
+                    <div className="border rounded-md mt-4">
+                      <div className="bg-muted p-4">
+                        <h3 className="font-medium">Edition Details</h3>
+                      </div>
+                      <div className="p-4">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="text-sm border-b">
+                              <th className="text-left font-medium p-2">Edition Number</th>
+                              <th className="text-left font-medium p-2">Price ($)</th>
+                              <th className="text-left font-medium p-2">Print Cost ($)</th>
+                              <th className="text-left font-medium p-2">Status</th>
+                              <th className="text-left font-medium p-2">Published Date</th>
+                              <th className="text-right font-medium p-2">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {newBook.print_runs.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="text-center py-8">
+                                  <p className="text-muted-foreground">No editions available.</p>
+                                </td>
+                              </tr>
+                            ) : (
+                              newBook.print_runs.map((printRun, index) => (
+                                <tr key={index} className="border-b">
+                                  <td className="p-2">Edition {printRun.edition_number}</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      value={printRun.price}
+                                      onChange={(e) => {
+                                        const updatedPrintRuns = [...newBook.print_runs];
+                                        updatedPrintRuns[index] = {
+                                          ...printRun,
+                                          price: parseFloat(e.target.value) || 0
+                                        };
+                                        setNewBook({
+                                          ...newBook,
+                                          print_runs: updatedPrintRuns
+                                        });
+                                      }}
+                                      className="w-24"
+                                    />
+                                  </td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      value={printRun.print_cost}
+                                      onChange={(e) => {
+                                        const updatedPrintRuns = [...newBook.print_runs];
+                                        updatedPrintRuns[index] = {
+                                          ...printRun,
+                                          print_cost: parseFloat(e.target.value) || 0
+                                        };
+                                        setNewBook({
+                                          ...newBook,
+                                          print_runs: updatedPrintRuns
+                                        });
+                                      }}
+                                      className="w-24"
+                                    />
+                                  </td>
+                                  <td className="p-2">
+                                    <Select
+                                      value={printRun.status?.id?.toString() || ""}
+                                      onValueChange={(value) => {
+                                        const statusObj = printRunStatusOptions.find(s => s.id === parseInt(value));
+                                        const updatedPrintRuns = [...newBook.print_runs];
+                                        updatedPrintRuns[index] = {
+                                          ...printRun,
+                                          status: statusObj || null
+                                        };
+                                        setNewBook({
+                                          ...newBook,
+                                          print_runs: updatedPrintRuns
+                                        });
+                                      }}
+                                    >
+                                      <SelectTrigger className="w-[150px]">
+                                        <SelectValue placeholder="Select status" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {printRunStatusOptions.map((status) => (
+                                          <SelectItem key={status.id} value={status.id.toString()}>
+                                            {status.display_name_en}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </td>
+                                  <td className="p-2">
+                                    <Popover>
+                                      <PopoverTrigger asChild>
+                                        <Button variant="outline" className="w-[150px] justify-start text-left font-normal">
+                                          <CalendarIcon className="mr-2 h-4 w-4" />
+                                          {printRun.published_at ? format(new Date(printRun.published_at), "PPP") : "Select date"}
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-auto p-0">
+                                        <CalendarComponent
+                                          mode="single"
+                                          selected={printRun.published_at ? new Date(printRun.published_at) : undefined}
+                                          onSelect={(date) => {
+                                            const updatedPrintRuns = [...newBook.print_runs];
+                                            updatedPrintRuns[index] = {
+                                              ...printRun,
+                                              published_at: date ? format(date, "yyyy-MM-dd") : undefined
+                                            };
+                                            setNewBook({
+                                              ...newBook,
+                                              print_runs: updatedPrintRuns
+                                            });
+                                          }}
+                                          initialFocus
+                                        />
+                                      </PopoverContent>
+                                    </Popover>
+                                  </td>
+                                  <td className="p-2 text-right">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => {
+                                        const updatedPrintRuns = [...newBook.print_runs];
+                                        updatedPrintRuns.splice(index, 1);
+                                        setNewBook({
+                                          ...newBook,
+                                          print_runs: updatedPrintRuns
+                                        });
+                                      }}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </TabsContent>
@@ -1956,11 +2716,12 @@ const openEditBook = async (book: BookInterface) => {
                 ref={formRef}
                 className="space-y-6 py-4"
                 onSubmit={(e) => {
-                  e.preventDefault()
-                  handleUpdateBook()
+                  console.log('Form submitted');
+                  e.preventDefault();
+                  handleSaveChanges()
                 }}
               >
-                <Tabs defaultValue="basic" className="w-full">
+                <Tabs defaultValue="basic" className="w-full" value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
                   <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="basic">Basic Information</TabsTrigger>
                     <TabsTrigger value="details">Details & Pricing</TabsTrigger>
@@ -1968,7 +2729,8 @@ const openEditBook = async (book: BookInterface) => {
                   </TabsList>
 
                   <TabsContent value="basic" className="space-y-4 pt-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4">
+                      {/* Row 1: ISBN */}
                       <div>
                         <Label htmlFor="edit-isbn">ISBN</Label>
                         <Input
@@ -1979,56 +2741,145 @@ const openEditBook = async (book: BookInterface) => {
                         />
                       </div>
 
+                      {/* Row 2: Title Arabic and English */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="edit-title_ar">Title (Arabic)</Label>
+                          <Textarea
+                            id="edit-title_ar"
+                            value={selectedBook.title_ar}
+                            onChange={(e) => setSelectedBook({ ...selectedBook, title_ar: e.target.value })}
+                            rows={4}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="edit-title_en">Title (English)</Label>
+                          <Textarea
+                            id="edit-title_en"
+                            value={selectedBook.title_en}
+                            onChange={(e) => setSelectedBook({ ...selectedBook, title_en: e.target.value })}
+                            rows={4}
+                            className="mt-1"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 3: Genre, Product Status */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <Label htmlFor="edit-genre">Genre</Label>
+                          <Select
+                            value={selectedBook?.genre?.id?.toString() || ""}
+                            onValueChange={(value) => {
+                              const genreObj = genres.find(g => g.id === parseInt(value))
+                              setSelectedBook(prev => prev ? { ...prev, genre: genreObj || null } : null)
+                            }}
+                          >
+                            <SelectTrigger id="edit-genre" className="mt-1">
+                              <SelectValue placeholder="Select genre" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {genres.map((genre) => (
+                                <SelectItem key={genre.id} value={genre.id.toString()}>
+                                  {genre.display_name_en}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="edit-status">Product Status</Label>
+                          <Select
+                            value={selectedBook?.status?.id?.toString() || ""}
+                            onValueChange={(value) => {
+                              const statusObj = statusOptions.find(s => s.id === parseInt(value))
+                              setSelectedBook(prev => prev ? { ...prev, status: statusObj || null } : null)
+                            }}
+                          >
+                            <SelectTrigger id="edit-status" className="mt-1">
+                              <SelectValue placeholder="Select status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {statusOptions.map((status) => (
+                                <SelectItem key={status.id} value={status.id.toString()}>
+                                  {status.display_name_en}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="edit-is_direct_product">Product Type</Label>
+                          <div className="flex items-center space-x-2 mt-1">
+                            <Switch
+                              id="edit-is_direct_product"
+                              checked={selectedBook.is_direct_product}
+                              onCheckedChange={(checked) => 
+                                setSelectedBook({ ...selectedBook, is_direct_product: checked })
+                              }
+                            />
+                            <Label htmlFor="edit-is_direct_product" className="text-sm">
+                              Direct Product
+                            </Label>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Row 4: Author and Translator */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="edit-authors">Authors</Label>
+                          <Select
+                            value={selectedBook?.author?.id?.toString() || ""}
+                            onValueChange={(value) => {
+                              const authorObj = authors.find(a => a.id === parseInt(value));
+                              setSelectedBook(prev => prev ? { ...prev, author: authorObj || null } : null);
+                            }}
+                          >
+                            <SelectTrigger id="edit-authors" className="mt-1">
+                              <SelectValue placeholder="Select author" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {authors.map((author) => (
+                                <SelectItem key={author.id} value={author.id.toString()}>
+                                  {author.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="edit-translators">Translators</Label>
+                          <Select
+                            value={selectedBook?.translator?.id?.toString() || ""}
+                            onValueChange={(value) => {
+                              const translatorObj = translators.find(t => t.id === parseInt(value));
+                              setSelectedBook(prev => prev ? { ...prev, translator: translatorObj || null } : null);
+                            }}
+                          >
+                            <SelectTrigger id="edit-translators" className="mt-1">
+                              <SelectValue placeholder="Select translator" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {translators.map((translator) => (
+                                <SelectItem key={translator.id} value={translator.id.toString()}>
+                                  {translator.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {/* Row 5: Cover Page Upload */}
                       <div>
-                        <Label htmlFor="edit-genre">Genre</Label>
-                        <Select
-                        value={selectedBook?.genre?.id?.toString() || ""}
-                        onValueChange={(value) => {
-                          const genreObj = genres.find(g => g.id === parseInt(value))
-                          setSelectedBook(prev => prev ? { ...prev, genre: genreObj || null } : null)
-                        }}
-                      >
-
-
-                          <SelectTrigger id="edit-genre" className="mt-1">
-                            <SelectValue placeholder="Select genre" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {genres.map((genre) => (
-                              <SelectItem key={genre.id} value={genre.id.toString()}>
-                                {genre.display_name_en}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <Label htmlFor="edit-title_ar">Title (Arabic)</Label>
-                        <Textarea
-                          id="edit-title_ar"
-                          value={selectedBook.title_ar}
-                          onChange={(e) => setSelectedBook({ ...selectedBook, title_ar: e.target.value })}
-                          rows={4}
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <Label htmlFor="edit-title_en">Title (English)</Label>
-                        <Textarea
-                          id="edit-title_en"
-                          value={selectedBook.title_en}
-                          onChange={(e) => setSelectedBook({ ...selectedBook, title_en: e.target.value })}
-                          rows={4}
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div className="md:col-span-2">
                         <Label>Book Cover Image</Label>
                         <div className="border rounded-md p-4 bg-muted/30 mt-1">
-                          <div className="aspect-square rounded-md overflow-hidden mb-4 max-h-[200px]">
+                          <div className="aspect-square rounded-md overflow-hidden mb-2 w-24 h-24 mx-auto">
                             <img
                               src={getImageUrl(selectedBook.cover_design)}
                               alt={`Book ${selectedBook.isbn}`}
@@ -2082,98 +2933,209 @@ const openEditBook = async (book: BookInterface) => {
                   </TabsContent>
 
                   <TabsContent value="details" className="space-y-4 pt-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="edit-price">Price ($)</Label>
-                        <Input
-                          id="edit-price"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={selectedBook.price}
-                          onChange={(e) =>
-                            setSelectedBook({ ...selectedBook, price: Number.parseFloat(e.target.value) })
-                          }
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div>
-                        <Label htmlFor="edit-print_cost">Print Cost ($)</Label>
-                        <Input
-                          id="edit-print_cost"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={selectedBook.print_cost}
-                          onChange={(e) =>
-                            setSelectedBook({ ...selectedBook, print_cost: Number.parseFloat(e.target.value) })
-                          }
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div>
-                        <Label htmlFor="edit-status">Status</Label>
-                        <Select
-                          value={selectedBook?.status?.id?.toString() || ""}
-                          onValueChange={(value) => {
-                            const statusObj = statusOptions.find(s => s.id === parseInt(value))
-                            setSelectedBook(prev => prev ? { ...prev, status: statusObj || null } : null)
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-medium">Editions</h3>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newEdition: PrintRun = {
+                              product: selectedBook.id || 0,
+                              edition_number: selectedBook.print_runs.length + 1,
+                              price: 0,
+                              print_cost: 0,
+                              status: null,
+                              notes: ""
+                            };
+                            setSelectedBook({
+                              ...selectedBook,
+                              print_runs: [...selectedBook.print_runs, newEdition]
+                            });
                           }}
                         >
-
-                          <SelectTrigger id="edit-status" className="mt-1">
-                            <SelectValue placeholder="Select status" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {statusOptions.map((status) => (
-                              <SelectItem key={status.id} value={status.id.toString()}>
-                                {status.display_name_en}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          Add New Edition
+                        </Button>
                       </div>
-
-                      <div>
-                        <Label htmlFor="edit-published_at">Published Date</Label>
-                        <div className="mt-1">
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button variant={"outline"} className="w-full justify-start text-left font-normal">
-                                <CalendarIcon className="mr-2 h-4 w-4" />
-                                {format(new Date(selectedBook.published_at), "PPP")}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0">
-                              <CalendarComponent
-                                mode="single"
-                                selected={new Date(selectedBook.published_at)}
-                                onSelect={(date) =>
-                                  setSelectedBook({
-                                    ...selectedBook,
-                                    published_at: date
-                                      ? format(date, "yyyy-MM-dd")
-                                      : selectedBook.published_at,
-                                  })
-                                }
-                                initialFocus
-                              />
-                            </PopoverContent>
-                          </Popover>
+                      
+                      <div className="border rounded-md">
+                        <div className="bg-muted p-4 flex justify-between items-center">
+                          <h3 className="font-medium">Edition Details</h3>
                         </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        <Switch
-                          id="edit-is_direct_product"
-                          checked={selectedBook.is_direct_product}
-                          onCheckedChange={(checked) =>
-                            setSelectedBook({ ...selectedBook, is_direct_product: checked })
-                          }
-                        />
-                        <Label htmlFor="edit-is_direct_product">Direct Product</Label>
+                        <div className="p-0">
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse">
+                              <thead>
+                                <tr className="text-sm border-b">
+                                  <th className="text-left font-medium p-3">Edition Number</th>
+                                  <th className="text-left font-medium p-3">Price ($)</th>
+                                  <th className="text-left font-medium p-3">Print Cost ($)</th>
+                                  <th className="text-left font-medium p-3">Status</th>
+                                  <th className="text-left font-medium p-3">Published Date</th>
+                                  <th className="text-right font-medium p-3">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {!selectedBook ? (
+                                  <tr>
+                                    <td colSpan={6} className="py-8 text-center">
+                                      <div className="flex flex-col items-center">
+                                        <p className="text-muted-foreground">No book selected</p>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ) : selectedBook.print_runs.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={6} className="py-8 text-center">
+                                      <div className="flex flex-col items-center">
+                                        <p className="text-muted-foreground mb-4">No editions available.</p>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          onClick={() => {
+                                            const newEdition: PrintRun = {
+                                              product: selectedBook.id || 0,
+                                              edition_number: 1,
+                                              price: 0,
+                                              print_cost: 0,
+                                              status: null,
+                                              notes: ""
+                                            };
+                                            setSelectedBook({
+                                              ...selectedBook,
+                                              print_runs: [...selectedBook.print_runs, newEdition]
+                                            });
+                                          }}
+                                        >
+                                          Create New Edition
+                                        </Button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  selectedBook.print_runs.map((printRun, index) => (
+                                    <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
+                                      <td className="p-3">
+                                        <span className="font-medium">Edition {printRun.edition_number}</span>
+                                      </td>
+                                      <td className="p-3">
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={printRun.price}
+                                          onChange={(e) => {
+                                            const updatedPrintRuns = [...selectedBook.print_runs];
+                                            updatedPrintRuns[index] = {
+                                              ...printRun,
+                                              price: parseFloat(e.target.value) || 0
+                                            };
+                                            setSelectedBook({
+                                              ...selectedBook,
+                                              print_runs: updatedPrintRuns
+                                            });
+                                          }}
+                                          className="w-[100px]"
+                                        />
+                                      </td>
+                                      <td className="p-3">
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={printRun.print_cost}
+                                          onChange={(e) => {
+                                            const updatedPrintRuns = [...selectedBook.print_runs];
+                                            updatedPrintRuns[index] = {
+                                              ...printRun,
+                                              print_cost: parseFloat(e.target.value) || 0
+                                            };
+                                            setSelectedBook({
+                                              ...selectedBook,
+                                              print_runs: updatedPrintRuns
+                                            });
+                                          }}
+                                          className="w-[100px]"
+                                        />
+                                      </td>
+                                      <td className="p-3">
+                                        <Select
+  value={printRun.status?.id?.toString() || ""}
+  onValueChange={(value) => {
+    const statusObj = printRunStatusOptions.find(s => s.id === parseInt(value))
+    const updated = [...selectedBook.print_runs];
+    updated[index] = { ...printRun, status: statusObj || null };
+    setSelectedBook({ ...selectedBook, print_runs: updated });
+  }}
+>
+  <SelectTrigger className="w-[150px]">
+    <SelectValue placeholder="Select status" />
+  </SelectTrigger>
+  <SelectContent>
+  {(() => {
+    //console.log("🗒️ rendering SelectItems:", printRunStatusOptions);
+    return printRunStatusOptions.map((st) => (
+      <SelectItem key={st.id} value={st.id.toString()}>
+        {st.display_name_en}
+      </SelectItem>
+    ));
+  })()}
+  </SelectContent>
+</Select>
+                                      </td>
+                                      <td className="p-3">
+                                        <Popover>
+                                          <PopoverTrigger asChild>
+                                            <Button variant="outline" className="w-[150px] justify-start text-left font-normal">
+                                              <CalendarIcon className="mr-2 h-4 w-4" />
+                                              {printRun.published_at ? format(new Date(printRun.published_at), "PPP") : "Select date"}
+                                            </Button>
+                                          </PopoverTrigger>
+                                          <PopoverContent className="w-auto p-0">
+                                            <CalendarComponent
+                                              mode="single"
+                                              selected={printRun.published_at ? new Date(printRun.published_at) : undefined}
+                                              onSelect={(date) => {
+                                                const updatedPrintRuns = [...selectedBook.print_runs];
+                                                updatedPrintRuns[index] = {
+                                                  ...printRun,
+                                                  published_at: date ? format(date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
+                                                };
+                                                setSelectedBook({
+                                                  ...selectedBook,
+                                                  print_runs: updatedPrintRuns
+                                                });
+                                              }}
+                                              initialFocus
+                                            />
+                                          </PopoverContent>
+                                        </Popover>
+                                      </td>
+                                      <td className="p-3 text-right">
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={() => {
+                                            const updatedPrintRuns = [...selectedBook.print_runs];
+                                            updatedPrintRuns.splice(index, 1);
+                                            setSelectedBook({
+                                              ...selectedBook,
+                                              print_runs: updatedPrintRuns
+                                            });
+                                          }}
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </Button>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </TabsContent>
@@ -2308,14 +3270,26 @@ const openEditBook = async (book: BookInterface) => {
                 </Tabs>
 
                 <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsEditBookOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Save Changes
-                  </Button>
-                </DialogFooter>
+               <Button
+                 type="button"
+                variant="outline"
+              onClick={() => setIsEditBookOpen(false)}
+              >
+                 Cancel
+               </Button>
+               <Button
+                  type="button"
+                  onClick={handleSaveChanges}
+                disabled={isSubmitting}
+              >
+                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                 Save Changes
+              </Button>
+             </DialogFooter>
+
+
+
+
               </form>
             </>
           )}

@@ -54,6 +54,13 @@ const data = {
       isActive: true,
       items: [], // Empty items array means no submenu
     },
+    {
+      title: "Sales",
+      url: "/pos",
+      icon: SquareTerminal,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
     // {
     //   title: "Playground",
     //   url: "#",
