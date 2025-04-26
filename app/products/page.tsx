@@ -1256,9 +1256,10 @@ async function handleUpdateInventory() {
           if (!createRes.ok) throw new Error(`Failed to create print run ${printRun.edition_number}`);
         }
       }
+      selectedBook!.inventory = editBookInventory;
 
       // Update inventory items
-      for (const item of selectedBook?.inventory || []) {
+      for (const item of editBookInventory) {
         if (item.id) {
           // Update existing inventory item
           const updateRes = await fetch(`${API_URL}/inventory/inventory/${item.id}/`, {
@@ -1282,8 +1283,8 @@ async function handleUpdateInventory() {
             method: 'POST',
             headers,
             body: JSON.stringify({
-              product_id: selectedBook?.id,
-              warehouse_id: typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse,
+              product: selectedBook?.id,
+              warehouse: typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse,
               quantity: item.quantity,
               notes: item.notes || '',
             }),
