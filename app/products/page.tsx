@@ -1987,13 +1987,13 @@ async function handleUpdateInventory() {
 
                   {/* Editions Information */}
                   <div className="border-t pt-6">
-                    <h3 className="text-lg font-medium mb-4">Editions</h3>
+                    <h3 className="text-lg font-medium mb-4">Print Runs</h3>
                     <div className="border rounded-md">
                       <div className="overflow-x-auto">
                         <table className="w-full border-collapse">
                           <thead>
                             <tr className="text-sm border-b">
-                              <th className="text-left font-medium p-3">Edition Number</th>
+                              <th className="text-left font-medium p-3">Print Run Number</th>
                               <th className="text-left font-medium p-3">Price ($)</th>
                               <th className="text-left font-medium p-3">Print Cost ($)</th>
                               <th className="text-left font-medium p-3">Status</th>
@@ -2005,7 +2005,7 @@ async function handleUpdateInventory() {
                               selectedBook.print_runs.map((printRun, index) => (
                                 <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
                                   <td className="p-3">
-                                    <span className="font-medium">Edition {printRun.edition_number}</span>
+                                    <span className="font-medium">Print Run {printRun.edition_number}</span>
                                   </td>
                                   <td className="p-3">
                                     <span className="font-medium">${printRun.price}</span>
@@ -2039,7 +2039,7 @@ async function handleUpdateInventory() {
                               <tr>
                                 <td colSpan={5} className="py-8 text-center">
                                   <div className="flex flex-col items-center">
-                                    <p className="text-muted-foreground">No editions available for this book.</p>
+                                    <p className="text-muted-foreground">No Print Runs available for this book.</p>
                                   </div>
                                 </td>
                               </tr>
@@ -2553,7 +2553,7 @@ async function handleUpdateInventory() {
                   <TabsContent value="details" className="space-y-4 pt-4">
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-medium">Editions</h3>
+                        <h3 className="text-lg font-medium">Print Runs</h3>
                         <Button
                           type="button"
                           variant="outline"
@@ -2573,20 +2573,20 @@ async function handleUpdateInventory() {
                             });
                           }}
                         >
-                          Add New Edition
+                          Add New Print Run
                         </Button>
                       </div>
                       
                       <div className="border rounded-md">
                         <div className="bg-muted p-4 flex justify-between items-center">
-                          <h3 className="font-medium">Edition Details</h3>
+                          <h3 className="font-medium">Print Run Details</h3>
                         </div>
                         <div className="p-0">
                           <div className="overflow-x-auto">
                             <table className="w-full border-collapse">
                               <thead>
                                 <tr className="text-sm border-b">
-                                  <th className="text-left font-medium p-3">Edition Number</th>
+                                  <th className="text-left font-medium p-3">Print Run Number</th>
                                   <th className="text-left font-medium p-3">Price ($)</th>
                                   <th className="text-left font-medium p-3">Print Cost ($)</th>
                                   <th className="text-left font-medium p-3">Status</th>
@@ -2607,7 +2607,7 @@ async function handleUpdateInventory() {
                                   <tr>
                                     <td colSpan={6} className="py-8 text-center">
                                       <div className="flex flex-col items-center">
-                                        <p className="text-muted-foreground mb-4">No editions available.</p>
+                                        <p className="text-muted-foreground mb-4">No Print Runs available.</p>
                                         <Button
                                           type="button"
                                           variant="outline"
@@ -2626,7 +2626,7 @@ async function handleUpdateInventory() {
                                             });
                                           }}
                                         >
-                                          Create New Edition
+                                          Create New Print Run
                                         </Button>
                                       </div>
                                     </td>
@@ -2635,7 +2635,7 @@ async function handleUpdateInventory() {
                                   selectedBook.print_runs.map((printRun, index) => (
                                     <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
                                       <td className="p-3">
-                                        <span className="font-medium">Edition {printRun.edition_number}</span>
+                                        <span className="font-medium">Print Run {printRun.edition_number}</span>
                                       </td>
                                       <td className="p-3">
                                         <Input

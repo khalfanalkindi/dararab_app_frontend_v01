@@ -1,7 +1,7 @@
 "use client"
 
 import type * as React from "react"
-import { BookOpen, Bot, Frame, Map, PieChart, Settings2, SquareTerminal } from "lucide-react"
+import { BookOpen, ShoppingCart, SquareLibrary, BookCopy, Blocks,FileSpreadsheet, Settings2, SquareTerminal, LayoutDashboard } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { NavMain } from "./nav-main"
@@ -29,35 +29,35 @@ const data = {
     {
       title: "Dashboard",
       url: "/dashboard",
-      icon: SquareTerminal,
+      icon: LayoutDashboard,
       isActive: true,
       items: [], // Empty items array means no submenu
     },
     {
       title: "Projects",
       url: "/projects",
-      icon: SquareTerminal,
+      icon: Blocks,
       isActive: true,
       items: [], // Empty items array means no submenu
     },
     {
       title: "Projects Contracts",
       url: "/projects-contracts",
-      icon: SquareTerminal,
+      icon: FileSpreadsheet,
       isActive: true,
       items: [], // Empty items array means no submenu
     },
     {
       title: "Products",
       url: "/products",
-      icon: SquareTerminal,
+      icon: BookCopy,
       isActive: true,
       items: [], // Empty items array means no submenu
     },
     {
       title: "Sales",
       url: "/pos",
-      icon: SquareTerminal,
+      icon: ShoppingCart,
       isActive: true,
       items: [], // Empty items array means no submenu
     },

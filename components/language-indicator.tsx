@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { LayoutDashboard } from "lucide-react"
+import { SquareLibrary } from "lucide-react"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
 
 export function LanguageIndicator() {
@@ -45,11 +45,11 @@ export function LanguageIndicator() {
       <SidebarMenuItem>
         <SidebarMenuButton size="lg" className="pointer-events-none">
         <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-black text-white">
-            <LayoutDashboard className="size-4" />
+            <SquareLibrary className="size-4" />
           </div>
           <div className="grid flex-1 text-left text-sm leading-tight">
             <span className="truncate font-semibold">{language === "en" ? "DarArab" : "دار عرب"}</span>
-            <span className="truncate text-xs">{language === "en" ? "Manament System" : "نظام الإدارة"}</span>
+            <span className="truncate text-xs">{language === "en" ? "Management System" : "نظام الإدارة"}</span>
           </div>
         </SidebarMenuButton>
       </SidebarMenuItem>

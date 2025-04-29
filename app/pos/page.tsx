@@ -60,6 +60,12 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import jsPDF from "jspdf"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
@@ -79,6 +85,7 @@ interface Product {
   latest_price: string | null;
   latest_cost: string | null;
   cover_design_url: string | null;
+  warehouse_stock?: number;
 }
 
 interface Customer {
@@ -168,6 +175,7 @@ export default function POSPage() {
   const [showInvoiceControls, setShowInvoiceControls] = useState(false)
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<any>(null)
+  const [isWarehouseDropdownOpen, setIsWarehouseDropdownOpen] = useState(false)
 
   // Add error handling for avatar image
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -175,7 +183,7 @@ export default function POSPage() {
     target.src = "/placeholder.svg";
   };
 
-  // Update the fetchData function to include all necessary API calls
+  // Update the fetchData function
   const fetchData = async () => {
     try {
       setIsLoading(true);
@@ -185,6 +193,9 @@ export default function POSPage() {
         Authorization: `Bearer ${token}`,
       };
 
+      // Add warehouse_id to the query if selected
+      const warehouseQuery = selectedWarehouse ? `?warehouse_id=${selectedWarehouse}` : '';
+      
       // Fetch all data in parallel
       const [
         productsRes,
@@ -194,7 +205,7 @@ export default function POSPage() {
         paymentMethodsRes,
         invoiceTypesRes
       ] = await Promise.all([
-        fetch(`${API_URL}/inventory/product-summary/`, { headers }),
+        fetch(`${API_URL}/inventory/pos-product-summary/${warehouseQuery}`, { headers }),
         fetch(`${API_URL}/sales/customers/`, { headers }),
         fetch(`${API_URL}/common/list-items/genre/`, { headers }),
         fetch(`${API_URL}/inventory/warehouses/`, { headers }),
@@ -241,9 +252,6 @@ export default function POSPage() {
       setInvoiceTypes(invoiceTypesArray);
 
       // Set default values if available
-      if (warehousesArray.length > 0) {
-        setSelectedWarehouse(warehousesArray[0].id);
-      }
       if (paymentMethodsArray.length > 0) {
         setSelectedPaymentMethod(paymentMethodsArray[0].id);
       }
@@ -580,6 +588,13 @@ export default function POSPage() {
     }
   }
 
+  // Add new useEffect for warehouse changes
+  useEffect(() => {
+    if (selectedWarehouse) {
+      fetchData();
+    }
+  }, [selectedWarehouse]);
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -760,7 +775,7 @@ export default function POSPage() {
                         value={selectedWarehouse?.toString() || ""}
                         onValueChange={(value) => setSelectedWarehouse(Number(value))}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger className="w-[200px]">
                           <SelectValue placeholder="Select warehouse" />
                         </SelectTrigger>
                         <SelectContent>
@@ -874,6 +889,10 @@ export default function POSPage() {
                                   <SelectItem value="10">10%</SelectItem>
                                   <SelectItem value="15">15%</SelectItem>
                                   <SelectItem value="20">20%</SelectItem>
+                                  <SelectItem value="25">25%</SelectItem>
+                                  <SelectItem value="50">50%</SelectItem>
+                                  <SelectItem value="75">75%</SelectItem>
+                                  <SelectItem value="100">100%</SelectItem>
                                 </SelectContent>
                               </Select>
                               <span className="text-xs ml-auto">
@@ -918,6 +937,9 @@ export default function POSPage() {
                             <SelectItem value="15">15%</SelectItem>
                             <SelectItem value="20">20%</SelectItem>
                             <SelectItem value="25">25%</SelectItem>
+                            <SelectItem value="50">50%</SelectItem>
+                            <SelectItem value="75">75%</SelectItem>
+                            <SelectItem value="100">100%</SelectItem>
                           </SelectContent>
                         </Select>
                         <span className="min-w-[60px] text-right">
@@ -1048,24 +1070,83 @@ export default function POSPage() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Products</CardTitle>
+                <div className="flex items-center gap-2">
+                  
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
                   <div className="flex flex-col gap-2">
-                    <div className="relative flex items-center">
-                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search products by title, ISBN..."
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        className="pl-8"
-                      />
+                    <div className="relative flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search products by title, ISBN..."
+                          value={searchInput}
+                          onChange={(e) => setSearchInput(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                      <Popover open={isWarehouseDropdownOpen} onOpenChange={setIsWarehouseDropdownOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsWarehouseDropdownOpen(true)}
+                          >
+                            {selectedWarehouse ? warehouses.find(w => w.id === selectedWarehouse)?.name_en : "All Warehouses"}
+                            <ChevronDown className="ml-2 h-4 w-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[200px] p-0">
+                          <Command>
+                            <CommandInput placeholder="Search warehouses..." />
+                            <CommandList>
+                              <CommandEmpty>No warehouse found.</CommandEmpty>
+                              <CommandGroup>
+                                <CommandItem
+                                  onSelect={() => {
+                                    setSelectedWarehouse(null);
+                                    setIsWarehouseDropdownOpen(false);
+                                    fetchData(); // Refresh data when selecting "All Warehouses"
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      selectedWarehouse === null ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  All Warehouses
+                                </CommandItem>
+                                {warehouses.map((warehouse) => (
+                                  <CommandItem
+                                    key={warehouse.id}
+                                    onSelect={() => {
+                                      setSelectedWarehouse(warehouse.id);
+                                      setIsWarehouseDropdownOpen(false);
+                                      fetchData(); // Refresh data when selecting a specific warehouse
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        selectedWarehouse === warehouse.id ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {warehouse.name_en}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                       <Popover open={isGenreDropdownOpen} onOpenChange={setIsGenreDropdownOpen}>
                         <PopoverTrigger asChild>
                           <Button
                             variant="outline"
                             size="sm"
-                            className="ml-2"
                             onClick={() => setIsGenreDropdownOpen(true)}
                           >
                             {selectedGenre ? selectedGenre.display_name_en : "All Genres"}
@@ -1115,8 +1196,8 @@ export default function POSPage() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                    {selectedGenre && (
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      {selectedGenre && (
                         <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 rounded-full text-sm">
                           {selectedGenre.display_name_en}
                           <Button
@@ -1128,8 +1209,21 @@ export default function POSPage() {
                             <X className="h-3 w-3" />
                           </Button>
                         </div>
-                      </div>
-                    )}
+                      )}
+                      {selectedWarehouse && (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 rounded-full text-sm">
+                          {warehouses.find(w => w.id === selectedWarehouse)?.name_en}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-4 w-4 p-0 hover:bg-transparent"
+                            onClick={() => setSelectedWarehouse(null)}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   {isLoading ? (
                     <div className="flex justify-center items-center py-12">
@@ -1163,7 +1257,27 @@ export default function POSPage() {
                             <div className="space-y-1">
                               <h3 className="font-medium text-sm line-clamp-1">{product.title_en}</h3>
                               <div className="flex justify-between items-center">
-                                <p className="font-bold text-sm">{(product.latest_price ? parseFloat(product.latest_price).toFixed(3) : "N/A")} OMR</p>
+                                <div>
+                                  <p className="font-bold text-sm">{(product.latest_price ? parseFloat(product.latest_price).toFixed(3) : "N/A")} OMR</p>
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <p className="text-xs text-muted-foreground cursor-help">
+                                          Stock: {product.stock || product.warehouse_stock || 0}
+                                        </p>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <div className="space-y-1">
+                                          <p className="font-medium">Stock Information</p>
+                                          <p>Current Stock: {product.stock || product.warehouse_stock || 0}</p>
+                                          <p>ISBN: {product.isbn || 'N/A'}</p>
+                                          <p>Author: {product.author_name || 'N/A'}</p>
+                                          <p>Translator: {product.translator_name || 'N/A'}</p>
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                </div>
                                 <Button 
                                   size="sm" 
                                   className="h-7 px-2 text-xs"

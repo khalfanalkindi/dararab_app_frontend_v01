@@ -1141,7 +1141,7 @@ export default function ProjectContract() {
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
                             <div>
                               <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <DollarSign className="h-3 w-3 mr-1" /> Commission
+                                <DollarSign className="h-3 w-3 mr-1" /> Royalties
                               </p>
                               <p className="text-sm">
                                 {contract.commission_percent !== null ? `${contract.commission_percent}%` : "Not set"}
@@ -1370,7 +1370,7 @@ export default function ProjectContract() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="fixed_amount">Fixed Amount</Label>
+        <Label htmlFor="fixed_amount">Advanced Amount</Label>
         <Input
           id="fixed_amount"
           name="fixed_amount"
@@ -1382,7 +1382,7 @@ export default function ProjectContract() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="commission_percent">Commission Percentage</Label>
+        <Label htmlFor="commission_percent">Royalties Percentage</Label>
         <Input
           id="commission_percent"
           name="commission_percent"

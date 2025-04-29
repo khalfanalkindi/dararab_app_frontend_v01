@@ -8,9 +8,9 @@ import { headers } from 'next/headers'
 // Add headers configuration
 export async function generateMetadata() {
   return {
-    title: "Admin Dashboard",
-    description: "Admin dashboard with language switching and user management",
-    generator: 'v0.dev'
+    title: "DarArab for Publishing and Translation",
+    description: "DarArab for Publishing and Translation",
+    generator: 'v1.0'
   }
 }
 
