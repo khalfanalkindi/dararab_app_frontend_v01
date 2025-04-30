@@ -1356,21 +1356,43 @@ async function handleUpdateInventory() {
       }
 
       // Get current inventory for both warehouses
-      const fromInventoryRes = await fetch(`${API_URL}/inventory/inventory/?product=${selectedBook.id}&warehouse=${transfer.from_warehouse}`, { headers });
-      if (!fromInventoryRes.ok) throw new Error("Failed to fetch source warehouse inventory");
-      const fromInventoryData = await fromInventoryRes.json();
-      const fromInventory = Array.isArray(fromInventoryData) ? fromInventoryData[0] : fromInventoryData.results?.[0];
+      // Force fresh fetch before using inventory
+    const fromInventoryRes = await fetch(`${API_URL}/inventory/inventory/?product_id=${selectedBook.id}&warehouse_id=${transfer.from_warehouse}`, { headers });
+    const fromData = await fromInventoryRes.json();
+    const fromInventory = fromData.results?.[0];
+    console.log("Fresh fromInventory", fromInventory);
 
-      const toInventoryRes = await fetch(`${API_URL}/inventory/inventory/?product=${selectedBook.id}&warehouse=${transfer.to_warehouse}`, { headers });
-      if (!toInventoryRes.ok) throw new Error("Failed to fetch destination warehouse inventory");
-      const toInventoryData = await toInventoryRes.json();
-      const toInventory = Array.isArray(toInventoryData) ? toInventoryData[0] : toInventoryData.results?.[0];
+      // const fromInventoryRes = await fetch(`${API_URL}/inventory/inventory/?product=${selectedBook.id}&warehouse=${transfer.from_warehouse}`, { headers });
+      // if (!fromInventoryRes.ok) throw new Error("Failed to fetch source warehouse inventory");
+      // const fromInventoryData = await fromInventoryRes.json();
+      // const fromInventory = Array.isArray(fromInventoryData) ? fromInventoryData[0] : fromInventoryData.results?.[0];
+
+      // const toInventoryRes = await fetch(`${API_URL}/inventory/inventory/?product=${selectedBook.id}&warehouse=${transfer.to_warehouse}`, { headers });
+      // if (!toInventoryRes.ok) throw new Error("Failed to fetch destination warehouse inventory");
+      // const toInventoryData = await toInventoryRes.json();
+      // const toInventory = toInventoryData?.[0];
+      //const toInventory = Array.isArray(toInventoryData) ? toInventoryData[0] : toInventoryData.results?.[0];
+
+      const toRes = await fetch(`${API_URL}/inventory/inventory/?product_id=${selectedBook.id}&warehouse_id=${transfer.to_warehouse}`, {
+      headers,
+    });
+      const toData = await toRes.json();
+      console.log("toData", toData);
+      const toInventory = toData.results.find((inv) => inv.warehouse?.id === transfer.to_warehouse);
+      console.log("toData.results", toData.results.map(inv => inv.warehouse?.id));
+
+
+
+      console.log("TO INVENTORY", toInventory);
+
 
       const transferQuantity = transfer.quantity || 0;
 
       // Update source warehouse inventory using the product-specific endpoint
       if (fromInventory) {
         const newFromQuantity = fromInventory.quantity - transferQuantity;
+        console.log("fromInventory.quantity", fromInventory.quantity);
+        console.log("transferQuantity", transferQuantity);
         if (newFromQuantity < 0) {
           throw new Error("Insufficient quantity in source warehouse");
         }
@@ -1391,42 +1413,49 @@ async function handleUpdateInventory() {
         }
       }
 
+      console.log("TO INVENTORY", toInventory);
+
+
       // Update destination warehouse inventory using the product-specific endpoint
       if (toInventory) {
-        const newToQuantity = toInventory.quantity + transferQuantity;
-        const updateToRes = await fetch(`${API_URL}/inventory/inventory/product/${selectedBook.id}/update/`, {
-          method: 'PUT',
-          headers,
-          body: JSON.stringify({
-            product_id: selectedBook.id,
-            warehouse_id: transfer.to_warehouse,
-            quantity: newToQuantity,
-            notes: toInventory.notes || ''
-          }),
-        });
-        if (!updateToRes.ok) {
-          const errorData = await updateToRes.json();
-          console.error('Update destination inventory error:', errorData);
-          throw new Error(errorData.detail || "Failed to update destination warehouse inventory");
-        }
-      } else {
-        // Create new inventory record for destination warehouse
-        const createToRes = await fetch(`${API_URL}/inventory/inventory/`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            product_id: selectedBook.id,
-            warehouse_id: transfer.to_warehouse,
-            quantity: transferQuantity,
-            notes: ''
-          }),
-        });
-        if (!createToRes.ok) {
-          const errorData = await createToRes.json();
-          console.error('Create destination inventory error:', errorData);
-          throw new Error(errorData.detail || "Failed to create destination warehouse inventory");
-        }
-      }
+  const newToQuantity = (toInventory?.quantity || 0) + (transfer.quantity || 0);
+  
+  const updateToRes = await fetch(`${API_URL}/inventory/inventory/product/${selectedBook.id}/update/`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({
+      product_id: selectedBook.id,
+      warehouse_id: transfer.to_warehouse,
+      quantity: newToQuantity,
+      notes: toInventory.notes || ''
+    }),
+  });
+
+  if (!updateToRes.ok) {
+    const errorData = await updateToRes.json();
+    console.error('Update destination inventory error:', errorData);
+    throw new Error(errorData.detail || "Failed to update destination warehouse inventory");
+  }
+} else {
+  // Create new destination inventory
+  const createToRes = await fetch(`${API_URL}/inventory/inventory/`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      product_id: selectedBook.id,
+      warehouse_id: transfer.to_warehouse,
+      quantity: transferQuantity,
+      notes: ''
+    }),
+  });
+
+  if (!createToRes.ok) {
+    const errorData = await createToRes.json();
+    console.error('Create destination inventory error:', errorData);
+    throw new Error(errorData.detail || "Failed to create destination warehouse inventory");
+  }
+}
+
 
       // Refresh product summaries and inventory data
       const [summaryRes, inventoryRes] = await Promise.all([
@@ -1897,7 +1926,7 @@ async function handleUpdateInventory() {
                           {selectedBook.genre !== null ? getGenreName(selectedBook.genre) : 'Unknown'}
                         </Badge>
                       </div>
-                      <div>
+                      {/* <div>
                         <p className="text-sm text-muted-foreground">Price</p>
                         <div className="flex items-baseline gap-2">
                           <p className="font-medium">${selectedBook.price || 0}</p>
@@ -1906,13 +1935,13 @@ async function handleUpdateInventory() {
                       <div>
                         <p className="text-sm text-muted-foreground">Print Cost</p>
                         <p className="font-medium">${selectedBook.print_cost || 0}</p>
-                      </div>
+                      </div> */}
                       <div>
                         <p className="text-sm text-muted-foreground">Status</p>
                         <div className="mt-1">
                           <Badge
                             className={`${
-                              selectedBook && selectedBook.status?.id === 1
+                              selectedBook && selectedBook.status?.id === 17
                                 ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
                                 : selectedBook && selectedBook.status?.id === 2
                                   ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
@@ -2016,7 +2045,7 @@ async function handleUpdateInventory() {
                                   <td className="p-3">
                                     <Badge
                                       className={`${
-                                        printRun.status?.id === 1
+                                        printRun.status?.id === 41
                                           ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
                                           : printRun.status?.id === 2
                                             ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
