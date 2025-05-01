@@ -49,29 +49,40 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
+// Define page type
+type Page = {
+  id: number;
+  name: string;
+  name_ar: string;
+  url: string;
+}
+
 export default function PagesManagement() {
-  const [pages, setPages] = useState([])
+  const [pages, setPages] = useState<Page[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [pageToDelete, setPageToDelete] = useState(null)
-  const [editingPage, setEditingPage] = useState(null)
+  const [pageToDelete, setPageToDelete] = useState<number | null>(null)
+  const [editingPage, setEditingPage] = useState<Page | null>(null)
   const [isAddPageOpen, setIsAddPageOpen] = useState(false)
   const [isEditPageOpen, setIsEditPageOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
-  const [actionAlert, setActionAlert] = useState({
+  const [actionAlert, setActionAlert] = useState<{
+    type: "success" | "error" | "warning" | null;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
 
   // Form state for new page
-  const [newPage, setNewPage] = useState({
+  const [newPage, setNewPage] = useState<Omit<Page, 'id'>>({
     name: "",
     name_ar: "",
     url: "",
   })
 
   // Show alert message
-  const showAlert = (type, message) => {
+  const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
@@ -224,19 +235,19 @@ export default function PagesManagement() {
   }
 
   // Open edit dialog with page data
-  const openEditDialog = (page) => {
+  const openEditDialog = (page: Page) => {
     setEditingPage({ ...page })
     setIsEditPageOpen(true)
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (pageId) => {
+  const openDeleteDialog = (pageId: number) => {
     setPageToDelete(pageId)
     setIsDeleteAlertOpen(true)
   }
 
   // Format URL for display
-  const formatUrl = (url) => {
+  const formatUrl = (url: string) => {
     if (!url) return ""
     if (url.startsWith("http://") || url.startsWith("https://")) {
       return url
