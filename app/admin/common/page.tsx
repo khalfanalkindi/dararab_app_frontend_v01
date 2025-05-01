@@ -45,7 +45,10 @@ export default function ListManagementPage() {
   const [editItem, setEditItem] = useState<any>(null)
   const [deleteTypeId, setDeleteTypeId] = useState<number | null>(null)
   const [deleteItemId, setDeleteItemId] = useState<number | null>(null)
-  const [actionAlert, setActionAlert] = useState({
+  const [actionAlert, setActionAlert] = useState<{
+    type: "success" | "error" | "warning" | null;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
@@ -56,7 +59,7 @@ export default function ListManagementPage() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
 
   // Show alert message
-  const showAlert = (type, message) => {
+  const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
