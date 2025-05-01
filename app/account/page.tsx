@@ -80,8 +80,10 @@ export default function AccountPage() {
   })
 
   // Show alert message
-  const showAlert = (type, message) => {
-    setActionAlert({ type, message })
+  type AlertType = "success" | "error" | "info";
+
+
+  const showAlert = (type: AlertType, message: string) => {
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
       setActionAlert({ type: null, message: "" })
