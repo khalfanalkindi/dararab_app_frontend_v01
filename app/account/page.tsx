@@ -22,6 +22,16 @@ import { AlertCircle, CheckCircle2, User } from "lucide-react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
+// Define user data type
+type UserData = {
+  username: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_number: string;
+  role: string;
+}
+
 export default function AccountPage() {
   // Get user data from localStorage
   const [userData, setUserData] = useState(() => {
@@ -91,7 +101,7 @@ export default function AccountPage() {
   }
 
   // Handle input change
-  const handleChange = (e) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     setFormData({
       ...formData,
@@ -99,7 +109,7 @@ export default function AccountPage() {
     })
 
     // Clear validation errors when user types
-    if (errors[name]) {
+    if (errors[name as keyof typeof errors]) {
       setErrors({
         ...errors,
         [name]: "",
@@ -137,7 +147,7 @@ export default function AccountPage() {
   }
 
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     if (!validateForm()) {
@@ -187,7 +197,7 @@ export default function AccountPage() {
   }
 
   // Save user data to localStorage
-  const saveUserDataToLocalStorage = (userData) => {
+  const saveUserDataToLocalStorage = (userData: UserData) => {
     try {
       // Get existing data first
       const existingData = localStorage.getItem("userData")
