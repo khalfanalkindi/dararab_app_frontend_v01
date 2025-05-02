@@ -230,7 +230,7 @@ export default function POSPage() {
       // Process products - filter only available products
       let availableProducts: Product[] = [];
       if (productsData.results) {
-        availableProducts = productsData.results.filter((p: Product) => p.status_id === 17);
+        availableProducts = productsData.results.filter((p: Product) => p.status_id === 2);
       } else {
         console.warn("Unexpected products data structure:", productsData);
       }
