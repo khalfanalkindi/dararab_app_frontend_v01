@@ -71,7 +71,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import React from 'react'
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
 // Book interface
 interface PrintRun {
