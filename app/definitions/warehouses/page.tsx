@@ -117,7 +117,7 @@ export default function WarehouseManagement() {
 
   const fetchWarehouseTypes = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/list-items/?category=warehouse_type`, { headers })
+      const res = await fetch(`${API_URL}/common/list-items/warehouse_type`, { headers })
       const data = await res.json()
       const typesData = Array.isArray(data) ? data : data.results || []
       setWarehouseTypes(typesData)
