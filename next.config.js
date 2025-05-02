@@ -16,7 +16,7 @@ const nextConfig = {
               style-src 'self' 'unsafe-inline';
               img-src 'self' data:;
               font-src 'self' data:;
-              connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 ws:;
+              connect-src 'self' https://dararabappbackendv01-production.up.railway.app ws:;
               frame-src 'self'
             `.replace(/\n/g, ""),
           }
