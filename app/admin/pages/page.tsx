@@ -377,7 +377,7 @@ export default function PagesManagement() {
                   pages.map((page) => (
                     <div key={page.id} className="grid grid-cols-5 text-sm py-3 border-b last:border-0 items-center">
                       <div className="font-medium">{page.name}</div>
-                      <div className="text-right" className="text-center">
+                      <div className="text-right text-center">
                         {page.name_ar || "لا يوجد اسم بالعربية"}
                       </div>
                       <div className="col-span-2 flex items-center">
