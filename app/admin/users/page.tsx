@@ -113,7 +113,8 @@ export default function UsersPage() {
           headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
         })
         if (!response.ok) throw new Error("Failed to fetch users")
-        setUsers(await response.json())
+        const data = await response.json()
+        setUsers(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
         toast({
           title: "Error",
