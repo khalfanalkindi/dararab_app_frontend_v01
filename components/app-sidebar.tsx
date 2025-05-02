@@ -61,6 +61,27 @@ const data = {
       isActive: true,
       items: [], // Empty items array means no submenu
     },
+    {
+      title: "Definitions",
+      url: "/definitions",
+      icon: FileSpreadsheet,
+      isActive: true,
+      items: [
+        {
+          title: "Authors",
+          url: "/definitions/authors",
+        },
+        {
+          title: "Translators",
+          url: "/definitions/translators",
+        },
+        {
+          title: "Warehouses",
+          url: "/definitions/warehouses",
+        },
+      ]
+    },
+  
     // {
     //   title: "Playground",
     //   url: "#",
