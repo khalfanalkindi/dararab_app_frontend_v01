@@ -9,18 +9,25 @@ const nextConfig = {
         headers: [
           {
             key: 'Content-Security-Policy',
-            //value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ws:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-src 'self'"
-            value: `
-              default-src 'self';
-              script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules';
-              style-src 'self' 'unsafe-inline';
-              img-src 'self' data:;
-              font-src 'self' data:;
-              connect-src 'self' https://dararabappbackendv01-production.up.railway.app ws:;
-              frame-src 'self'
-            `.replace(/\n/g, ""),
-          }
-        ]
+            value:
+              "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://dararabappbackendv01-production.up.railway.app; frame-src 'self';",
+          },
+        ],
+        // headers: [
+        //   {
+        //     key: 'Content-Security-Policy',
+        //     //value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ws:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-src 'self'"
+        //     value: `
+        //       default-src 'self';
+        //       script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules';
+        //       style-src 'self' 'unsafe-inline';
+        //       img-src 'self' data:;
+        //       font-src 'self' data:;
+        //       connect-src 'self' https://dararabappbackendv01-production.up.railway.app ws:;
+        //       frame-src 'self'
+        //     `.replace(/\n/g, ""),
+        //   }
+        // ]
       }
     ]
   },
