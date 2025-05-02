@@ -105,6 +105,7 @@ interface BookInterface {
   editions?: {
     published_at: string;
   }[];
+  inventory?: Inventory[];  // Add inventory property
 }
 
 // Genre interface
@@ -273,7 +274,13 @@ export default function BookManagement() {
   const [newBookInventory, setNewBookInventory] = useState<InventoryItem[]>([])
 
   const [addBookInventory, setAddBookInventory] = useState<InventoryItem[]>([])
-  const [editBookInventory, setEditBookInventory] = useState<InventoryItem[]>([])
+  const [editBookInventory, setEditBookInventory] = useState<Array<{
+    id?: number;
+    product: number;
+    warehouse: number;
+    quantity: number;
+    notes: string;
+  }>>([]);
 
   // Add these state variables in the BookManagement component
   const [authors, setAuthors] = useState<Author[]>([]);
@@ -1267,7 +1274,7 @@ async function handleUpdateInventory() {
             headers,
             body: JSON.stringify({
               product_id: selectedBook?.id,
-              warehouse_id: typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse,
+              warehouse_id: item.warehouse,
               quantity: item.quantity,
               notes: item.notes || '',
             }),
@@ -1284,7 +1291,7 @@ async function handleUpdateInventory() {
             headers,
             body: JSON.stringify({
               product: selectedBook?.id,
-              warehouse: typeof item.warehouse === 'object' ? item.warehouse.id : item.warehouse,
+              warehouse: item.warehouse,
               quantity: item.quantity,
               notes: item.notes || '',
             }),
@@ -1378,8 +1385,8 @@ async function handleUpdateInventory() {
     });
       const toData = await toRes.json();
       console.log("toData", toData);
-      const toInventory = toData.results.find((inv) => inv.warehouse?.id === transfer.to_warehouse);
-      console.log("toData.results", toData.results.map(inv => inv.warehouse?.id));
+      const toInventory = toData.results.find((inv: { warehouse?: { id: number } }) => inv.warehouse?.id === transfer.to_warehouse);
+      console.log("toData.results", toData.results.map((inv: { warehouse?: { id: number } }) => inv.warehouse?.id));
 
 
 
