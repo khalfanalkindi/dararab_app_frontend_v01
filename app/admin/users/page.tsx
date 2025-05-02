@@ -51,16 +51,35 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 // Sample user data
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
+type User = {
+  id: number;
+  username: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  role: number | { id: number; name: string };
+  is_active: boolean;
+  phone_number: string;
+}
+
+type Role = {
+  id: number;
+  name: string;
+}
+
 export default function UsersPage() {
-  const [users, setUsers] = useState([])
-  const [roles, setRoles] = useState([])
+  const [users, setUsers] = useState<User[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [userToDelete, setUserToDelete] = useState(null)
-  const [editingUser, setEditingUser] = useState(null)
+  const [userToDelete, setUserToDelete] = useState<number | null>(null)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
   const [isAddUserOpen, setIsAddUserOpen] = useState(false)
   const [isEditUserOpen, setIsEditUserOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
-  const [actionAlert, setActionAlert] = useState({
+  const [actionAlert, setActionAlert] = useState<{
+    type: "success" | "error" | "warning" | null;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
@@ -78,7 +97,7 @@ export default function UsersPage() {
   })
 
   // Show alert message
-  const showAlert = (type, message) => {
+  const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
@@ -568,7 +587,7 @@ export default function UsersPage() {
                 <Label htmlFor="edit-role">Role</Label>
                 <Select
                   value={editingUser.role?.toString() || ""}
-                  onValueChange={(value) => setEditingUser({ ...editingUser, role: value })}
+                  onValueChange={(value) => setEditingUser({ ...editingUser, role: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-role">
                     <SelectValue placeholder="Select role" />

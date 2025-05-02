@@ -51,26 +51,58 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
+// Define types
+type Role = {
+  id: number;
+  name: string;
+}
+
+type Page = {
+  id: number;
+  name: string;
+}
+
+type Permission = {
+  id: number;
+  role: number | Role;
+  page: number | Page;
+  resource: string;
+  can_view: boolean;
+  can_add: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
+type NewPermission = {
+  role: string;
+  page: string;
+  can_view: boolean;
+  can_add: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
 export default function RoleBasedPermissions() {
-  const [rolePermissions, setRolePermissions] = useState([])
-  const [roles, setRoles] = useState([])
-  // Change the state from "resources" to "pages" and fetch pages from API
-  const [pages, setPages] = useState([])
+  const [rolePermissions, setRolePermissions] = useState<Permission[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [pages, setPages] = useState<Page[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [permissionToDelete, setPermissionToDelete] = useState(null)
-  const [editingPermission, setEditingPermission] = useState(null)
+  const [permissionToDelete, setPermissionToDelete] = useState<number | null>(null)
+  const [editingPermission, setEditingPermission] = useState<Permission | null>(null)
   const [isAddPermissionOpen, setIsAddPermissionOpen] = useState(false)
   const [isEditPermissionOpen, setIsEditPermissionOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
-  const [actionAlert, setActionAlert] = useState({
+  const [actionAlert, setActionAlert] = useState<{
+    type: "success" | "error" | "warning" | null;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
 
   // Form state for new permission
-  // Update the newPermission state to match the model
-  const [newPermission, setNewPermission] = useState({
+  const [newPermission, setNewPermission] = useState<NewPermission>({
     role: "",
     page: "",
     can_view: false,
@@ -80,7 +112,7 @@ export default function RoleBasedPermissions() {
   })
 
   // Show alert message
-  const showAlert = (type, message) => {
+  const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
@@ -147,16 +179,52 @@ export default function RoleBasedPermissions() {
     fetchPages()
   }, [])
 
+  // Handle form changes
+  const handleNewPermissionChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target
+    if (type === 'checkbox') {
+      setNewPermission(prev => ({
+        ...prev,
+        [name]: (e.target as HTMLInputElement).checked
+      }))
+    } else if (name === 'role' || name === 'page') {
+      // For role and page, we store the string value but convert to number when sending to API
+      setNewPermission(prev => ({
+        ...prev,
+        [name]: value
+      }))
+    } else {
+      setNewPermission(prev => ({
+        ...prev,
+        [name]: value
+      }))
+    }
+  }
+
   // Handle adding a new permission
   const handleAddPermission = async () => {
     try {
+      // Convert string IDs to numbers for the API
+      const roleId = parseInt(newPermission.role)
+      const pageId = parseInt(newPermission.page)
+
+      if (isNaN(roleId) || isNaN(pageId)) {
+        throw new Error("Invalid role or page selection")
+      }
+
+      const permissionToSend = {
+        ...newPermission,
+        role: roleId,
+        page: pageId,
+      }
+
       const response = await fetch(`${API_URL}/permissions/roles/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
         },
-        body: JSON.stringify(newPermission),
+        body: JSON.stringify(permissionToSend),
       })
 
       if (!response.ok) throw new Error("Failed to add permission")
@@ -175,11 +243,10 @@ export default function RoleBasedPermissions() {
       })
       setIsAddPermissionOpen(false)
 
-      // Update the roleName and resourceName references in handleAddPermission
       // Get role name for the message
-      const roleName = roles.find((r) => r.id.toString() === newPermission.role.toString())?.name || "Role"
+      const roleName = roles.find((r) => r.id === roleId)?.name || "Role"
       // Get page name for the message
-      const pageName = pages.find((p) => p.id.toString() === newPermission.page.toString())?.name || "Page"
+      const pageName = pages.find((p) => p.id === pageId)?.name || "Page"
 
       // Show toast notification
       toast({
@@ -295,50 +362,38 @@ export default function RoleBasedPermissions() {
   }
 
   // Open edit dialog with permission data
-  const openEditDialog = (permission) => {
-    // Create a copy of the permission object with proper handling for nested properties
-    const permissionForEdit = {
-      ...permission,
-      // If role is an object with an id property, extract just the id
-      role:
-        typeof permission.role === "object" && permission.role?.id
-          ? permission.role.id.toString()
-          : permission.role?.toString(),
-    }
-
-    setEditingPermission(permissionForEdit)
+  const openEditDialog = (permission: Permission) => {
+    setEditingPermission({ ...permission })
     setIsEditPermissionOpen(true)
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (permissionId) => {
+  const openDeleteDialog = (permissionId: number) => {
     setPermissionToDelete(permissionId)
     setIsDeleteAlertOpen(true)
   }
 
   // Get role name by ID
-  const getRoleName = (roleId) => {
-    if (typeof roleId === "object" && roleId?.name) {
-      return roleId.name
+  const getRoleName = (role: number | Role): string => {
+    if (typeof role === 'object' && role.name) {
+      return role.name;
     }
-    const role = roles.find((r) => r.id.toString() === roleId?.toString())
-    return role ? role.name : "Unknown Role"
+    const roleObj = roles.find((r) => r.id === role);
+    return roleObj ? roleObj.name : "Unknown Role";
   }
 
-  // Update the formatResourceName function to getPageName
   // Get page name by ID
-  const getPageName = (pageId) => {
-    if (typeof pageId === "object" && pageId?.name) {
-      return pageId.name
+  const getPageName = (page: number | Page): string => {
+    if (typeof page === 'object' && page.name) {
+      return page.name;
     }
-    const page = pages.find((p) => p.id.toString() === pageId?.toString())
-    return page ? page.name : "Unknown Page"
+    const pageObj = pages.find((p) => p.id === page);
+    return pageObj ? pageObj.name : "Unknown Page";
   }
 
   // Format resource name for display
-  const formatResourceName = (resource) => {
-    if (!resource) return "Unknown"
-    return resource.charAt(0).toUpperCase() + resource.slice(1)
+  const formatResourceName = (resource: string): string => {
+    return resource.split("_").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")
   }
 
   return (
@@ -528,7 +583,7 @@ export default function RoleBasedPermissions() {
                       className="grid grid-cols-7 text-sm py-3 border-b last:border-0 items-center"
                     >
                       <div className="col-span-2 font-medium">{getRoleName(permission.role)}</div>
-                      <div className="col-span-2">{formatResourceName(permission.resource)}</div>
+                      <div className="col-span-2">{getPageName(permission.page)}</div>
                       <div className="col-span-2">
                         <div className="flex flex-wrap gap-1">
                           {permission.can_view && (
@@ -625,7 +680,7 @@ export default function RoleBasedPermissions() {
                 <Label htmlFor="edit-role">Role</Label>
                 <Select
                   value={editingPermission.role?.toString() || ""}
-                  onValueChange={(value) => setEditingPermission({ ...editingPermission, role: value })}
+                  onValueChange={(value) => setEditingPermission({ ...editingPermission, role: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-role">
                     <SelectValue placeholder="Select role" />
@@ -643,7 +698,7 @@ export default function RoleBasedPermissions() {
                 <Label htmlFor="edit-page">Page</Label>
                 <Select
                   value={editingPermission.page?.toString() || ""}
-                  onValueChange={(value) => setEditingPermission({ ...editingPermission, page: value })}
+                  onValueChange={(value) => setEditingPermission({ ...editingPermission, page: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-page">
                     <SelectValue placeholder="Select page" />
@@ -735,8 +790,8 @@ export default function RoleBasedPermissions() {
                 <>
                   You are about to delete permission for{" "}
                   <strong>
-                    {getRoleName(rolePermissions.find((p) => p.id === permissionToDelete)?.role)} on 
-                    {getPageName(rolePermissions.find((p) => p.id === permissionToDelete)?.page)}
+                    {getRoleName(rolePermissions.find((p) => p.id === permissionToDelete)?.role as number)} on 
+                    {getPageName(rolePermissions.find((p) => p.id === permissionToDelete)?.page as number)}
                   </strong>
                   . This action cannot be undone and may affect user access to this resource.
                   <div className="mt-4">

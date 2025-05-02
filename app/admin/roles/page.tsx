@@ -49,15 +49,24 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
+type Role = {
+  id: number;
+  name: string;
+  name_ar: string;
+}
+
 export default function RolesPage() {
-  const [roles, setRoles] = useState([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [roleToDelete, setRoleToDelete] = useState(null)
-  const [editingRole, setEditingRole] = useState(null)
+  const [roleToDelete, setRoleToDelete] = useState<number | null>(null)
+  const [editingRole, setEditingRole] = useState<Role | null>(null)
   const [isAddRoleOpen, setIsAddRoleOpen] = useState(false)
   const [isEditRoleOpen, setIsEditRoleOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
-  const [actionAlert, setActionAlert] = useState({
+  const [actionAlert, setActionAlert] = useState<{
+    type: "success" | "error" | "warning" | null;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
@@ -70,7 +79,7 @@ export default function RolesPage() {
   })
 
   // Show alert message
-  const showAlert = (type, message) => {
+  const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
@@ -223,13 +232,13 @@ export default function RolesPage() {
   }
 
   // Open edit dialog with role data
-  const openEditDialog = (role) => {
+  const openEditDialog = (role: Role) => {
     setEditingRole({ ...role })
     setIsEditRoleOpen(true)
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (roleId) => {
+  const openDeleteDialog = (roleId: number) => {
     setRoleToDelete(roleId)
     setIsDeleteAlertOpen(true)
   }

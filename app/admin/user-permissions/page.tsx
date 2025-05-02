@@ -51,18 +51,43 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
 
+type User = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  username: string;
+}
+
+type Page = {
+  id: number;
+  name: string;
+}
+
+type Permission = {
+  id: number;
+  user: number | User;
+  page: number | Page;
+  resource: string;
+  can_view: boolean;
+  can_add: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
 export default function UserBasedPermissions() {
-  const [userPermissions, setUserPermissions] = useState([])
-  const [users, setUsers] = useState([])
-  // Change the state from "resources" to "pages" and fetch pages from API
-  const [pages, setPages] = useState([])
+  const [userPermissions, setUserPermissions] = useState<Permission[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [pages, setPages] = useState<Page[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [permissionToDelete, setPermissionToDelete] = useState(null)
-  const [editingPermission, setEditingPermission] = useState(null)
+  const [permissionToDelete, setPermissionToDelete] = useState<number | null>(null)
+  const [editingPermission, setEditingPermission] = useState<Permission | null>(null)
   const [isAddPermissionOpen, setIsAddPermissionOpen] = useState(false)
   const [isEditPermissionOpen, setIsEditPermissionOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
-  const [actionAlert, setActionAlert] = useState({
+  const [actionAlert, setActionAlert] = useState<{
+    type: "success" | "error" | "warning" | null;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
@@ -79,7 +104,7 @@ export default function UserBasedPermissions() {
   })
 
   // Show alert message
-  const showAlert = (type, message) => {
+  const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
@@ -291,29 +316,19 @@ export default function UserBasedPermissions() {
   }
 
   // Open edit dialog with permission data
-  const openEditDialog = (permission) => {
-    // Create a copy of the permission object with proper handling for nested properties
-    const permissionForEdit = {
-      ...permission,
-      // If user is an object with an id property, extract just the id
-      user:
-        typeof permission.user === "object" && permission.user?.id
-          ? permission.user.id.toString()
-          : permission.user?.toString(),
-    }
-
-    setEditingPermission(permissionForEdit)
+  const openEditDialog = (permission: Permission) => {
+    setEditingPermission({ ...permission })
     setIsEditPermissionOpen(true)
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (permissionId) => {
+  const openDeleteDialog = (permissionId: number) => {
     setPermissionToDelete(permissionId)
     setIsDeleteAlertOpen(true)
   }
 
   // Get user name by ID
-  const getUserName = (userId) => {
+  const getUserName = (userId: number | User) => {
     if (typeof userId === "object") {
       if (userId?.first_name && userId?.last_name) {
         return `${userId.first_name} ${userId.last_name}`
@@ -327,9 +342,8 @@ export default function UserBasedPermissions() {
     return user.first_name && user.last_name ? `${user.first_name} ${user.last_name}` : user.username
   }
 
-  // Update the formatResourceName function to getPageName
   // Get page name by ID
-  const getPageName = (pageId) => {
+  const getPageName = (pageId: number | Page) => {
     if (typeof pageId === "object" && pageId?.name) {
       return pageId.name
     }
@@ -338,7 +352,7 @@ export default function UserBasedPermissions() {
   }
 
   // Format resource name for display
-  const formatResourceName = (resource) => {
+  const formatResourceName = (resource: string) => {
     if (!resource) return "Unknown"
     return resource.charAt(0).toUpperCase() + resource.slice(1)
   }
@@ -629,7 +643,7 @@ export default function UserBasedPermissions() {
                 <Label htmlFor="edit-user">User</Label>
                 <Select
                   value={editingPermission.user?.toString() || ""}
-                  onValueChange={(value) => setEditingPermission({ ...editingPermission, user: value })}
+                  onValueChange={(value) => setEditingPermission({ ...editingPermission, user: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-user">
                     <SelectValue placeholder="Select user" />
@@ -647,7 +661,7 @@ export default function UserBasedPermissions() {
                 <Label htmlFor="edit-page">Page</Label>
                 <Select
                   value={editingPermission.page?.toString() || ""}
-                  onValueChange={(value) => setEditingPermission({ ...editingPermission, page: value })}
+                  onValueChange={(value) => setEditingPermission({ ...editingPermission, page: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-page">
                     <SelectValue placeholder="Select page" />
@@ -739,8 +753,8 @@ export default function UserBasedPermissions() {
                 <>
                   You are about to delete permission for{" "}
                   <strong>
-                    {getUserName(userPermissions.find((p) => p.id === permissionToDelete)?.user)} on{" "}
-                    {getPageName(userPermissions.find((p) => p.id === permissionToDelete)?.page)}
+                    {getUserName(userPermissions.find((p) => p.id === permissionToDelete)?.user || 0)} on{" "}
+                    {getPageName(userPermissions.find((p) => p.id === permissionToDelete)?.page || 0)}
                   </strong>
                   . This action cannot be undone and may affect this user's access to this resource.
                   <div className="mt-4">
