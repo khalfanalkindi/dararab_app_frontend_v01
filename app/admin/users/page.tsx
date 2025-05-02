@@ -133,7 +133,8 @@ export default function UsersPage() {
           headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
         })
         if (!response.ok) throw new Error("Failed to fetch roles")
-        setRoles(await response.json())
+        const data = await response.json()
+        setRoles(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
         toast({
           title: "Error",
