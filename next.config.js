@@ -9,17 +9,9 @@ const nextConfig = {
         headers: [
           {
             key: 'Content-Security-Policy',
-            value: `
-              default-src 'self';
-              script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules';
-              style-src 'self' 'unsafe-inline';
-              img-src 'self' data:;
-              font-src 'self' data:;
-              connect-src 'self' http://127.0.0.1:8000 https://dararabappbackendv01-production.up.railway.app ws:;
-              frame-src 'self'
-            `.replace(/\n/g, "").replace(/\s+/g, " ").trim(),
-          },
-        ],
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:8000 https://dararabappbackendv01-production.up.railway.app ws:; frame-src 'self'"
+          }
+        ]
       }
     ]
   },
