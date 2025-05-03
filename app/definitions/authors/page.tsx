@@ -107,13 +107,35 @@ export default function AuthorManagement() {
     try {
       const res = await fetch(`${API_URL}/inventory/authors/`, { headers })
       const data = await res.json()
-      // Ensure data is an array
-      const authorsData = Array.isArray(data) ? data : data.results || []
+      console.log('API Response:', data) // Debug log
+      
+      // Handle both array and object responses
+      let authorsData: Author[] = []
+      if (Array.isArray(data)) {
+        authorsData = data
+      } else if (data.results && Array.isArray(data.results)) {
+        authorsData = data.results
+        // If there's pagination info, fetch all pages
+        if (data.next) {
+          let nextUrl = data.next
+          while (nextUrl) {
+            const nextRes = await fetch(nextUrl, { headers })
+            const nextData = await nextRes.json()
+            if (Array.isArray(nextData)) {
+              authorsData = [...authorsData, ...nextData]
+            } else if (nextData.results && Array.isArray(nextData.results)) {
+              authorsData = [...authorsData, ...nextData.results]
+            }
+            nextUrl = nextData.next
+          }
+        }
+      }
+      
+      console.log('Processed Authors:', authorsData) // Debug log
       setAuthors(authorsData)
       setTotalItems(authorsData.length)
     } catch (error) {
       console.error("Error fetching authors:", error)
-      // Set empty array on error
       setAuthors([])
       setTotalItems(0)
       throw error
