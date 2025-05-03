@@ -109,12 +109,12 @@ export default function AuthorManagement() {
       const data = await res.json()
       console.log('API Response:', data) // Debug log
       
-      // Simply use the data as is, assuming it's an array of authors
-      const authorsData = Array.isArray(data) ? data : []
+      // Handle the response structure with results array
+      const authorsData = data.results || []
       
       console.log('Processed Authors:', authorsData) // Debug log
       setAuthors(authorsData)
-      setTotalItems(authorsData.length)
+      setTotalItems(data.count || authorsData.length)
     } catch (error) {
       console.error("Error fetching authors:", error)
       setAuthors([])
