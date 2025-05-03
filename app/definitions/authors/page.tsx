@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,6 +47,7 @@ import { Label } from "@/components/ui/label"
 import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -72,6 +73,11 @@ export default function AuthorManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [totalItems, setTotalItems] = useState(0)
 
   // Form state for new author
   const [newAuthor, setNewAuthor] = useState<Partial<Author>>({
@@ -104,14 +110,33 @@ export default function AuthorManagement() {
       // Ensure data is an array
       const authorsData = Array.isArray(data) ? data : data.results || []
       setAuthors(authorsData)
+      setTotalItems(authorsData.length)
     } catch (error) {
       console.error("Error fetching authors:", error)
       // Set empty array on error
       setAuthors([])
+      setTotalItems(0)
       throw error
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Calculate pagination values
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const currentAuthors = authors.slice(startIndex, endIndex)
+
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage)
+  }
+
+  // Handle items per page change
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value))
+    setCurrentPage(1) // Reset to first page when changing items per page
   }
 
   // Handle adding a new author
@@ -127,6 +152,7 @@ export default function AuthorManagement() {
 
       const data = await res.json()
       setAuthors([...authors, data])
+      setTotalItems(totalItems + 1)
 
       // Reset form
       setNewAuthor({
@@ -213,6 +239,7 @@ export default function AuthorManagement() {
       if (!res.ok) throw new Error("Failed to delete author")
 
       setAuthors(authors.filter((a) => a.id !== deleteAuthorId))
+      setTotalItems(totalItems - 1)
       setDeleteAuthorId(null)
       setIsDeleteAlertOpen(false)
       setDeleteConfirm("")
@@ -360,14 +387,14 @@ export default function AuthorManagement() {
                             Loading authors...
                           </td>
                         </tr>
-                      ) : authors.length === 0 ? (
+                      ) : currentAuthors.length === 0 ? (
                         <tr>
                           <td colSpan={3} className="py-8 text-center">
                             No authors found
                           </td>
                         </tr>
                       ) : (
-                        authors.map((author) => (
+                        currentAuthors.map((author) => (
                           <tr key={author.id} className="border-b last:border-0">
                             <td className="p-2 font-medium">{author.name}</td>
                             <td className="p-2">{author.bio || "No bio available"}</td>
@@ -429,6 +456,57 @@ export default function AuthorManagement() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Pagination Controls */}
+                {!isLoading && authors.length > 0 && (
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Items per page:</span>
+                      <Select
+                        value={itemsPerPage.toString()}
+                        onValueChange={handleItemsPerPageChange}
+                      >
+                        <SelectTrigger className="h-8 w-[70px]">
+                          <SelectValue placeholder={itemsPerPage} />
+                        </SelectTrigger>
+                        <SelectContent side="top">
+                          {[10, 20, 30, 40, 50].map((pageSize) => (
+                            <SelectItem key={pageSize} value={pageSize.toString()}>
+                              {pageSize}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        {startIndex + 1}-{Math.min(endIndex, totalItems)} of {totalItems}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handlePageChange(currentPage - 1)}
+                          disabled={currentPage === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          <span className="sr-only">Previous page</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handlePageChange(currentPage + 1)}
+                          disabled={currentPage === totalPages}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                          <span className="sr-only">Next page</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
