@@ -372,10 +372,10 @@ export default function BookManagement() {
           fetch(`${API_URL}/common/list-items/genre/`, { headers }),
           fetch(`${API_URL}/common/list-items/product_status/`, { headers }),
           fetch(`${API_URL}/inventory/warehouses/`, { headers }),
-          fetch(`${API_URL}/inventory/authors/`, { headers }),
-          fetch(`${API_URL}/inventory/translators/`, { headers }),
-          fetch(`${API_URL}/inventory/rights-owners/`, { headers }),
-          fetch(`${API_URL}/inventory/reviewers/`, { headers }),
+          fetch(`${API_URL}/inventory/authors/?page_size=1000`, { headers }),
+          fetch(`${API_URL}/inventory/translators/?page_size=1000`, { headers }),
+          fetch(`${API_URL}/inventory/rights-owners/?page_size=1000`, { headers }),
+          fetch(`${API_URL}/inventory/reviewers/?page_size=1000`, { headers }),
           fetch(`${API_URL}/inventory/product-summary/?page_size=1000`, { headers }),
           fetch(`${API_URL}/common/list-items/printrun_status/`, { headers })
         ]);
