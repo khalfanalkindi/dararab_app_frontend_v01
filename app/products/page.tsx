@@ -70,6 +70,9 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import React from 'react'
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Check, ChevronsUpDown } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -294,6 +297,10 @@ export default function BookManagement() {
     quantity: 0,
   });
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   // Show alert message
   const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
@@ -310,21 +317,23 @@ export default function BookManagement() {
   }
 
   // Filter books based on search query, genre, and status
-  const filteredProductSummaries = productSummaries.filter((book) => {
-    const q = searchQuery.toLowerCase();
-    const matchesSearch =
-      q === "" ||
-      book.isbn.toLowerCase().includes(q) ||
-      book.title_en.toLowerCase().includes(q) ||
-      book.title_ar.toLowerCase().includes(q) ||
-      book.author_name?.toLowerCase().includes(q) ||
-      book.translator_name?.toLowerCase().includes(q);
+  const filteredProductSummaries = productSummaries
+    .filter((book) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        q === "" ||
+        book.isbn.toLowerCase().includes(q) ||
+        book.title_en.toLowerCase().includes(q) ||
+        book.title_ar.toLowerCase().includes(q) ||
+        book.author_name?.toLowerCase().includes(q) ||
+        book.translator_name?.toLowerCase().includes(q);
 
-    const matchesGenre = !selectedGenre || book.genre_id === parseInt(selectedGenre);
-    const matchesStatus = !selectedStatus || book.status_id === parseInt(selectedStatus);
+      const matchesGenre = !selectedGenre || book.genre_id === parseInt(selectedGenre);
+      const matchesStatus = !selectedStatus || book.status_id === parseInt(selectedStatus);
 
-    return matchesSearch && matchesGenre && matchesStatus;
-  });
+      return matchesSearch && matchesGenre && matchesStatus;
+    })
+    .slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // Get status name by ID
   const getStatusName = (status: Status | number | null) => {
@@ -359,7 +368,7 @@ export default function BookManagement() {
           summaryRes,
           printRunStatusRes
         ] = await Promise.all([
-          fetch(`${API_URL}/inventory/products/`, { headers }),
+          fetch(`${API_URL}/inventory/products/?page_size=1000`, { headers }),
           fetch(`${API_URL}/common/list-items/genre/`, { headers }),
           fetch(`${API_URL}/common/list-items/product_status/`, { headers }),
           fetch(`${API_URL}/inventory/warehouses/`, { headers }),
@@ -367,7 +376,7 @@ export default function BookManagement() {
           fetch(`${API_URL}/inventory/translators/`, { headers }),
           fetch(`${API_URL}/inventory/rights-owners/`, { headers }),
           fetch(`${API_URL}/inventory/reviewers/`, { headers }),
-          fetch(`${API_URL}/inventory/product-summary/`, { headers }),
+          fetch(`${API_URL}/inventory/product-summary/?page_size=1000`, { headers }),
           fetch(`${API_URL}/common/list-items/printrun_status/`, { headers })
         ]);
 
@@ -392,10 +401,6 @@ export default function BookManagement() {
         const reviewersData = await reviewersRes.json();
         const summaryData = await summaryRes.json();
         const printRunStatusData = await printRunStatusRes.json();
-
-        // Log product summaries data
-        console.log('Product Summaries Data:', summaryData);
-        console.log('Product Summaries Array:', Array.isArray(summaryData) ? summaryData : summaryData.results ?? []);
 
         setBooks(Array.isArray(booksData) ? booksData : booksData.results ?? []);
         setGenres(Array.isArray(genresData) ? genresData : genresData.results ?? []);
@@ -1560,6 +1565,27 @@ async function handleUpdateInventory() {
     }
   };
 
+  // Update totalPages when search or filters are applied
+  useEffect(() => {
+    const totalFiltered = productSummaries.filter((book) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        q === "" ||
+        book.isbn.toLowerCase().includes(q) ||
+        book.title_en.toLowerCase().includes(q) ||
+        book.title_ar.toLowerCase().includes(q) ||
+        book.author_name?.toLowerCase().includes(q) ||
+        book.translator_name?.toLowerCase().includes(q);
+
+      const matchesGenre = !selectedGenre || book.genre_id === parseInt(selectedGenre);
+      const matchesStatus = !selectedStatus || book.status_id === parseInt(selectedStatus);
+
+      return matchesSearch && matchesGenre && matchesStatus;
+    }).length;
+
+    setTotalPages(Math.ceil(totalFiltered / pageSize));
+  }, [searchQuery, selectedGenre, selectedStatus, pageSize, productSummaries]);
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -1881,6 +1907,51 @@ async function handleUpdateInventory() {
                   </table>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Pagination Controls */}
+          <div className="flex items-center justify-between mt-4">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <span className="text-sm">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm">Items per page:</span>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => {
+                  setPageSize(Number(value));
+                  setCurrentPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[100px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="20">20</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </div>
@@ -2237,45 +2308,87 @@ async function handleUpdateInventory() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="authors">Authors</Label>
-                    <Select
-                      value={newBook.author?.id?.toString() || ""}
-                      onValueChange={(value) => {
-                        const authorObj = authors.find(a => a.id === parseInt(value));
-                        setNewBook({ ...newBook, author: authorObj || null });
-                      }}
-                    >
-                      <SelectTrigger id="authors" className="mt-1">
-                        <SelectValue placeholder="Select author" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {authors.map((author) => (
-                          <SelectItem key={author.id} value={author.id.toString()}>
-                            {author.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          className="w-full justify-between mt-1"
+                        >
+                          {newBook.author ? newBook.author.name : "Select author..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search authors..." />
+                          <CommandList>
+                            <CommandEmpty>No author found.</CommandEmpty>
+                            <CommandGroup>
+                              {authors.map((author) => (
+                                <CommandItem
+                                  key={author.id}
+                                  value={author.name}
+                                  onSelect={() => {
+                                    setNewBook({ ...newBook, author: author });
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      newBook.author?.id === author.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  {author.name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                   <div>
                     <Label htmlFor="translators">Translators</Label>
-                    <Select
-                      value={newBook.translator?.id?.toString() || ""}
-                      onValueChange={(value) => {
-                        const translatorObj = translators.find(t => t.id === parseInt(value));
-                        setNewBook({ ...newBook, translator: translatorObj || null });
-                      }}
-                    >
-                      <SelectTrigger id="translators" className="mt-1">
-                        <SelectValue placeholder="Select translator" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {translators.map((translator) => (
-                          <SelectItem key={translator.id} value={translator.id.toString()}>
-                            {translator.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          className="w-full justify-between mt-1"
+                        >
+                          {newBook.translator ? newBook.translator.name : "Select translator..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search translators..." />
+                          <CommandList>
+                            <CommandEmpty>No translator found.</CommandEmpty>
+                            <CommandGroup>
+                              {translators.map((translator) => (
+                                <CommandItem
+                                  key={translator.id}
+                                  value={translator.name}
+                                  onSelect={() => {
+                                    setNewBook({ ...newBook, translator: translator });
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      newBook.translator?.id === translator.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  {translator.name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </div>
 
@@ -2480,52 +2593,94 @@ async function handleUpdateInventory() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <Label htmlFor="edit-authors">Authors</Label>
-                          <Select
-                            value={selectedBook.author?.id?.toString() || ""}
-                            onValueChange={(value) => {
-                              const authorObj = authors.find(a => a.id === parseInt(value));
-                              setSelectedBook({
-                                ...selectedBook,
-                                author: authorObj || null
-                              });
-                            }}
-                          >
-                            <SelectTrigger id="edit-authors" className="mt-1">
-                              <SelectValue placeholder="Select author" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {authors.map((author) => (
-                                <SelectItem key={author.id} value={author.id.toString()}>
-                                  {author.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                className="w-full justify-between mt-1"
+                              >
+                                {selectedBook.author ? selectedBook.author.name : "Select author..."}
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0">
+                              <Command>
+                                <CommandInput placeholder="Search authors..." />
+                                <CommandList>
+                                  <CommandEmpty>No author found.</CommandEmpty>
+                                  <CommandGroup>
+                                    {authors.map((author) => (
+                                      <CommandItem
+                                        key={author.id}
+                                        value={author.name}
+                                        onSelect={() => {
+                                          setSelectedBook({
+                                            ...selectedBook,
+                                            author: author
+                                          });
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-4 w-4",
+                                            selectedBook.author?.id === author.id ? "opacity-100" : "opacity-0"
+                                          )}
+                                        />
+                                        {author.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
 
                         <div>
                           <Label htmlFor="edit-translators">Translators</Label>
-                          <Select
-                            value={selectedBook.translator?.id?.toString() || ""}
-                            onValueChange={(value) => {
-                              const translatorObj = translators.find(t => t.id === parseInt(value));
-                              setSelectedBook({
-                                ...selectedBook,
-                                translator: translatorObj || null
-                              });
-                            }}
-                          >
-                            <SelectTrigger id="edit-translators" className="mt-1">
-                              <SelectValue placeholder="Select translator" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {translators.map((translator) => (
-                                <SelectItem key={translator.id} value={translator.id.toString()}>
-                                  {translator.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                className="w-full justify-between mt-1"
+                              >
+                                {selectedBook.translator ? selectedBook.translator.name : "Select translator..."}
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0">
+                              <Command>
+                                <CommandInput placeholder="Search translators..." />
+                                <CommandList>
+                                  <CommandEmpty>No translator found.</CommandEmpty>
+                                  <CommandGroup>
+                                    {translators.map((translator) => (
+                                      <CommandItem
+                                        key={translator.id}
+                                        value={translator.name}
+                                        onSelect={() => {
+                                          setSelectedBook({
+                                            ...selectedBook,
+                                            translator: translator
+                                          });
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-4 w-4",
+                                            selectedBook.translator?.id === translator.id ? "opacity-100" : "opacity-0"
+                                          )}
+                                        />
+                                        {translator.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
                       </div>
 
@@ -2742,8 +2897,8 @@ async function handleUpdateInventory() {
                                         </Select>
                                       </td>
                                       <td className="p-3">
-                                        <Popover>
-                                          <PopoverTrigger asChild>
+                    <Popover>
+                      <PopoverTrigger asChild>
                                             <Button variant="outline" className="w-[150px] justify-start text-left font-normal">
                                               <CalendarIcon className="mr-2 h-4 w-4" />
                                               {printRun.published_at ? format(new Date(printRun.published_at), "PPP") : "Select date"}
@@ -2770,7 +2925,7 @@ async function handleUpdateInventory() {
                                         </Popover>
                                       </td>
                                       <td className="p-3 text-right">
-                                        <Button
+                        <Button
                                           type="button"
                                           variant="ghost"
                                           size="icon"
@@ -2803,12 +2958,12 @@ async function handleUpdateInventory() {
     <h3 className="text-lg font-medium">Warehouse Inventory</h3>
     <Button
       type="button"
-      variant="outline"
+                          variant="outline"
       size="sm"
       onClick={handleAddInventoryItem}
-    >
+                        >
       Add Row
-    </Button>
+                        </Button>
   </div>
 
   <div className="border rounded-md">
@@ -3028,9 +3183,9 @@ async function handleUpdateInventory() {
                             }
                             initialFocus
                           />
-                        </PopoverContent>
-                      </Popover>
-                    </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   </div>
                 </div>
               </div>

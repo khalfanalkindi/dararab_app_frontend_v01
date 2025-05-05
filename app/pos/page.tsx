@@ -176,6 +176,9 @@ export default function POSPage() {
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<any>(null)
   const [isWarehouseDropdownOpen, setIsWarehouseDropdownOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [totalPages, setTotalPages] = useState(1)
 
   // Add error handling for avatar image
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -194,7 +197,7 @@ export default function POSPage() {
       };
 
       // Add warehouse_id to the query if selected
-      const warehouseQuery = selectedWarehouse ? `?warehouse_id=${selectedWarehouse}` : '';
+      const warehouseQuery = selectedWarehouse ? `?warehouse_id=${selectedWarehouse}` : '?';
       
       // Fetch all data in parallel
       const [
@@ -205,7 +208,7 @@ export default function POSPage() {
         paymentMethodsRes,
         invoiceTypesRes
       ] = await Promise.all([
-        fetch(`${API_URL}/inventory/pos-product-summary/${warehouseQuery}`, { headers }),
+        fetch(`${API_URL}/inventory/pos-product-summary/${warehouseQuery}page_size=1000`, { headers }),
         fetch(`${API_URL}/sales/customers/`, { headers }),
         fetch(`${API_URL}/common/list-items/genre/`, { headers }),
         fetch(`${API_URL}/inventory/warehouses/`, { headers }),
@@ -295,8 +298,23 @@ export default function POSPage() {
       return matchesSearch && matchesGenre;
     });
 
-    setFilteredProducts(filtered);
-  }, [products, searchInput, selectedGenre]);
+    // Calculate pagination
+    const totalItems = filtered.length;
+    const totalPages = Math.ceil(totalItems / pageSize);
+    setTotalPages(totalPages);
+    
+    // Ensure current page is valid
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    }
+
+    // Get paginated results
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const paginatedResults = filtered.slice(startIndex, endIndex);
+
+    setFilteredProducts(paginatedResults);
+  }, [products, searchInput, selectedGenre, currentPage, pageSize]);
 
   // Filter customers based on search query
   const filteredCustomers = customers.filter(
@@ -473,6 +491,40 @@ export default function POSPage() {
           const errorData = await itemResponse.json()
           throw new Error(errorData.message || "Failed to create invoice item")
         }
+
+        // Update inventory stock after creating invoice item
+        const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${item.product.id}&warehouse_id=${selectedWarehouse}`, { headers });
+        if (!inventoryResponse.ok) {
+          throw new Error("Failed to fetch inventory data");
+        }
+        const inventoryData = await inventoryResponse.json();
+        const inventory = inventoryData.results?.[0];
+
+        if (inventory) {
+          // Update existing inventory
+          const newQuantity = inventory.quantity - item.quantity;
+          if (newQuantity < 0) {
+            throw new Error(`Insufficient stock for product ${item.product.title_en}`);
+          }
+
+          const updateInventoryResponse = await fetch(`${API_URL}/inventory/inventory/product/${item.product.id}/update/`, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              product_id: item.product.id,
+              warehouse_id: selectedWarehouse,
+              quantity: newQuantity,
+              notes: inventory.notes || ''
+            }),
+          });
+
+          if (!updateInventoryResponse.ok) {
+            const errorData = await updateInventoryResponse.json();
+            throw new Error(errorData.detail || "Failed to update inventory");
+          }
+        } else {
+          throw new Error(`No inventory found for product ${item.product.title_en} in selected warehouse`);
+        }
       }
 
       // 3. Create payment record
@@ -594,6 +646,68 @@ export default function POSPage() {
       fetchData();
     }
   }, [selectedWarehouse]);
+
+  // Add PaginationControls to the products section
+  const PaginationControls = () => (
+    <div className="flex items-center justify-between mt-4">
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">
+          Page {currentPage} of {totalPages}
+        </span>
+        <Select
+          value={pageSize.toString()}
+          onValueChange={(value) => {
+            setPageSize(Number(value));
+            setCurrentPage(1); // Reset to first page when changing page size
+          }}
+        >
+          <SelectTrigger className="h-8 w-[70px]">
+            <SelectValue placeholder={pageSize} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="10">10</SelectItem>
+            <SelectItem value="20">20</SelectItem>
+            <SelectItem value="50">50</SelectItem>
+            <SelectItem value="100">100</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCurrentPage(1)}
+          disabled={currentPage === 1}
+        >
+          First
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+          disabled={currentPage === 1}
+        >
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+          disabled={currentPage === totalPages}
+        >
+          Next
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCurrentPage(totalPages)}
+          disabled={currentPage === totalPages}
+        >
+          Last
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <SidebarProvider>
@@ -1235,62 +1349,65 @@ export default function POSPage() {
                       <p className="text-muted-foreground">No products found</p>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                      {filteredProducts.map((product) => (
-                        <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                          <CardContent className="p-2">
-                            <div className="relative aspect-square rounded-md overflow-hidden mb-2">
-                              <img
-                                src={product.cover_design_url || "/placeholder.svg"}
-                                alt={product.title_en}
-                                className="w-full h-full object-cover"
-                                onError={handleImageError}
-                              />
-                              {product.genre_name && (
-                                <div className="absolute top-2 right-2">
-                                  <span className="text-xs px-2 py-1 bg-primary/90 text-primary-foreground rounded-full">
-                                    {product.genre_name}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                            <div className="space-y-1">
-                              <h3 className="font-medium text-sm line-clamp-1">{product.title_en}</h3>
-                              <div className="flex justify-between items-center">
-                                <div>
-                                  <p className="font-bold text-sm">{(product.latest_price ? parseFloat(product.latest_price).toFixed(3) : "N/A")} OMR</p>
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <p className="text-xs text-muted-foreground cursor-help">
-                                          Stock: {product.stock || product.warehouse_stock || 0}
-                                        </p>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <div className="space-y-1">
-                                          <p className="font-medium">Stock Information</p>
-                                          <p>Current Stock: {product.stock || product.warehouse_stock || 0}</p>
-                                          <p>ISBN: {product.isbn || 'N/A'}</p>
-                                          <p>Author: {product.author_name || 'N/A'}</p>
-                                          <p>Translator: {product.translator_name || 'N/A'}</p>
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                </div>
-                                <Button 
-                                  size="sm" 
-                                  className="h-7 px-2 text-xs"
-                                  onClick={() => addToCart(product)}
-                                >
-                                  Add
-                                </Button>
+                    <>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {filteredProducts.map((product) => (
+                          <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
+                            <CardContent className="p-2">
+                              <div className="relative aspect-square rounded-md overflow-hidden mb-2">
+                                <img
+                                  src={product.cover_design_url || "/placeholder.svg"}
+                                  alt={product.title_en}
+                                  className="w-full h-full object-cover"
+                                  onError={handleImageError}
+                                />
+                                {product.genre_name && (
+                                  <div className="absolute top-2 right-2">
+                                    <span className="text-xs px-2 py-1 bg-primary/90 text-primary-foreground rounded-full">
+                                      {product.genre_name}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
+                              <div className="space-y-1">
+                                <h3 className="font-medium text-sm line-clamp-1">{product.title_en}</h3>
+                                <div className="flex justify-between items-center">
+                                  <div>
+                                    <p className="font-bold text-sm">{(product.latest_price ? parseFloat(product.latest_price).toFixed(3) : "N/A")} OMR</p>
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <p className="text-xs text-muted-foreground cursor-help">
+                                            Stock: {product.stock || product.warehouse_stock || 0}
+                                          </p>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <div className="space-y-1">
+                                            <p className="font-medium">Stock Information</p>
+                                            <p>Current Stock: {product.stock || product.warehouse_stock || 0}</p>
+                                            <p>ISBN: {product.isbn || 'N/A'}</p>
+                                            <p>Author: {product.author_name || 'N/A'}</p>
+                                            <p>Translator: {product.translator_name || 'N/A'}</p>
+                                          </div>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  </div>
+                                  <Button 
+                                    size="sm" 
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => addToCart(product)}
+                                  >
+                                    Add
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                      <PaginationControls />
+                    </>
                   )}
                 </div>
               </CardContent>

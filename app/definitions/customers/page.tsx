@@ -51,19 +51,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
-interface Author {
+interface Customer {
   id: number
-  name: string
-  bio: string
+  type?: number | null
+  institution_name: string
+  contact_person: string | null
+  phone: string | null
+  email: string | null
 }
 
-export default function AuthorManagement() {
-  const [authors, setAuthors] = useState<Author[]>([])
+export default function CustomerManagement() {
+  const [customers, setCustomers] = useState<Customer[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [deleteAuthorId, setDeleteAuthorId] = useState<number | null>(null)
-  const [editAuthor, setEditAuthor] = useState<Author | null>(null)
-  const [isAddAuthorOpen, setIsAddAuthorOpen] = useState(false)
-  const [isEditAuthorOpen, setIsEditAuthorOpen] = useState(false)
+  const [deleteCustomerId, setDeleteCustomerId] = useState<number | null>(null)
+  const [editCustomer, setEditCustomer] = useState<Customer | null>(null)
+  const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false)
+  const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
@@ -73,16 +76,19 @@ export default function AuthorManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+  const [customerTypes, setCustomerTypes] = useState<any[]>([])
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [totalItems, setTotalItems] = useState(0)
 
-  // Form state for new author
-  const [newAuthor, setNewAuthor] = useState<Partial<Author>>({
-    name: "",
-    bio: "",
+  // Form state for new customer
+  const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({
+    institution_name: "",
+    contact_person: "",
+    phone: "",
+    email: "",
   })
 
   // Show alert message
@@ -95,7 +101,8 @@ export default function AuthorManagement() {
   }
 
   useEffect(() => {
-    fetchAuthors()
+    fetchCustomers()
+    fetchCustomerTypes()
   }, [])
 
   const headers = {
@@ -103,21 +110,31 @@ export default function AuthorManagement() {
     Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
   }
 
-  const fetchAuthors = async () => {
+  const fetchCustomerTypes = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/authors/?page_size=1000`, { headers })
+      const res = await fetch(`${API_URL}/common/list-items/customer_type/`, { headers })
+      const data = await res.json()
+      setCustomerTypes(data.results || [])
+    } catch (error) {
+      console.error("Error fetching customer types:", error)
+    }
+  }
+
+  const fetchCustomers = async () => {
+    try {
+      const res = await fetch(`${API_URL}/sales/customers/?page_size=1000`, { headers })
       const data = await res.json()
       console.log('API Response:', data) // Debug log
       
       // Handle the response structure with results array
-      const authorsData = data.results || []
+      const customersData = data.results || []
       
-      console.log('Processed Authors:', authorsData) // Debug log
-      setAuthors(authorsData)
-      setTotalItems(data.count || authorsData.length)
+      console.log('Processed Customers:', customersData) // Debug log
+      setCustomers(customersData)
+      setTotalItems(data.count || customersData.length)
     } catch (error) {
-      console.error("Error fetching authors:", error)
-      setAuthors([])
+      console.error("Error fetching customers:", error)
+      setCustomers([])
       setTotalItems(0)
       throw error
     } finally {
@@ -129,7 +146,7 @@ export default function AuthorManagement() {
   const totalPages = Math.ceil(totalItems / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const currentAuthors = authors.slice(startIndex, endIndex)
+  const currentCustomers = customers.slice(startIndex, endIndex)
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
@@ -142,57 +159,59 @@ export default function AuthorManagement() {
     setCurrentPage(1) // Reset to first page when changing items per page
   }
 
-  // Handle adding a new author
-  const handleAddAuthor = async () => {
+  // Handle adding a new customer
+  const handleAddCustomer = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/authors/`, {
+      const res = await fetch(`${API_URL}/sales/customers/`, {
         method: "POST",
         headers,
-        body: JSON.stringify(newAuthor),
+        body: JSON.stringify(newCustomer),
       })
 
-      if (!res.ok) throw new Error("Failed to add author")
+      if (!res.ok) throw new Error("Failed to add customer")
 
       const data = await res.json()
-      setAuthors([...authors, data])
+      setCustomers([...customers, data])
       setTotalItems(totalItems + 1)
 
       // Reset form
-      setNewAuthor({
-        name: "",
-        bio: "",
+      setNewCustomer({
+        institution_name: "",
+        contact_person: "",
+        phone: "",
+        email: "",
       })
 
-      setIsAddAuthorOpen(false)
+      setIsAddCustomerOpen(false)
 
       // Show toast notification
       toast({
-        title: "Author Added Successfully",
-        description: `${data.name} has been added to the system.`,
+        title: "Customer Added Successfully",
+        description: `${data.institution_name} has been added to the system.`,
         variant: "default",
       })
 
       // Show alert message
-      showAlert("success", `New author "${data.name}" has been successfully added to the system.`)
+      showAlert("success", `New customer "${data.institution_name}" has been successfully added to the system.`)
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to add author",
+        description: "Failed to add customer",
         variant: "destructive",
       })
-      showAlert("error", "Failed to add author. Please try again.")
+      showAlert("error", "Failed to add customer. Please try again.")
     }
   }
 
-  // Handle updating an author
-  const handleUpdateAuthor = async () => {
-    if (!editAuthor) return
+  // Handle updating a customer
+  const handleUpdateCustomer = async () => {
+    if (!editCustomer) return
 
     try {
-      const res = await fetch(`${API_URL}/inventory/authors/${editAuthor.id}/`, {
+      const res = await fetch(`${API_URL}/sales/customers/${editCustomer.id}/`, {
         method: "PUT",
         headers,
-        body: JSON.stringify(editAuthor),
+        body: JSON.stringify(editCustomer),
       })
 
       const responseData = await res.json()
@@ -201,81 +220,81 @@ export default function AuthorManagement() {
         throw new Error(JSON.stringify(responseData))
       }
 
-      setAuthors(authors.map((a) => (a.id === responseData.id ? responseData : a)))
-      setEditAuthor(null)
-      setIsEditAuthorOpen(false)
+      setCustomers(customers.map((c) => (c.id === responseData.id ? responseData : c)))
+      setEditCustomer(null)
+      setIsEditCustomerOpen(false)
 
       // Show toast notification
       toast({
-        title: "Author Updated Successfully",
-        description: `${responseData.name} has been updated.`,
+        title: "Customer Updated Successfully",
+        description: `${responseData.institution_name} has been updated.`,
         variant: "default",
       })
 
       // Show alert message
-      showAlert("success", `Author "${responseData.name}" has been successfully updated.`)
+      showAlert("success", `Customer "${responseData.institution_name}" has been successfully updated.`)
     } catch (error) {
       console.error("Update error:", error)
-      const errorMessage = error instanceof Error ? error.message : "Failed to update author"
+      const errorMessage = error instanceof Error ? error.message : "Failed to update customer"
       toast({
         title: "Error",
         description: errorMessage,
         variant: "destructive",
       })
-      showAlert("error", `Failed to update author: ${errorMessage}`)
+      showAlert("error", `Failed to update customer: ${errorMessage}`)
     }
   }
 
-  // Handle deleting an author
-  const handleDeleteAuthor = async () => {
-    if (deleteAuthorId === null) return
+  // Handle deleting a customer
+  const handleDeleteCustomer = async () => {
+    if (deleteCustomerId === null) return
 
     try {
-      const authorToDelete = authors.find((a) => a.id === deleteAuthorId)
-      if (!authorToDelete) return
+      const customerToDelete = customers.find((c) => c.id === deleteCustomerId)
+      if (!customerToDelete) return
 
-      const res = await fetch(`${API_URL}/inventory/authors/${deleteAuthorId}/delete/`, {
+      const res = await fetch(`${API_URL}/sales/customers/${deleteCustomerId}/delete/`, {
         method: "DELETE",
         headers,
       })
 
-      if (!res.ok) throw new Error("Failed to delete author")
+      if (!res.ok) throw new Error("Failed to delete customer")
 
-      setAuthors(authors.filter((a) => a.id !== deleteAuthorId))
+      setCustomers(customers.filter((c) => c.id !== deleteCustomerId))
       setTotalItems(totalItems - 1)
-      setDeleteAuthorId(null)
+      setDeleteCustomerId(null)
       setIsDeleteAlertOpen(false)
       setDeleteConfirm("")
 
       // Show toast notification
       toast({
-        title: "Author Deleted",
-        description: `${authorToDelete.name} has been permanently removed from the system.`,
+        title: "Customer Deleted",
+        description: `${customerToDelete.institution_name} has been permanently removed from the system.`,
         variant: "destructive",
       })
 
       // Show alert message
-      showAlert("warning", `Author "${authorToDelete.name}" has been permanently deleted from the system.`)
+      showAlert("warning", `Customer "${customerToDelete.institution_name}" has been permanently deleted from the system.`)
     } catch (error) {
       console.error("Delete error:", error)
       toast({
         title: "Error",
-        description: "Failed to delete author",
+        description: "Failed to delete customer",
         variant: "destructive",
       })
-      showAlert("error", "Failed to delete author. Please try again.")
+      showAlert("error", "Failed to delete customer. Please try again.")
     }
   }
 
-  // Open edit dialog with author data
-  const openEditDialog = (author: Author) => {
-    setEditAuthor(author)
-    setIsEditAuthorOpen(true)
+  // Open edit dialog with customer data
+  const openEditDialog = (customer: Customer) => {
+    setEditCustomer(customer)
+    setIsEditCustomerOpen(true)
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (authorId: number) => {
-    setDeleteAuthorId(authorId)
+  const openDeleteDialog = (customerId: number) => {
+    setDeleteCustomerId(customerId)
     setIsDeleteAlertOpen(true)
   }
 
@@ -296,7 +315,7 @@ export default function AuthorManagement() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Authors</BreadcrumbPage>
+                  <BreadcrumbPage>Customers</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -326,49 +345,86 @@ export default function AuthorManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Author Management</h2>
-            <p className="mb-6">Manage authors and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">Customer Management</h2>
+            <p className="mb-6">Manage customers and their information.</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Authors</h3>
-                <Dialog open={isAddAuthorOpen} onOpenChange={setIsAddAuthorOpen}>
+                <h3 className="font-medium">Customers</h3>
+                <Dialog open={isAddCustomerOpen} onOpenChange={setIsAddCustomerOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Author
+                      Add Customer
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Author</DialogTitle>
-                      <DialogDescription>Create a new author entry.</DialogDescription>
+                      <DialogTitle>Add New Customer</DialogTitle>
+                      <DialogDescription>Create a new customer entry.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Name</Label>
+                        <Label htmlFor="type">Customer Type</Label>
+                        <Select
+                          value={newCustomer.type?.toString() || ""}
+                          onValueChange={(value) => setNewCustomer({ ...newCustomer, type: Number(value) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select customer type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {customerTypes.map((type) => (
+                              <SelectItem key={type.id} value={type.id.toString()}>
+                                {type.name_en}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="institution_name">Institution Name</Label>
                         <Input
-                          id="name"
-                          value={newAuthor.name}
-                          onChange={(e) => setNewAuthor({ ...newAuthor, name: e.target.value })}
-                          placeholder="Enter author name"
+                          id="institution_name"
+                          value={newCustomer.institution_name}
+                          onChange={(e) => setNewCustomer({ ...newCustomer, institution_name: e.target.value })}
+                          placeholder="Enter institution name"
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="bio">Bio</Label>
-                        <Textarea
-                          id="bio"
-                          value={newAuthor.bio || ""}
-                          onChange={(e) => setNewAuthor({ ...newAuthor, bio: e.target.value })}
-                          placeholder="Enter author biography"
+                        <Label htmlFor="contact_person">Contact Person</Label>
+                        <Input
+                          id="contact_person"
+                          value={newCustomer.contact_person || ""}
+                          onChange={(e) => setNewCustomer({ ...newCustomer, contact_person: e.target.value })}
+                          placeholder="Enter contact person name"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="phone">Phone</Label>
+                        <Input
+                          id="phone"
+                          value={newCustomer.phone || ""}
+                          onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
+                          placeholder="Enter phone number"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="email">Email</Label>
+                        <Input
+                          id="email"
+                          type="email"
+                          value={newCustomer.email || ""}
+                          onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
+                          placeholder="Enter email address"
                         />
                       </div>
                     </div>
                     <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsAddAuthorOpen(false)}>
+                      <Button variant="outline" onClick={() => setIsAddCustomerOpen(false)}>
                         Cancel
                       </Button>
-                      <Button onClick={handleAddAuthor}>Add Author</Button>
+                      <Button onClick={handleAddCustomer}>Add Customer</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -378,29 +434,37 @@ export default function AuthorManagement() {
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Name</th>
-                        <th className="text-left font-medium p-2">Bio</th>
+                        <th className="text-left font-medium p-2">Type</th>
+                        <th className="text-left font-medium p-2">Institution Name</th>
+                        <th className="text-left font-medium p-2">Contact Person</th>
+                        <th className="text-left font-medium p-2">Phone</th>
+                        <th className="text-left font-medium p-2">Email</th>
                         <th className="text-right font-medium p-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {isLoading ? (
                         <tr>
-                          <td colSpan={3} className="py-8 text-center">
-                            Loading authors...
+                          <td colSpan={6} className="py-8 text-center">
+                            Loading customers...
                           </td>
                         </tr>
-                      ) : currentAuthors.length === 0 ? (
+                      ) : currentCustomers.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="py-8 text-center">
-                            No authors found
+                          <td colSpan={6} className="py-8 text-center">
+                            No customers found
                           </td>
                         </tr>
                       ) : (
-                        currentAuthors.map((author) => (
-                          <tr key={author.id} className="border-b last:border-0">
-                            <td className="p-2 font-medium">{author.name}</td>
-                            <td className="p-2">{author.bio || "No bio available"}</td>
+                        currentCustomers.map((customer) => (
+                          <tr key={customer.id} className="border-b last:border-0">
+                            <td className="p-2">
+                              {customerTypes.find(t => t.id === customer.type)?.name_en || "N/A"}
+                            </td>
+                            <td className="p-2 font-medium">{customer.institution_name}</td>
+                            <td className="p-2">{customer.contact_person || "N/A"}</td>
+                            <td className="p-2">{customer.phone || "N/A"}</td>
+                            <td className="p-2">{customer.email || "N/A"}</td>
                             <td className="p-2 text-right">
                               <div className="flex justify-end gap-2">
                                 {/* Desktop view - separate buttons */}
@@ -409,7 +473,7 @@ export default function AuthorManagement() {
                                     variant="outline"
                                     size="icon"
                                     className="h-8 w-8"
-                                    onClick={() => openEditDialog(author)}
+                                    onClick={() => openEditDialog(customer)}
                                   >
                                     <Edit className="h-4 w-4" />
                                     <span className="sr-only">Edit</span>
@@ -418,7 +482,7 @@ export default function AuthorManagement() {
                                     variant="outline"
                                     size="icon"
                                     className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => openDeleteDialog(author.id)}
+                                    onClick={() => openDeleteDialog(customer.id)}
                                   >
                                     <Trash2 className="h-4 w-4" />
                                     <span className="sr-only">Delete</span>
@@ -436,14 +500,14 @@ export default function AuthorManagement() {
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
                                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openEditDialog(author)}>
+                                      <DropdownMenuItem onClick={() => openEditDialog(customer)}>
                                         <Edit className="h-4 w-4 mr-2" />
                                         Edit
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
                                         className="text-destructive"
-                                        onClick={() => openDeleteDialog(author.id)}
+                                        onClick={() => openDeleteDialog(customer.id)}
                                       >
                                         <Trash2 className="h-4 w-4 mr-2" />
                                         Delete
@@ -461,7 +525,7 @@ export default function AuthorManagement() {
                 </div>
 
                 {/* Pagination Controls */}
-                {!isLoading && authors.length > 0 && (
+                {!isLoading && customers.length > 0 && (
                   <div className="flex items-center justify-between mt-4">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">Items per page:</span>
@@ -516,38 +580,73 @@ export default function AuthorManagement() {
         </div>
       </SidebarInset>
 
-      {/* Edit Author Dialog */}
-      <Dialog open={isEditAuthorOpen} onOpenChange={setIsEditAuthorOpen}>
+      {/* Edit Customer Dialog */}
+      <Dialog open={isEditCustomerOpen} onOpenChange={setIsEditCustomerOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Author</DialogTitle>
-            <DialogDescription>Update author information.</DialogDescription>
+            <DialogTitle>Edit Customer</DialogTitle>
+            <DialogDescription>Update customer information.</DialogDescription>
           </DialogHeader>
-          {editAuthor && (
+          {editCustomer && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Name</Label>
+                <Label htmlFor="edit-type">Customer Type</Label>
+                <Select
+                  value={editCustomer.type?.toString() || ""}
+                  onValueChange={(value) => setEditCustomer({ ...editCustomer, type: Number(value) })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select customer type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customerTypes.map((type) => (
+                      <SelectItem key={type.id} value={type.id.toString()}>
+                        {type.name_en}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-institution_name">Institution Name</Label>
                 <Input
-                  id="edit-name"
-                  value={editAuthor.name}
-                  onChange={(e) => setEditAuthor({ ...editAuthor, name: e.target.value })}
+                  id="edit-institution_name"
+                  value={editCustomer.institution_name}
+                  onChange={(e) => setEditCustomer({ ...editCustomer, institution_name: e.target.value })}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-bio">Bio</Label>
-                <Textarea
-                  id="edit-bio"
-                  value={editAuthor.bio || ""}
-                  onChange={(e) => setEditAuthor({ ...editAuthor, bio: e.target.value })}
+                <Label htmlFor="edit-contact_person">Contact Person</Label>
+                <Input
+                  id="edit-contact_person"
+                  value={editCustomer.contact_person || ""}
+                  onChange={(e) => setEditCustomer({ ...editCustomer, contact_person: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-phone">Phone</Label>
+                <Input
+                  id="edit-phone"
+                  value={editCustomer.phone || ""}
+                  onChange={(e) => setEditCustomer({ ...editCustomer, phone: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-email">Email</Label>
+                <Input
+                  id="edit-email"
+                  type="email"
+                  value={editCustomer.email || ""}
+                  onChange={(e) => setEditCustomer({ ...editCustomer, email: e.target.value })}
                 />
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditAuthorOpen(false)}>
+            <Button variant="outline" onClick={() => setIsEditCustomerOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleUpdateAuthor}>Save Changes</Button>
+            <Button onClick={handleUpdateCustomer}>Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -558,11 +657,11 @@ export default function AuthorManagement() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteAuthorId !== null && (
+              {deleteCustomerId !== null && (
                 <>
                   You are about to delete{" "}
-                  <strong>{authors.find((a) => a.id === deleteAuthorId)?.name}</strong>. This action cannot be undone.
-                  This will permanently remove the author from your system.
+                  <strong>{customers.find((c) => c.id === deleteCustomerId)?.institution_name}</strong>. This action cannot be undone.
+                  This will permanently remove the customer from your system.
                   <div className="mt-4">
                     <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
                     <Input
@@ -579,7 +678,7 @@ export default function AuthorManagement() {
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteAuthor}
+              onClick={handleDeleteCustomer}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={deleteConfirm !== "DELETE"}
             >

@@ -79,6 +79,10 @@ const data = {
           title: "Warehouses",
           url: "/definitions/warehouses",
         },
+        {
+          title: "Customers",
+          url: "/definitions/customers",
+        },
       ]
     },
   

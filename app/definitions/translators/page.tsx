@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,6 +47,7 @@ import { Label } from "@/components/ui/label"
 import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -72,6 +73,11 @@ export default function TranslatorManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [totalItems, setTotalItems] = useState(0)
 
   // Form state for new translator
   const [newTranslator, setNewTranslator] = useState<Partial<Translator>>({
@@ -101,23 +107,58 @@ export default function TranslatorManagement() {
     try {
       const res = await fetch(`${API_URL}/inventory/translators/`, { headers })
       const data = await res.json()
-      // Ensure data is an array
-      const translatorsData = Array.isArray(data) ? data : data.results || []
+      console.log('API Response:', data) // Debug log
+      
+      // Handle the response structure with results array
+      const translatorsData = data.results || []
+      
+      console.log('Processed Translators:', translatorsData) // Debug log
       setTranslators(translatorsData)
+      setTotalItems(data.count || translatorsData.length)
     } catch (error) {
       console.error("Error fetching translators:", error)
-      // Set empty array on error
       setTranslators([])
+      setTotalItems(0)
       throw error
     } finally {
       setIsLoading(false)
     }
   }
 
+  // Calculate pagination values
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const currentTranslators = translators.slice(startIndex, endIndex)
+
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages) return
+    setCurrentPage(newPage)
+  }
+
+  // Handle items per page change
+  const handleItemsPerPageChange = (value: string) => {
+    const newItemsPerPage = Number(value)
+    if (isNaN(newItemsPerPage)) return
+    setItemsPerPage(newItemsPerPage)
+    setCurrentPage(1) // Reset to first page when changing items per page
+  }
+
+  // Handle previous page click
+  const handlePreviousPage = () => {
+    handlePageChange(currentPage - 1)
+  }
+
+  // Handle next page click
+  const handleNextPage = () => {
+    handlePageChange(currentPage + 1)
+  }
+
   // Handle adding a new translator
   const handleAddTranslator = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/translators/`, {
+      const res = await fetch(`${API_URL}/inventory/translators/?page_size=1000`, {
         method: "POST",
         headers,
         body: JSON.stringify(newTranslator),
@@ -127,6 +168,7 @@ export default function TranslatorManagement() {
 
       const data = await res.json()
       setTranslators([...translators, data])
+      setTotalItems(totalItems + 1)
 
       // Reset form
       setNewTranslator({
@@ -213,6 +255,7 @@ export default function TranslatorManagement() {
       if (!res.ok) throw new Error("Failed to delete translator")
 
       setTranslators(translators.filter((t) => t.id !== deleteTranslatorId))
+      setTotalItems(totalItems - 1)
       setDeleteTranslatorId(null)
       setIsDeleteAlertOpen(false)
       setDeleteConfirm("")
@@ -360,14 +403,14 @@ export default function TranslatorManagement() {
                             Loading translators...
                           </td>
                         </tr>
-                      ) : translators.length === 0 ? (
+                      ) : currentTranslators.length === 0 ? (
                         <tr>
                           <td colSpan={3} className="py-8 text-center">
                             No translators found
                           </td>
                         </tr>
                       ) : (
-                        translators.map((translator) => (
+                        currentTranslators.map((translator) => (
                           <tr key={translator.id} className="border-b last:border-0">
                             <td className="p-2 font-medium">{translator.name}</td>
                             <td className="p-2">{translator.bio || "No bio available"}</td>
@@ -429,6 +472,57 @@ export default function TranslatorManagement() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Pagination Controls */}
+                {!isLoading && translators.length > 0 && (
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Items per page:</span>
+                      <Select
+                        value={itemsPerPage.toString()}
+                        onValueChange={handleItemsPerPageChange}
+                      >
+                        <SelectTrigger className="h-8 w-[70px]">
+                          <SelectValue placeholder={itemsPerPage} />
+                        </SelectTrigger>
+                        <SelectContent side="top">
+                          {[10, 20, 30, 40, 50].map((pageSize) => (
+                            <SelectItem key={pageSize} value={pageSize.toString()}>
+                              {pageSize}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        {startIndex + 1}-{Math.min(endIndex, totalItems)} of {totalItems}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={handlePreviousPage}
+                          disabled={currentPage === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          <span className="sr-only">Previous page</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={handleNextPage}
+                          disabled={currentPage === totalPages}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                          <span className="sr-only">Next page</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
