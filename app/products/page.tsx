@@ -1197,7 +1197,58 @@ async function handleUpdateInventory() {
     }
   };
 
-  // Add this function before the return statement
+  // Add this function to handle data refresh
+  const refreshData = async () => {
+    try {
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        showAlert("error", "Authentication token not found");
+        return;
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // Fetch product summaries with pagination
+      const summaryRes = await fetch(`${API_URL}/inventory/product-summary/?page_size=1000`, { headers });
+      if (!summaryRes.ok) throw new Error("Failed to fetch product summaries");
+      const summaryData = await summaryRes.json();
+      const updatedSummaries = Array.isArray(summaryData) ? summaryData : summaryData.results ?? [];
+      
+      // Update product summaries
+      setProductSummaries(updatedSummaries);
+
+      // Apply current filters and pagination
+      const filtered = updatedSummaries.filter((book: ProductSummary) => {
+        const q = searchQuery.toLowerCase();
+        const matchesSearch =
+          q === "" ||
+          book.isbn.toLowerCase().includes(q) ||
+          book.title_en.toLowerCase().includes(q) ||
+          book.title_ar.toLowerCase().includes(q) ||
+          book.author_name?.toLowerCase().includes(q) ||
+          book.translator_name?.toLowerCase().includes(q);
+
+        const matchesGenre = !selectedGenre || book.genre_id === parseInt(selectedGenre);
+        const matchesStatus = !selectedStatus || book.status_id === parseInt(selectedStatus);
+
+        return matchesSearch && matchesGenre && matchesStatus;
+      });
+
+      // Update filtered books
+      setFilteredBooks(filtered);
+
+      // Update total pages
+      setTotalPages(Math.ceil(filtered.length / pageSize));
+    } catch (error) {
+      console.error("Error refreshing data:", error);
+      showAlert("error", "Failed to refresh data");
+    }
+  };
+
+  // Update handleSaveChanges to use refreshData
   const handleSaveChanges = async () => {
     try {
       setIsSubmitting(true);
@@ -1315,7 +1366,10 @@ async function handleUpdateInventory() {
       const summaryData = await summaryRes.json();
       setProductSummaries(Array.isArray(summaryData) ? summaryData : summaryData.results ?? []);
 
-      showAlert("success", "Book, editions, and inventory updated successfully");
+      // After successful save, refresh the data
+      await refreshData();
+      
+      showAlert("success", "Book updated successfully");
       setIsEditBookOpen(false);
     } catch (error) {
       console.error("Error updating book:", error);
@@ -1325,7 +1379,7 @@ async function handleUpdateInventory() {
     }
   };
 
-  // Add this function before the return statement
+  // Update handleTransfer to use refreshData
   const handleTransfer = async () => {
     if (!selectedBook?.id) {
       showAlert("error", "No book selected for transfer");
@@ -1496,6 +1550,9 @@ async function handleUpdateInventory() {
       resetTransfer();
       setIsTransferOpen(false);
       showAlert("success", "Transfer completed successfully");
+
+      // After successful transfer, refresh the data
+      await refreshData();
     } catch (error) {
       console.error("Error creating transfer:", error);
       showAlert("error", error instanceof Error ? error.message : "Failed to create transfer");
