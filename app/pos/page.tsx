@@ -197,7 +197,7 @@ export default function POSPage() {
       };
 
       // Add warehouse_id to the query if selected
-      const warehouseQuery = selectedWarehouse ? `?warehouse_id=${selectedWarehouse}` : '?';
+      const warehouseQuery = selectedWarehouse ? `warehouse_id=${selectedWarehouse}&` : '';
       
       // Fetch all data in parallel
       const [
@@ -208,7 +208,7 @@ export default function POSPage() {
         paymentMethodsRes,
         invoiceTypesRes
       ] = await Promise.all([
-        fetch(`${API_URL}/inventory/pos-product-summary/${warehouseQuery}page_size=1000`, { headers }),
+        fetch(`${API_URL}/inventory/pos-product-summary/?${warehouseQuery}page_size=1000`, { headers }),
         fetch(`${API_URL}/sales/customers/`, { headers }),
         fetch(`${API_URL}/common/list-items/genre/`, { headers }),
         fetch(`${API_URL}/inventory/warehouses/`, { headers }),
@@ -263,7 +263,6 @@ export default function POSPage() {
       }
 
       // Set default values for sales summary
-      setTodaySales(0);
       setTotalCustomers(customersArray.length);
       setPopularProduct("N/A");
 
@@ -282,6 +281,7 @@ export default function POSPage() {
   // Fetch initial data
   useEffect(() => {
     fetchData()
+    fetchSalesMetrics()
   }, [])
 
   // Update the useEffect for filtering products
@@ -419,7 +419,7 @@ export default function POSPage() {
     }
   }
 
-  // Update the handleCompleteSale function to calculate summary locally
+  // Update the handleCompleteSale function to use the new field names
   const handleCompleteSale = async () => {
     if (
       !selectedCustomer ||
@@ -444,12 +444,12 @@ export default function POSPage() {
         Authorization: `Bearer ${token}`,
       }
 
-      // 1. Create the invoice
+      // 1. Create the invoice with updated field names
       const invoiceData = {
-        customer: selectedCustomer.id,
-        warehouse: selectedWarehouse,
-        invoice_type: selectedInvoiceType,
-        payment_method: selectedPaymentMethod,
+        customer_id: selectedCustomer.id,
+        warehouse_id: selectedWarehouse,
+        invoice_type_id: selectedInvoiceType,
+        payment_method_id: selectedPaymentMethod,
         is_returnable: true,
         notes: invoiceNotes,
         global_discount_percent: discountPercentage,
@@ -640,12 +640,17 @@ export default function POSPage() {
     }
   }
 
-  // Add new useEffect for warehouse changes
+  // Update the useEffect for warehouse changes to only affect the main product list
   useEffect(() => {
     if (selectedWarehouse) {
-      fetchData();
+      // Only fetch data when warehouse changes in the main product list
+      // Not when changing in the cart
+      if (!isCartOpen) {
+        fetchData();
+        fetchSalesMetrics();
+      }
     }
-  }, [selectedWarehouse]);
+  }, [selectedWarehouse, isCartOpen]);
 
   // Add PaginationControls to the products section
   const PaginationControls = () => (
@@ -708,6 +713,43 @@ export default function POSPage() {
       </div>
     </div>
   );
+
+  const fetchSalesMetrics = async () => {
+    try {
+      const token = localStorage.getItem("accessToken")
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      }
+
+      // Get today's date in Oman timezone
+      const now = new Date()
+      const omanDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Muscat' }))
+      const today = omanDate.toISOString().split('T')[0] // This will give YYYY-MM-DD in Oman timezone
+      
+      // Fetch today's sales using created_at field
+      const salesResponse = await fetch(`${API_URL}/sales/invoices/?created_at=${today}`, { headers })
+      const salesData = await salesResponse.json()
+
+      // Calculate today's total sales
+      const todayTotal = salesData.results?.reduce((sum: number, invoice: any) => {
+        return sum + (parseFloat(invoice.total_amount) || 0)
+      }, 0) || 0
+      setTodaySales(todayTotal)
+
+      // Set popular product to N/A for now
+      setPopularProduct("N/A")
+
+      // Total customers is already set from the customers fetch in fetchData
+    } catch (error) {
+      console.error("Error fetching sales metrics:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load sales metrics. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
 
   return (
     <SidebarProvider>
@@ -887,7 +929,10 @@ export default function POSPage() {
                     <div className="space-y-2">
                       <Select
                         value={selectedWarehouse?.toString() || ""}
-                        onValueChange={(value) => setSelectedWarehouse(Number(value))}
+                        onValueChange={(value) => {
+                          setSelectedWarehouse(Number(value));
+                          // Remove the fetchData() call from here
+                        }}
                       >
                         <SelectTrigger className="w-[200px]">
                           <SelectValue placeholder="Select warehouse" />
