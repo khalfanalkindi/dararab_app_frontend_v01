@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, ChevronDown, ChevronUp, Search, Link as LinkIcon } from "lucide-react"
+import { FileText, ChevronDown, ChevronUp, Search, Link as LinkIcon, Trash2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -93,6 +93,9 @@ export default function InvoicesPage() {
   const [isLinkInvoiceOpen, setIsLinkInvoiceOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTotal, setSelectedTotal] = useState(0)
+  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState("")
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
 
   const headers = {
     "Content-Type": "application/json",
@@ -263,6 +266,38 @@ export default function InvoicesPage() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     fetchInvoices()
+  }
+
+  const handleDeleteInvoice = async () => {
+    if (!invoiceToDelete || deleteConfirmation !== "DELETE") return
+
+    try {
+      const res = await fetch(`${API_URL}/sales/invoices/${invoiceToDelete.id}/delete/`, {
+        method: "DELETE",
+        headers,
+      })
+
+      if (!res.ok) {
+        throw new Error("Failed to delete invoice")
+      }
+
+      setInvoices(invoices.filter((i) => i.id !== invoiceToDelete.id))
+      toast({
+        title: "Invoice Deleted",
+        description: "Invoice has been deleted successfully",
+        variant: "default",
+      })
+      setInvoiceToDelete(null)
+      setDeleteConfirmation("")
+      setIsDeleteDialogOpen(false)
+    } catch (error) {
+      console.error("Error deleting invoice:", error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete invoice",
+        variant: "destructive",
+      })
+    }
   }
 
   return (
@@ -476,6 +511,16 @@ export default function InvoicesPage() {
                               <LinkIcon className="h-4 w-4 mr-2" />
                               Link
                             </Button>
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              onClick={() => {
+                                setInvoiceToDelete(invoice)
+                                setIsDeleteDialogOpen(true)
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </td>
                         </tr>
                       ))
@@ -586,6 +631,52 @@ export default function InvoicesPage() {
             <p className="text-sm text-muted-foreground">
               This feature is under development. The API integration will be added later.
             </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Invoice Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Invoice</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this invoice? This action cannot be undone.
+              <div className="mt-4">
+                <p className="text-sm font-medium mb-2">Invoice Details:</p>
+                <ul className="text-sm text-muted-foreground space-y-1">
+                  <li>Invoice #: {invoiceToDelete?.invoice_number || "N/A"}</li>
+                  <li>Customer: {invoiceToDelete?.customer?.institution_name || "No Customer"}</li>
+                  <li>Date: {invoiceToDelete?.created_at ? format(new Date(invoiceToDelete.created_at), "PPP") : "No Date"}</li>
+                  <li>Amount: {(invoiceToDelete?.total_amount || 0).toFixed(3)} OMR</li>
+                </ul>
+              </div>
+              <div className="mt-4">
+                <p className="text-sm font-medium mb-2">Type DELETE to confirm:</p>
+                <Input
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                  placeholder="Type DELETE"
+                  className="w-full"
+                />
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => {
+              setIsDeleteDialogOpen(false)
+              setInvoiceToDelete(null)
+              setDeleteConfirmation("")
+            }}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteInvoice}
+              disabled={deleteConfirmation !== "DELETE"}
+            >
+              Delete Invoice
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
