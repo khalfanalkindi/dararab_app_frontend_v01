@@ -32,6 +32,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { CalendarIcon } from "lucide-react"
+import { DatePickerWithRange } from "@/components/ui/date-range-picker"
+import { DateRange } from "react-day-picker"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -85,9 +87,8 @@ export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<number | null>(null)
-  const [startDate, setStartDate] = useState<Date | null>(null)
-  const [endDate, setEndDate] = useState<Date | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [dateRange, setDateRange] = useState<DateRange | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false)
   const [isLinkInvoiceOpen, setIsLinkInvoiceOpen] = useState(false)
@@ -96,6 +97,7 @@ export default function InvoicesPage() {
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
 
   const headers = {
     "Content-Type": "application/json",
@@ -104,7 +106,6 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     fetchWarehouses()
-    fetchInvoices()
   }, [])
 
   const fetchWarehouses = async () => {
@@ -131,16 +132,17 @@ export default function InvoicesPage() {
       if (selectedWarehouse) {
         params.append("warehouse_id", selectedWarehouse.toString())
       }
-      if (startDate) {
-        params.append("start_date", format(startDate, "yyyy-MM-dd"))
+      if (dateRange?.from) {
+        params.append("start_date", format(dateRange.from, "yyyy-MM-dd"))
       }
-      if (endDate) {
-        params.append("end_date", format(endDate, "yyyy-MM-dd"))
+      if (dateRange?.to) {
+        params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
       }
       if (searchQuery) {
         params.append("search", searchQuery)
       }
       params.append("page_size", "1000")
+      params.append("ordering", "-created_at") // Order by created_at in descending order
 
       const queryString = params.toString()
       if (queryString) {
@@ -152,14 +154,14 @@ export default function InvoicesPage() {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
       const data = await res.json()
-      //const invoicesData = Array.isArray(data) ? data : data.results || []
       const invoicesData = Array.isArray(data)
-      ? data
-      : Array.isArray(data.results)
-      ? data.results
-      : []
+        ? data
+        : Array.isArray(data.results)
+        ? data.results
+        : []
 
       setInvoices(invoicesData)
+      setHasSearched(true)
     } catch (error) {
       console.error("Error fetching invoices:", error)
       toast({
@@ -238,10 +240,10 @@ export default function InvoicesPage() {
 
   const handleResetFilters = () => {
     setSelectedWarehouse(null)
-    setStartDate(null)
-    setEndDate(null)
+    setDateRange(null)
     setSearchQuery("")
-    fetchInvoices()
+    setInvoices([])
+    setHasSearched(false)
   }
 
   const handleInvoiceSelect = (invoiceId: number) => {
@@ -330,96 +332,60 @@ export default function InvoicesPage() {
             <p className="mb-6">View and manage sales invoices.</p>
 
             {/* Filters Section */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="space-y-2">
-                <Label>Warehouse</Label>
-                <Select
-                  value={selectedWarehouse?.toString() || "all"}
-                  onValueChange={(value) => setSelectedWarehouse(value === "all" ? null : Number(value))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Warehouses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Warehouses</SelectItem>
-                    {warehouses.map((warehouse) => (
-                      <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                        {warehouse.name_en}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Start Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal",
-                        !startDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {startDate ? format(startDate, "PPP") : "Select date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <Calendar
-                      mode="single"
-                      selected={startDate || undefined}
-                      onSelect={(date) => setStartDate(date || null)}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="space-y-2">
-                <Label>End Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal",
-                        !endDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {endDate ? format(endDate, "PPP") : "Select date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <Calendar
-                      mode="single"
-                      selected={endDate || undefined}
-                      onSelect={(date) => setEndDate(date || null)}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <form onSubmit={handleSearch} className="space-y-2">
-                <Label>Search</Label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Search invoices..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                  <Button type="submit">
-                    <Search className="h-4 w-4 mr-2" />
-                    Search
-                  </Button>
-                  <Button variant="outline" onClick={handleResetFilters}>
-                    Reset
-                  </Button>
+            <div className="flex flex-col md:flex-row md:items-end gap-4 mb-6 w-full">
+               <div className="space-y-2 flex-1 min-w-0">
+                  <Label>Warehouse</Label>
+                  <Select
+                    value={selectedWarehouse?.toString() || "all"}
+                    onValueChange={(value) => setSelectedWarehouse(value === "all" ? null : Number(value))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="All Warehouses" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Warehouses</SelectItem>
+                      {warehouses.map((warehouse) => (
+                        <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
+                          {warehouse.name_en}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-              </form>
+
+                <div className="space-y-2 flex-1 min-w-0">
+                  <Label>Date Range</Label>
+                  <div className="w-full">
+                    <DatePickerWithRange
+                      date={dateRange ?? { from: undefined, to: undefined }}
+                      onDateChange={(range) => setDateRange(range ?? null)}
+                    />
+                  </div>
+                </div>
+
+                <form onSubmit={handleSearch} className="space-y-2 flex-1 min-w-0">
+                  <Label>Inv No.</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      className="flex-1 w-full"
+                      placeholder="Search by invoice number..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    <div className="flex gap-2 shrink-0">
+                      <Button 
+                        type="submit"
+                        disabled={!selectedWarehouse && !dateRange?.from && !searchQuery}
+                      >
+                        <Search className="h-4 w-4 mr-2" />
+                        Search
+                      </Button>
+                      <Button variant="outline" onClick={handleResetFilters}>
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+                </form>
             </div>
 
             {/* Selected Total Display */}
@@ -432,103 +398,109 @@ export default function InvoicesPage() {
             )}
 
             {/* Invoices Table */}
-            <div className="border rounded-md">
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="text-sm border-b">
-                      <th className="text-left font-medium p-2">
-                        <input
-                          type="checkbox"
-                          onChange={(e) => {
-                            setInvoices(invoices.map(invoice => ({
-                              ...invoice,
-                              selected: e.target.checked
-                            })))
-                          }}
-                          checked={invoices.length > 0 && invoices.every(invoice => invoice.selected)}
-                        />
-                      </th>
-                      <th className="text-left font-medium p-2">Invoice #</th>
-                      <th className="text-left font-medium p-2">Customer</th>
-                      <th className="text-left font-medium p-2">Warehouse</th>
-                      <th className="text-left font-medium p-2">Type</th>
-                      <th className="text-left font-medium p-2">Date</th>
-                      <th className="text-right font-medium p-2">Amount</th>
-                      <th className="text-right font-medium p-2">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoading ? (
-                      <tr>
-                        <td colSpan={8} className="py-8 text-center">
-                          Loading invoices...
-                        </td>
+            {!hasSearched ? (
+              <div className="text-center text-muted-foreground py-12">
+                Please select at least one filter (Warehouse, Date Range, or Invoice Number) to view invoices.
+              </div>
+            ) : (
+              <div className="border rounded-md">
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="text-sm border-b">
+                        <th className="text-left font-medium p-2">
+                          <input
+                            type="checkbox"
+                            onChange={(e) => {
+                              setInvoices(invoices.map(invoice => ({
+                                ...invoice,
+                                selected: e.target.checked
+                              })))
+                            }}
+                            checked={invoices.length > 0 && invoices.every(invoice => invoice.selected)}
+                          />
+                        </th>
+                        <th className="text-left font-medium p-2">Invoice #</th>
+                        <th className="text-left font-medium p-2">Customer</th>
+                        <th className="text-left font-medium p-2">Warehouse</th>
+                        <th className="text-left font-medium p-2">Type</th>
+                        <th className="text-left font-medium p-2">Date</th>
+                        <th className="text-right font-medium p-2">Amount</th>
+                        <th className="text-right font-medium p-2">Actions</th>
                       </tr>
-                    ) : invoices.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="py-8 text-center">
-                          No invoices found
-                        </td>
-                      </tr>
-                    ) : (
-                      invoices.map((invoice) => (
-                        <tr key={invoice.id} className="border-b last:border-0">
-                          <td className="p-2">
-                            <input
-                              type="checkbox"
-                              checked={invoice.selected || false}
-                              onChange={() => handleInvoiceSelect(invoice.id)}
-                            />
-                          </td>
-                          <td className="p-2 font-medium">{invoice.invoice_number}</td>
-                          <td className="p-2">{invoice.customer?.institution_name || 'No Customer'}</td>
-                          <td className="p-2">{invoice.warehouse?.name_en || 'No Warehouse'}</td>
-                          <td className="p-2">
-                            <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                              {invoice.invoice_type?.display_name_en || 'No Type'}
-                            </span>
-                          </td>
-                          <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
-                          <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} OMR</td>
-                          <td className="p-2 text-right space-x-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleViewInvoice(invoice)}
-                            >
-                              <FileText className="h-4 w-4 mr-2" />
-                              View
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedInvoice(invoice)
-                                setIsLinkInvoiceOpen(true)
-                              }}
-                            >
-                              <LinkIcon className="h-4 w-4 mr-2" />
-                              Link
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="icon"
-                              onClick={() => {
-                                setInvoiceToDelete(invoice)
-                                setIsDeleteDialogOpen(true)
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                    </thead>
+                    <tbody>
+                      {isLoading ? (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center">
+                            Loading invoices...
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : invoices.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center">
+                            No invoices found
+                          </td>
+                        </tr>
+                      ) : (
+                        invoices.map((invoice) => (
+                          <tr key={invoice.id} className="border-b last:border-0">
+                            <td className="p-2">
+                              <input
+                                type="checkbox"
+                                checked={invoice.selected || false}
+                                onChange={() => handleInvoiceSelect(invoice.id)}
+                              />
+                            </td>
+                            <td className="p-2 font-medium">{invoice.invoice_number}</td>
+                            <td className="p-2">{invoice.customer?.institution_name || 'No Customer'}</td>
+                            <td className="p-2">{invoice.warehouse?.name_en || 'No Warehouse'}</td>
+                            <td className="p-2">
+                              <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                                {invoice.invoice_type?.display_name_en || 'No Type'}
+                              </span>
+                            </td>
+                            <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
+                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} OMR</td>
+                            <td className="p-2 text-right space-x-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleViewInvoice(invoice)}
+                              >
+                                <FileText className="h-4 w-4 mr-2" />
+                                View
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedInvoice(invoice)
+                                  setIsLinkInvoiceOpen(true)
+                                }}
+                              >
+                                <LinkIcon className="h-4 w-4 mr-2" />
+                                Link
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="icon"
+                                onClick={() => {
+                                  setInvoiceToDelete(invoice)
+                                  setIsDeleteDialogOpen(true)
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </SidebarInset>

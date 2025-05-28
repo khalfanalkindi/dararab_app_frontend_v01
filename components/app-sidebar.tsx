@@ -92,6 +92,18 @@ const data = {
         },
       ]
     },
+    {
+      title: "Reports",
+      url: "/reports",
+      icon: FileSpreadsheet,
+      isActive: true,
+      items: [
+        {
+          title: "Warehouse Statistics",
+          url: "/reports/warehouse-stat",
+        },
+      ], // Empty items array means no submenu
+    },
     
     // {
     //   title: "Playground",
