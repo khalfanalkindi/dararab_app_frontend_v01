@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, ChevronDown, ChevronUp, Search, Link as LinkIcon, Trash2 } from "lucide-react"
+import { FileText, ChevronDown, ChevronUp, Search, Trash2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -39,6 +39,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01
 
 interface Invoice {
   id: number
+  composite_id?: string // Add composite_id field
   invoice_number: string
   customer: {
     id: number
@@ -91,7 +92,6 @@ export default function InvoicesPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false)
-  const [isLinkInvoiceOpen, setIsLinkInvoiceOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTotal, setSelectedTotal] = useState(0)
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
@@ -186,6 +186,7 @@ export default function InvoicesPage() {
       // Process the data according to the InvoiceSummarySerializer structure
       const processedData = {
         id: data.id,
+        composite_id: data.composite_id || invoice.composite_id,
         invoice_number: invoice.invoice_number,
         customer: {
           id: invoice.customer?.id || 0,
@@ -364,11 +365,11 @@ export default function InvoicesPage() {
                 </div>
 
                 <form onSubmit={handleSearch} className="space-y-2 flex-1 min-w-0">
-                  <Label>Inv No.</Label>
+                  <Label>Invoice/Composite ID</Label>
                   <div className="flex gap-2">
                     <Input
                       className="flex-1 w-full"
-                      placeholder="Search by invoice number..."
+                      placeholder="Search by invoice number or composite ID..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -400,7 +401,7 @@ export default function InvoicesPage() {
             {/* Invoices Table */}
             {!hasSearched ? (
               <div className="text-center text-muted-foreground py-12">
-                Please select at least one filter (Warehouse, Date Range, or Invoice Number) to view invoices.
+                Please select at least one filter (Warehouse, Date Range, or Invoice/Composite ID) to view invoices.
               </div>
             ) : (
               <div className="border rounded-md">
@@ -421,6 +422,7 @@ export default function InvoicesPage() {
                           />
                         </th>
                         <th className="text-left font-medium p-2">Invoice #</th>
+                        <th className="text-left font-medium p-2">Composite ID</th>
                         <th className="text-left font-medium p-2">Customer</th>
                         <th className="text-left font-medium p-2">Warehouse</th>
                         <th className="text-left font-medium p-2">Type</th>
@@ -432,13 +434,13 @@ export default function InvoicesPage() {
                     <tbody>
                       {isLoading ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center">
+                          <td colSpan={9} className="py-8 text-center">
                             Loading invoices...
                           </td>
                         </tr>
                       ) : invoices.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center">
+                          <td colSpan={9} className="py-8 text-center">
                             No invoices found
                           </td>
                         </tr>
@@ -453,6 +455,7 @@ export default function InvoicesPage() {
                               />
                             </td>
                             <td className="p-2 font-medium">{invoice.invoice_number}</td>
+                            <td className="p-2 font-mono text-sm">{invoice.composite_id || 'N/A'}</td>
                             <td className="p-2">{invoice.customer?.institution_name || 'No Customer'}</td>
                             <td className="p-2">{invoice.warehouse?.name_en || 'No Warehouse'}</td>
                             <td className="p-2">
@@ -471,17 +474,7 @@ export default function InvoicesPage() {
                                 <FileText className="h-4 w-4 mr-2" />
                                 View
                               </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedInvoice(invoice)
-                                  setIsLinkInvoiceOpen(true)
-                                }}
-                              >
-                                <LinkIcon className="h-4 w-4 mr-2" />
-                                Link
-                              </Button>
+
                               <Button
                                 variant="destructive"
                                 size="icon"
@@ -526,6 +519,8 @@ export default function InvoicesPage() {
                 </div>
                 <div>
                   <h3 className="font-medium mb-2">Invoice Information</h3>
+                  <p>Invoice #: {selectedInvoice.invoice_number}</p>
+                  <p>Composite ID: {selectedInvoice.composite_id || 'N/A'}</p>
                   <p>Date: {selectedInvoice.created_at ? format(new Date(selectedInvoice.created_at), "PPP") : 'No Date'}</p>
                   <p>Warehouse: {selectedInvoice.warehouse?.name_en || 'No Warehouse'}</p>
                   <p>Type: {selectedInvoice.invoice_type?.display_name_en || 'No Type'}</p>
@@ -589,23 +584,7 @@ export default function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Link Invoice Dialog */}
-      <Dialog open={isLinkInvoiceOpen} onOpenChange={setIsLinkInvoiceOpen}>
-        <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Link Invoice</DialogTitle>
-            <DialogDescription>
-              Select an invoice to link with Invoice #{selectedInvoice?.invoice_number}
-            </DialogDescription>
-          </DialogHeader>
 
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              This feature is under development. The API integration will be added later.
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Delete Invoice Dialog */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
@@ -618,6 +597,7 @@ export default function InvoicesPage() {
                 <p className="text-sm font-medium mb-2">Invoice Details:</p>
                 <ul className="text-sm text-muted-foreground space-y-1">
                   <li>Invoice #: {invoiceToDelete?.invoice_number || "N/A"}</li>
+                  <li>Composite ID: {invoiceToDelete?.composite_id || "N/A"}</li>
                   <li>Customer: {invoiceToDelete?.customer?.institution_name || "No Customer"}</li>
                   <li>Date: {invoiceToDelete?.created_at ? format(new Date(invoiceToDelete.created_at), "PPP") : "No Date"}</li>
                   <li>Amount: {(invoiceToDelete?.total_amount || 0).toFixed(3)} OMR</li>

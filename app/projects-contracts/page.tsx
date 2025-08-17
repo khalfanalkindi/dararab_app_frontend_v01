@@ -164,6 +164,50 @@ export default function ProjectContract() {
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(null)
 
+  // Function to calculate months between two dates
+  const calculateMonthsBetween = (startDate: string, endDate: string): number => {
+    if (!startDate || !endDate) return 0
+    
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    
+    if (start > end) return 0
+    
+    const yearDiff = end.getFullYear() - start.getFullYear()
+    const monthDiff = end.getMonth() - start.getMonth()
+    const dayDiff = end.getDate() - start.getDate()
+    
+    let months = yearDiff * 12 + monthDiff
+    
+    // If the end day is before the start day, subtract one month
+    if (dayDiff < 0) {
+      months -= 1
+    }
+    
+    return Math.max(0, months)
+  }
+
+  // Function to update contract duration when dates change
+  const updateContractDuration = () => {
+    if (!formRef.current) return
+    
+    const startDateInput = formRef.current.querySelector('[name="start_date"]') as HTMLInputElement
+    const endDateInput = formRef.current.querySelector('[name="end_date"]') as HTMLInputElement
+    const durationInput = formRef.current.querySelector('[name="contract_duration"]') as HTMLInputElement
+    
+    if (startDateInput && endDateInput && durationInput) {
+      const startDate = startDateInput.value
+      const endDate = endDateInput.value
+      
+      if (startDate && endDate) {
+        const months = calculateMonthsBetween(startDate, endDate)
+        durationInput.value = months.toString()
+      } else {
+        durationInput.value = ""
+      }
+    }
+  }
+
   // Show alert message
   const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
@@ -869,6 +913,14 @@ export default function ProjectContract() {
     fetchContractsForProject(selectedProject?.id || 0)
   }, [selectedProject])
 
+  // Calculate duration when form is loaded with existing data
+  useEffect(() => {
+    if (modalView === "edit" && selectedContract) {
+      // Use setTimeout to ensure the form is rendered before calculating
+      setTimeout(updateContractDuration, 100)
+    }
+  }, [modalView, selectedContract])
+
   // Update handleEditContract to set selectedContractType
   const handleEditContract = (contract: Contract) => {
     const enrichedContract = {
@@ -1356,6 +1408,7 @@ export default function ProjectContract() {
           name="start_date"
           type="date"
           defaultValue={selectedContract?.start_date || ""}
+          onChange={updateContractDuration}
         />
       </div>
 
@@ -1366,6 +1419,7 @@ export default function ProjectContract() {
           name="end_date"
           type="date"
           defaultValue={selectedContract?.end_date || ""}
+          onChange={updateContractDuration}
         />
       </div>
 
@@ -1411,8 +1465,12 @@ export default function ProjectContract() {
           name="contract_duration"
           type="number"
           defaultValue={selectedContract?.contract_duration || ""}
-          placeholder="Enter contract duration in months"
+          placeholder="Enter start and end dates to auto-calculate"
+          readOnly
         />
+        <p className="text-xs text-muted-foreground">
+          Duration is automatically calculated based on start and end dates
+        </p>
       </div>
 
       <div className="space-y-2 md:col-span-2">

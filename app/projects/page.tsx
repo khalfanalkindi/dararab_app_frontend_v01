@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useState, useEffect } from "react"
 import { AppSidebar } from "../../components/app-sidebar"
+import ProjectContractsModal from "@/components/ProjectContractsModal"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -14,7 +15,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, FileText } from "lucide-react"
+import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, FileText, PenTool, Languages, Crown, Eye, User, Users } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +50,7 @@ import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { Progress } from "@/components/ui/progress"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -68,6 +70,39 @@ interface Project {
   reviewer: { id: number; name: string } | null
 }
 
+interface Contract {
+  id: number
+  title: string | null
+  project: {
+    id: number
+    title_ar: string
+    title_original: string | null
+  }
+  contract_type: { id: number; display_name_en: string } | null
+  status: { id: number; display_name_en: string } | null
+  contracted_party_details?: {
+    id: number
+    name: string
+    type: string
+  }
+  commission_percent: number | null
+  fixed_amount: number | null
+  free_copies: number | null
+  contract_duration: number | null
+  start_date: string | null
+  end_date: string | null
+  signed_by?: {
+    id: number
+    username: string
+    first_name: string
+    last_name: string
+  }
+  payment_schedule: string
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export default function ProjectManagement() {
   const [projects, setProjects] = useState<Project[]>([])
   const [progressOptions, setProgressOptions] = useState<{ id: number; display_name_en: string }[]>([])
@@ -77,6 +112,7 @@ export default function ProjectManagement() {
   const [translators, setTranslators] = useState<{ id: number; name: string }[]>([])
   const [rightsOwners, setRightsOwners] = useState<{ id: number; name: string }[]>([])
   const [reviewers, setReviewers] = useState<{ id: number; name: string }[]>([])
+  const [contracts, setContracts] = useState<Contract[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null)
   const [editProject, setEditProject] = useState<Project | null>(null)
@@ -91,6 +127,9 @@ export default function ProjectManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+  const [isContractsLoading, setIsContractsLoading] = useState(false)
+  const [isContractsModalOpen, setIsContractsModalOpen] = useState(false)
+  const [selectedProjectForContracts, setSelectedProjectForContracts] = useState<Project | null>(null)
 
   // Form state for new project with default values
   const [newProject, setNewProject] = useState<Partial<Project>>({
@@ -159,6 +198,13 @@ export default function ProjectManagement() {
       }))
     }
   }, [progressOptions, statusOptions])
+
+  // Clear contracts when edit dialog is closed
+  useEffect(() => {
+    if (!isEditProjectOpen) {
+      setContracts([])
+    }
+  }, [isEditProjectOpen])
 
   const headers = {
     "Content-Type": "application/json",
@@ -267,6 +313,112 @@ export default function ProjectManagement() {
       console.error("Error fetching reviewers:", error)
       throw error
     }
+  }
+
+  // Fetch contracts for a project
+  const fetchContractsForProject = async (projectId: number) => {
+    setIsContractsLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/inventory/contracts/?project_id=${projectId}`, { headers })
+      if (!res.ok) throw new Error("Failed to fetch contracts")
+      const data = await res.json()
+      
+      // Handle different possible response formats
+      let contractsData: Contract[] = []
+      if (Array.isArray(data)) {
+        contractsData = data
+      } else if (data && data.results && Array.isArray(data.results)) {
+        contractsData = data.results
+      } else if (data && data.contracts && Array.isArray(data.contracts)) {
+        contractsData = data.contracts
+      } else {
+        console.error("Unexpected contracts data format:", data)
+      }
+
+      // Additional filtering to ensure we only get contracts for this specific project
+      const filteredContracts = contractsData.filter(contract => 
+        contract.project && contract.project.id === projectId
+      )
+
+      console.log(`Fetched ${contractsData.length} contracts, filtered to ${filteredContracts.length} for project ${projectId}`)
+      setContracts(filteredContracts)
+    } catch (error) {
+      console.error("Error fetching contracts:", error)
+      setContracts([])
+    } finally {
+      setIsContractsLoading(false)
+    }
+  }
+
+  // Get person name from contract
+  const getPersonNameFromContract = (contract: Contract) => {
+    if (contract.contracted_party_details?.name) {
+      return contract.contracted_party_details.name
+    }
+    
+    // Fallback to project's assigned person
+    const contractTypeName = contract.contract_type?.display_name_en.toLowerCase() || ""
+    if (contractTypeName.includes('author') && editProject?.author) {
+      return editProject.author.name
+    }
+    if (contractTypeName.includes('translator') && editProject?.translator) {
+      return editProject.translator.name
+    }
+    if (contractTypeName.includes('rights') && editProject?.rights_owner) {
+      return editProject.rights_owner.name
+    }
+    if (contractTypeName.includes('reviewer') && editProject?.reviewer) {
+      return editProject.reviewer.name
+    }
+    
+    return "Unknown"
+  }
+
+  // Get people from contracts by type
+  const getPeopleFromContracts = (personType: string) => {
+    console.log(`Getting ${personType} people from ${contracts.length} contracts for project ${editProject?.id}`)
+    
+    const contractsForType = contracts.filter(contract => {
+      const contractTypeName = contract.contract_type?.display_name_en.toLowerCase() || ""
+      const matches = contractTypeName.includes(personType.toLowerCase())
+      console.log(`Contract ${contract.id}: type="${contractTypeName}", matches=${matches}`)
+      return matches
+    })
+    
+    console.log(`Found ${contractsForType.length} contracts for ${personType}`)
+    
+    // Return unique people names
+    const peopleNames = contractsForType.map(contract => getPersonNameFromContract(contract))
+    const uniqueNames = [...new Set(peopleNames)] // Remove duplicates
+    console.log(`Unique ${personType} people:`, uniqueNames)
+    return uniqueNames
+  }
+
+  // Get other people from contracts (not author, translator, rights, reviewer)
+  const getOtherPeopleFromContracts = () => {
+    const otherContracts = contracts.filter(contract => {
+      const contractTypeName = contract.contract_type?.display_name_en.toLowerCase() || ""
+      return !contractTypeName.includes('author') && 
+             !contractTypeName.includes('translator') && 
+             !contractTypeName.includes('rights') && 
+             !contractTypeName.includes('reviewer')
+    })
+    
+    // Group by contract type and return unique people names
+    const groupedPeople: { [key: string]: string[] } = {}
+    otherContracts.forEach(contract => {
+      const contractType = contract.contract_type?.display_name_en || 'Unknown'
+      const personName = getPersonNameFromContract(contract)
+      
+      if (!groupedPeople[contractType]) {
+        groupedPeople[contractType] = []
+      }
+      if (!groupedPeople[contractType].includes(personName)) {
+        groupedPeople[contractType].push(personName)
+      }
+    })
+    
+    return groupedPeople
   }
 
   // Handle adding a new project
@@ -407,6 +559,7 @@ export default function ProjectManagement() {
       setProjects(projects.map((p) => (p.id === responseData.id ? responseData : p)))
       setEditProject(null)
       setIsEditProjectOpen(false)
+      setContracts([]) // Clear contracts when dialog is closed
 
       // Show toast notification
       toast({
@@ -471,6 +624,8 @@ export default function ProjectManagement() {
 
   // Open edit dialog with project data
   const openEditDialog = (project: Project) => {
+    console.log(`Opening edit dialog for project ${project.id}: ${project.title_ar}`)
+    
     const projectForEdit = {
       ...project,
       progress_status: progressOptions.find((opt) => opt.id === project.progress_status?.id) || null,
@@ -482,14 +637,30 @@ export default function ProjectManagement() {
       reviewer: reviewers.find((opt) => opt.id === project.reviewer?.id) || null,
     }
 
+    // Clear everything first
+    setContracts([])
+    setEditProject(null)
+    
+    // Set the new project and open dialog
     setEditProject(projectForEdit)
     setIsEditProjectOpen(true)
+    
+    // Fetch contracts for this specific project
+    setTimeout(() => {
+      fetchContractsForProject(project.id)
+    }, 100)
   }
 
   // Open delete confirmation
   const openDeleteDialog = (projectId: number) => {
     setDeleteProjectId(projectId)
     setIsDeleteAlertOpen(true)
+  }
+
+  // Open contracts modal
+  const openContractsModal = (project: Project) => {
+    setSelectedProjectForContracts(project)
+    setIsContractsModalOpen(true)
   }
 
   // Get progress status name by ID
@@ -529,6 +700,30 @@ export default function ProjectManagement() {
     }
     const person = personList.find((p) => p.id.toString() === personId?.toString())
     return person ? person.name : "Unknown"
+  }
+
+  // Get progress percentage based on status
+  const getProgressPercentage = (status: string | { id: number; display_name_en: string } | null): number => {
+    if (!status) return 0
+    
+    const statusName = typeof status === "object" ? status.display_name_en : status
+    
+    switch (statusName.toLowerCase()) {
+      case "created":
+        return 16.67 // ~17%
+      case "editing":
+        return 33.33 // ~33%
+      case "reviewing":
+        return 50 // 50%
+      case "approved":
+        return 66.67 // ~67%
+      case "printing":
+        return 83.33 // ~83%
+      case "completed":
+        return 100 // 100%
+      default:
+        return 50 // Default to 50% for unknown statuses
+    }
   }
 
   return (
@@ -795,15 +990,26 @@ export default function ProjectManagement() {
                               )}
                             </td>
                             <td className="p-2">
-                              {project.progress_status ? (
-                                <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                                  {typeof project.progress_status === "object"
-                                    ? project.progress_status.display_name_en
-                                    : getProgressStatusName(project.progress_status)}
-                                </span>
-                              ) : (
-                                "Not set"
-                              )}
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium text-muted-foreground">
+                                    {project.progress_status ? (
+                                      typeof project.progress_status === "object"
+                                        ? project.progress_status.display_name_en
+                                        : getProgressStatusName(project.progress_status)
+                                    ) : (
+                                      "Not set"
+                                    )}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {getProgressPercentage(project.progress_status).toFixed(0)}%
+                                  </span>
+                                </div>
+                                <Progress 
+                                  value={getProgressPercentage(project.progress_status)} 
+                                  className="h-2"
+                                />
+                              </div>
                             </td>
                             <td className="p-2 text-right">
                               <div className="flex justify-end gap-2">
@@ -816,6 +1022,7 @@ export default function ProjectManagement() {
                                       size="icon"
                                       className="h-8 w-8 text-blue-600 hover:text-blue-800"
                                       title="Contracts"
+                                      onClick={() => openContractsModal(project)}
                                     >
                                       <FileText className="h-4 w-4" />
                                       <span className="sr-only">Contracts</span>
@@ -853,7 +1060,7 @@ export default function ProjectManagement() {
                                     <DropdownMenuContent align="end">
                                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
                                       {project.approval_status && (
-                                        <DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => openContractsModal(project)}>
                                           <FileText className="h-4 w-4 mr-2" />
                                           Contracts
                                         </DropdownMenuItem>
@@ -1029,40 +1236,150 @@ export default function ProjectManagement() {
 
               {/* People Section - Read Only */}
               <div className="space-y-4">
-                <h3 className="text-lg font-medium">People Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="edit-author">Author</Label>
-                    <div className="p-2 border rounded-md bg-muted/30">
-                      {editProject.author ? getPersonName(editProject.author, authors) : "Not assigned"}
-                    </div>
+                <h3 className="text-lg font-medium flex items-center gap-2">
+                  <User className="h-5 w-5 text-primary" />
+                  People Information
+                </h3>
+                {isContractsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    <span className="ml-3 text-muted-foreground">Loading people from contracts...</span>
                   </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="edit-translator">Translator</Label>
-                    <div className="p-2 border rounded-md bg-muted/30">
-                      {editProject.translator ? getPersonName(editProject.translator, translators) : "Not assigned"}
-                    </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {getPeopleFromContracts('author').length > 0 && (
+                      <div className="group relative overflow-hidden rounded-lg border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm transition-all duration-300 hover:shadow-md hover:scale-[1.02]">
+                        <div className="absolute top-0 right-0 w-20 h-20 bg-blue-100 rounded-full -translate-y-10 translate-x-10 opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                        <div className="relative flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                            <PenTool className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-blue-900 mb-1">Author</h4>
+                            <div className="space-y-1">
+                              {getPeopleFromContracts('author').map((name, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                                  <span className="text-sm text-blue-800 font-medium">{name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {getPeopleFromContracts('translator').length > 0 && (
+                      <div className="group relative overflow-hidden rounded-lg border border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-4 shadow-sm transition-all duration-300 hover:shadow-md hover:scale-[1.02]">
+                        <div className="absolute top-0 right-0 w-20 h-20 bg-green-100 rounded-full -translate-y-10 translate-x-10 opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                        <div className="relative flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                            <Languages className="h-5 w-5 text-green-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-green-900 mb-1">Translator</h4>
+                            <div className="space-y-1">
+                              {getPeopleFromContracts('translator').map((name, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                  <span className="text-sm text-green-800 font-medium">{name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {getPeopleFromContracts('rights').length > 0 && (
+                      <div className="group relative overflow-hidden rounded-lg border border-purple-200 bg-gradient-to-br from-purple-50 to-violet-50 p-4 shadow-sm transition-all duration-300 hover:shadow-md hover:scale-[1.02]">
+                        <div className="absolute top-0 right-0 w-20 h-20 bg-purple-100 rounded-full -translate-y-10 translate-x-10 opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                        <div className="relative flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                            <Crown className="h-5 w-5 text-purple-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-purple-900 mb-1">Rights Owner</h4>
+                            <div className="space-y-1">
+                              {getPeopleFromContracts('rights').map((name, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                                  <span className="text-sm text-purple-800 font-medium">{name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {getPeopleFromContracts('reviewer').length > 0 && (
+                      <div className="group relative overflow-hidden rounded-lg border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50 p-4 shadow-sm transition-all duration-300 hover:shadow-md hover:scale-[1.02]">
+                        <div className="absolute top-0 right-0 w-20 h-20 bg-orange-100 rounded-full -translate-y-10 translate-x-10 opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                        <div className="relative flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                            <Eye className="h-5 w-5 text-orange-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-orange-900 mb-1">Reviewer</h4>
+                            <div className="space-y-1">
+                              {getPeopleFromContracts('reviewer').map((name, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
+                                  <span className="text-sm text-orange-800 font-medium">{name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Other People from Contracts */}
+                    {Object.keys(getOtherPeopleFromContracts()).length > 0 && 
+                     Object.entries(getOtherPeopleFromContracts()).map(([contractType, people]) => (
+                       <div key={contractType} className="group relative overflow-hidden rounded-lg border border-gray-200 bg-gradient-to-br from-gray-50 to-slate-50 p-4 shadow-sm transition-all duration-300 hover:shadow-md hover:scale-[1.02]">
+                         <div className="absolute top-0 right-0 w-20 h-20 bg-gray-100 rounded-full -translate-y-10 translate-x-10 opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                         <div className="relative flex items-start gap-3">
+                           <div className="flex-shrink-0 w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
+                             <Users className="h-5 w-5 text-gray-600" />
+                           </div>
+                           <div className="flex-1 min-w-0">
+                             <h4 className="font-semibold text-gray-900 mb-1">{contractType}</h4>
+                             <div className="space-y-1">
+                               {people.map((name, index) => (
+                                 <div key={index} className="flex items-center gap-2">
+                                   <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                                   <span className="text-sm text-gray-800 font-medium">{name}</span>
+                                 </div>
+                               ))}
+                             </div>
+                           </div>
+                         </div>
+                       </div>
+                     ))}
+                    
+                    {getPeopleFromContracts('author').length === 0 && 
+                     getPeopleFromContracts('translator').length === 0 && 
+                     getPeopleFromContracts('rights').length === 0 && 
+                     getPeopleFromContracts('reviewer').length === 0 && 
+                     Object.keys(getOtherPeopleFromContracts()).length === 0 && (
+                      <div className="col-span-full text-center py-12 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
+                        <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                        <h4 className="text-lg font-medium text-gray-600 mb-2">No People Assigned</h4>
+                        <p className="text-gray-500">No people have been assigned to this project yet.</p>
+                      </div>
+                    )}
                   </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="edit-rights_owner">Rights Owner</Label>
-                    <div className="p-2 border rounded-md bg-muted/30">
-                      {editProject.rights_owner
-                        ? getPersonName(editProject.rights_owner, rightsOwners)
-                        : "Not assigned"}
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="edit-reviewer">Reviewer</Label>
-                    <div className="p-2 border rounded-md bg-muted/30">
-                      {editProject.reviewer ? getPersonName(editProject.reviewer, reviewers) : "Not assigned"}
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditProjectOpen(false)}>
+            <Button variant="outline" onClick={() => {
+              setIsEditProjectOpen(false)
+              setContracts([]) // Clear contracts when dialog is closed
+            }}>
               Cancel
             </Button>
             <Button onClick={handleUpdateProject}>Save Changes</Button>
@@ -1105,6 +1422,14 @@ export default function ProjectManagement() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Project Contracts Modal */}
+      <ProjectContractsModal
+        open={isContractsModalOpen}
+        onOpenChange={setIsContractsModalOpen}
+        project={selectedProjectForContracts}
+        token={localStorage.getItem("accessToken") || ""}
+      />
     </SidebarProvider>
   )
 }

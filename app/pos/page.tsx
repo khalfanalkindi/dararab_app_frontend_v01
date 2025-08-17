@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Plus,
   Minus,
@@ -101,6 +102,8 @@ interface CartItem {
   product: Product
   quantity: number
   discount_percent: number
+  is_paid: boolean
+  paid_amount: number
 }
 
 interface Genre {
@@ -164,7 +167,7 @@ export default function POSPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [discountPercentage, setDiscountPercentage] = useState<number>(0)
-  const [taxPercentage, setTaxPercentage] = useState<number>(5)
+  const [taxPercentage, setTaxPercentage] = useState<number>(0)
   const [invoiceNotes, setInvoiceNotes] = useState("")
   const [todaySales, setTodaySales] = useState(0)
   const [totalCustomers, setTotalCustomers] = useState(0)
@@ -172,7 +175,6 @@ export default function POSPage() {
   const printRef = useRef<HTMLDivElement>(null)
   const [showMetrics, setShowMetrics] = useState(false)
   const [isCartOpen, setIsCartOpen] = useState(false)
-  const [showInvoiceControls, setShowInvoiceControls] = useState(false)
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<any>(null)
   const [isWarehouseDropdownOpen, setIsWarehouseDropdownOpen] = useState(false)
@@ -186,29 +188,23 @@ export default function POSPage() {
     target.src = "/placeholder.svg";
   };
 
-  // Update the fetchData function
+  // Update the fetchData function - only fetch basic data, not products
   const fetchData = async () => {
     try {
-      setIsLoading(true);
       const token = localStorage.getItem("accessToken");
       const headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       };
 
-      // Add warehouse_id to the query if selected
-      const warehouseQuery = selectedWarehouse ? `warehouse_id=${selectedWarehouse}&` : '';
-      
-      // Fetch all data in parallel
+      // Fetch all basic data in parallel (except products which need warehouse selection)
       const [
-        productsRes,
         customersRes,
         genresRes,
         warehousesRes,
         paymentMethodsRes,
         invoiceTypesRes
       ] = await Promise.all([
-        fetch(`${API_URL}/inventory/pos-product-summary/?${warehouseQuery}page_size=1000`, { headers }),
         fetch(`${API_URL}/sales/customers/`, { headers }),
         fetch(`${API_URL}/common/list-items/genre/`, { headers }),
         fetch(`${API_URL}/inventory/warehouses/`, { headers }),
@@ -216,27 +212,17 @@ export default function POSPage() {
         fetch(`${API_URL}/common/list-items/invoice_type/`, { headers })
       ]);
 
-      if (!productsRes.ok) throw new Error("Failed to fetch products");
       if (!customersRes.ok) throw new Error("Failed to fetch customers");
       if (!genresRes.ok) throw new Error("Failed to fetch genres");
       if (!warehousesRes.ok) throw new Error("Failed to fetch warehouses");
       if (!paymentMethodsRes.ok) throw new Error("Failed to fetch payment methods");
       if (!invoiceTypesRes.ok) throw new Error("Failed to fetch invoice types");
 
-      const productsData = await productsRes.json();
       const customersData = await customersRes.json();
       const genresData = await genresRes.json();
       const warehousesData = await warehousesRes.json();
       const paymentMethodsData = await paymentMethodsRes.json();
       const invoiceTypesData = await invoiceTypesRes.json();
-
-      // Process products - filter only available products
-      let availableProducts: Product[] = [];
-      if (productsData.results) {
-        availableProducts = productsData.results.filter((p: Product) => p.status_id === 2);
-      } else {
-        console.warn("Unexpected products data structure:", productsData);
-      }
 
       // Process other data
       const customersArray = Array.isArray(customersData) ? customersData : customersData.results || [];
@@ -246,8 +232,6 @@ export default function POSPage() {
       const invoiceTypesArray = Array.isArray(invoiceTypesData) ? invoiceTypesData : invoiceTypesData.results || [];
 
       // Set state with fetched data
-      setProducts(availableProducts);
-      setFilteredProducts(availableProducts);
       setCustomers(customersArray);
       setGenres(genresArray);
       setWarehouses(warehousesArray);
@@ -273,12 +257,10 @@ export default function POSPage() {
         description: "Failed to load data. Please try again.",
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  // Fetch initial data
+  // Fetch initial data - only fetch basic data, not products
   useEffect(() => {
     fetchData()
     fetchSalesMetrics()
@@ -334,7 +316,28 @@ export default function POSPage() {
           item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
         )
       }
-      return [...prevCart, { product, quantity: 1, discount_percent: 0 }]
+      
+      // Determine default payment behavior based on selected payment method
+      const itemTotal = (product.latest_price ? parseFloat(product.latest_price) : 0) * 1; // quantity = 1
+      let isPaid = true;
+      let paidAmount = itemTotal;
+      
+      if (selectedPaymentMethod) {
+        const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
+        if (paymentMethod) {
+          const isOutstanding = paymentMethod.display_name_en.toLowerCase().includes('outstanding');
+          isPaid = !isOutstanding;
+          paidAmount = !isOutstanding ? itemTotal : 0;
+        }
+      }
+      
+      return [...prevCart, { 
+        product, 
+        quantity: 1, 
+        discount_percent: 0, 
+        is_paid: isPaid, 
+        paid_amount: paidAmount 
+      }]
     })
   }
 
@@ -348,13 +351,74 @@ export default function POSPage() {
       return
     }
     setCart((prevCart) =>
-      prevCart.map((item) => (item.product.id === productId ? { ...item, quantity: newQuantity } : item)),
+      prevCart.map((item) => {
+        if (item.product.id === productId) {
+          const newItemTotal = (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * newQuantity * (1 - item.discount_percent / 100);
+          return { 
+            ...item, 
+            quantity: newQuantity,
+            // If item was fully paid, update paid amount to new total
+            // If item was partially paid or unpaid, keep the same paid amount
+            paid_amount: item.is_paid && Math.abs(item.paid_amount - (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * item.quantity * (1 - item.discount_percent / 100)) < 0.001
+              ? newItemTotal 
+              : item.paid_amount
+          };
+        }
+        return item;
+      }),
     )
   }
 
   const updateItemDiscount = (productId: number, discountPercent: number) => {
     setCart((prevCart) =>
-      prevCart.map((item) => (item.product.id === productId ? { ...item, discount_percent: discountPercent } : item)),
+      prevCart.map((item) => {
+        if (item.product.id === productId) {
+          const newItemTotal = (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * item.quantity * (1 - discountPercent / 100);
+          return { 
+            ...item, 
+            discount_percent: discountPercent,
+            // If item was fully paid, update paid amount to new total
+            // If item was partially paid or unpaid, keep the same paid amount
+            paid_amount: item.is_paid && Math.abs(item.paid_amount - (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * item.quantity * (1 - item.discount_percent / 100)) < 0.001
+              ? newItemTotal 
+              : item.paid_amount
+          };
+        }
+        return item;
+      }),
+    )
+  }
+
+  const updateItemPaymentStatus = (productId: number, isPaid: boolean) => {
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.product.id === productId) {
+          const itemTotal = calculateItemTotal(item);
+          return { 
+            ...item, 
+            is_paid: isPaid, 
+            paid_amount: isPaid ? itemTotal : 0 
+          };
+        }
+        return item;
+      }),
+    )
+  }
+
+  const updateItemPaidAmount = (productId: number, paidAmount: number) => {
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.product.id === productId) {
+          const itemTotal = calculateItemTotal(item);
+          const validPaidAmount = Math.min(Math.max(0, paidAmount), itemTotal);
+          return { 
+            ...item, 
+            paid_amount: validPaidAmount,
+            is_paid: validPaidAmount > 0
+          };
+        }
+        return item;
+      }),
     )
   }
 
@@ -371,6 +435,75 @@ export default function POSPage() {
   const discountedSubtotal = subtotal - globalDiscountAmount
   const tax = discountedSubtotal * (taxPercentage / 100)
   const total = discountedSubtotal + tax
+
+  // Payment calculations
+  const totalPaidAmount = cart.reduce((sum, item) => sum + item.paid_amount, 0)
+  
+  // If all items are fully paid, include tax in paid amount
+  const allItemsFullyPaid = cart.every(item => {
+    const itemTotal = calculateItemTotal(item);
+    return item.paid_amount >= itemTotal;
+  });
+  
+  const effectivePaidAmount = allItemsFullyPaid ? totalPaidAmount + tax : totalPaidAmount;
+  const totalUnpaidAmount = total - effectivePaidAmount
+  const paidItems = cart.filter(item => item.is_paid)
+  const unpaidItems = cart.filter(item => !item.is_paid)
+  const hasPartialPayment = cart.some(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item))
+  
+  // Note: Items are added to cart as paid by default
+  
+  // Validation function for payment amounts
+  const validatePaymentAmounts = () => {
+    for (const item of cart) {
+      const itemTotal = calculateItemTotal(item);
+      if (item.paid_amount > itemTotal) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Helper function to get payment status badge
+  const getPaymentStatusBadge = (item: CartItem) => {
+    const itemTotal = calculateItemTotal(item);
+    const isFullyPaid = item.paid_amount >= itemTotal;
+    const isPartiallyPaid = item.paid_amount > 0 && item.paid_amount < itemTotal;
+    
+    if (isFullyPaid) {
+      return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">Paid</span>;
+    } else if (isPartiallyPaid) {
+      return <span className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded-full">Partial</span>;
+    } else if (item.is_paid && item.paid_amount === 0) {
+      return <span className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">Unpaid</span>;
+    }
+    return null;
+  }
+
+  // Helper function to check if item is fully paid
+  const isItemFullyPaid = (item: CartItem) => {
+    const itemTotal = calculateItemTotal(item);
+    return Math.abs(item.paid_amount - itemTotal) < 0.001;
+  }
+
+  // Function to apply payment method to existing items
+  const applyPaymentMethodToExistingItems = () => {
+    if (!selectedPaymentMethod) return;
+    
+    const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
+    if (!paymentMethod) return;
+    
+    const isOutstanding = paymentMethod.display_name_en.toLowerCase().includes('outstanding');
+    
+    setCart(prevCart => prevCart.map(item => {
+      const itemTotal = calculateItemTotal(item);
+      return {
+        ...item,
+        is_paid: !isOutstanding,
+        paid_amount: !isOutstanding ? itemTotal : 0
+      };
+    }));
+  }
 
   // Handle adding a new customer
   const handleAddCustomer = async () => {
@@ -436,6 +569,15 @@ export default function POSPage() {
       return
     }
 
+    if (!validatePaymentAmounts()) {
+      toast({
+        title: "Invalid Payment Amounts",
+        description: "One or more items have payment amounts exceeding their total cost.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       setIsSubmitting(true)
       const token = localStorage.getItem("accessToken")
@@ -455,6 +597,8 @@ export default function POSPage() {
         global_discount_percent: discountPercentage,
         tax_percent: taxPercentage,
       }
+      
+      console.log("Creating invoice with data:", invoiceData)
 
       const invoiceResponse = await fetch(`${API_URL}/sales/invoices/`, {
         method: "POST",
@@ -464,21 +608,26 @@ export default function POSPage() {
 
       if (!invoiceResponse.ok) {
         const errorData = await invoiceResponse.json()
-        throw new Error(errorData.message || "Failed to create invoice")
+        console.error("Invoice creation error:", errorData)
+        throw new Error(errorData.message || errorData.detail || "Failed to create invoice")
       }
 
       const invoice = await invoiceResponse.json()
       const invoiceId = invoice.id
 
-      // 2. Create invoice items
+      // 2. Create invoice items with payment status
       for (const item of cart) {
+        const itemTotal = calculateItemTotal(item);
         const itemData = {
           invoice: invoiceId,
           product: item.product.id,
           quantity: item.quantity,
           unit_price: item.product.latest_price ? parseFloat(item.product.latest_price) : 0,
           discount_percent: item.discount_percent,
-          total_price: calculateItemTotal(item),
+          total_price: itemTotal,
+          paid_amount: item.paid_amount,
+          remaining_amount: itemTotal - item.paid_amount,
+          is_paid: item.is_paid,
         }
 
         const itemResponse = await fetch(`${API_URL}/sales/invoice-items/`, {
@@ -489,7 +638,8 @@ export default function POSPage() {
 
         if (!itemResponse.ok) {
           const errorData = await itemResponse.json()
-          throw new Error(errorData.message || "Failed to create invoice item")
+          console.error("Invoice item creation error:", errorData)
+          throw new Error(errorData.message || errorData.detail || "Failed to create invoice item")
         }
 
         // Update inventory stock after creating invoice item
@@ -527,12 +677,12 @@ export default function POSPage() {
         }
       }
 
-      // 3. Create payment record
+      // 3. Create payment record for all sales (both cash and outstanding)
       const paymentData = {
         invoice: invoiceId,
-        amount: parseFloat(total.toFixed(2)),
+        amount: parseFloat(totalPaidAmount.toFixed(2)),
         payment_date: format(new Date(), "yyyy-MM-dd"),
-        notes: "Payment received at time of sale",
+        notes: `Payment received at time of sale. Total: ${total.toFixed(3)} OMR, Paid: ${totalPaidAmount.toFixed(3)} OMR, Due: ${totalUnpaidAmount.toFixed(3)} OMR`,
       }
 
       const paymentResponse = await fetch(`${API_URL}/sales/payments/`, {
@@ -548,7 +698,9 @@ export default function POSPage() {
 
       toast({
         title: "Success",
-        description: "Sale completed successfully",
+        description: totalUnpaidAmount === 0 
+          ? "Sale completed successfully - Fully Paid" 
+          : `Sale completed successfully - ${totalUnpaidAmount.toFixed(3)} OMR remaining`,
       })
 
       // Fetch invoice summary for receipt
@@ -560,8 +712,8 @@ export default function POSPage() {
       setReceiptData(summary)
       setIsPrintDialogOpen(true)
 
-      // Update sales summary locally
-      setTodaySales(prev => prev + total)
+      // Update sales summary locally - only count the amount actually paid
+      setTodaySales(prev => prev + totalPaidAmount)
       setTotalCustomers(prev => prev + 1)
       // Find the most popular product in the cart
       const productCounts = new Map<number, number>()
@@ -584,9 +736,22 @@ export default function POSPage() {
       setIsCartOpen(false)
       // Do NOT clear cart/customer here; do it after receipt is closed
     } catch (error) {
+      console.error("Sale completion error:", error)
+      let errorMessage = "Failed to complete sale. Please try again."
+      
+      if (error instanceof Error) {
+        if (error.message.includes("composite_id")) {
+          errorMessage = "Backend error: Invoice creation failed due to composite_id constraint. Please contact support."
+        } else if (error.message.includes("Duplicate entry")) {
+          errorMessage = "Backend error: Duplicate invoice entry. Please try again."
+        } else {
+          errorMessage = error.message
+        }
+      }
+      
       toast({
         title: "Error",
-        description: "Failed to complete sale. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       })
     } finally {
@@ -631,26 +796,142 @@ export default function POSPage() {
     }
   }
 
-  // Add this function to handle invoice type switching
-  const handleSwitchToReturn = () => {
-    const returnType = invoiceTypes.find(type => type.display_name_en.toLowerCase() === "return")
-    if (returnType) {
-      setSelectedInvoiceType(returnType.id)
-      setShowInvoiceControls(true)
-    }
-  }
 
-  // Update the useEffect for warehouse changes to only affect the main product list
-  useEffect(() => {
-    if (selectedWarehouse) {
-      // Only fetch data when warehouse changes in the main product list
-      // Not when changing in the cart
-      if (!isCartOpen) {
-        fetchData();
-        fetchSalesMetrics();
+
+  // Separate function to fetch products only with retry mechanism
+  const fetchProducts = async (warehouseId: number, retryCount = 0) => {
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem("accessToken");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      console.log(`Fetching products for warehouse ${warehouseId}`);
+      const warehouseQuery = `warehouse_id=${warehouseId}&`;
+      
+      // Add timeout to prevent hanging
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
+      const productsRes = await fetch(`${API_URL}/inventory/pos-product-summary/?${warehouseQuery}page_size=1000`, { 
+        headers,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      console.log('Products response status:', productsRes.status);
+      
+      if (productsRes.ok) {
+        const productsData = await productsRes.json();
+        console.log('Products data:', productsData);
+        
+        let availableProducts: Product[] = [];
+        if (productsData.results) {
+          availableProducts = productsData.results.filter((p: Product) => p.status_id === 2);
+          console.log(`Found ${availableProducts.length} available products`);
+        } else if (Array.isArray(productsData)) {
+          availableProducts = productsData.filter((p: Product) => p.status_id === 2);
+          console.log(`Found ${availableProducts.length} available products (array format)`);
+        } else {
+          console.warn("Unexpected products data structure:", productsData);
+        }
+        
+        setProducts(availableProducts);
+        setFilteredProducts(availableProducts);
+      } else {
+        console.error('Failed to fetch products:', productsRes.status, productsRes.statusText);
+        const errorText = await productsRes.text();
+        console.error('Error response:', errorText);
+        setProducts([]);
+        setFilteredProducts([]);
+        toast({
+          title: "Error",
+          description: `Failed to load products for warehouse. Status: ${productsRes.status}`,
+          variant: "destructive",
+        });
       }
+          } catch (error) {
+        console.error('Error fetching products:', error);
+        
+        // Retry logic for network errors
+        if (retryCount < 2 && (error instanceof Error && error.name === 'AbortError' || error instanceof TypeError)) {
+          console.log(`Retrying fetch products (attempt ${retryCount + 1})`);
+          setTimeout(() => {
+            fetchProducts(warehouseId, retryCount + 1);
+          }, 1000 * (retryCount + 1)); // Exponential backoff
+          return;
+        }
+        
+        setProducts([]);
+        setFilteredProducts([]);
+        if (error instanceof Error && error.name === 'AbortError') {
+          toast({
+            title: "Timeout",
+            description: "Request timed out. Please try again.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: "Failed to load products. Please try again.",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+  // Update the useEffect for warehouse changes to fetch products when warehouse is selected
+  useEffect(() => {
+    if (selectedWarehouse && !isCartOpen) {
+      fetchProducts(selectedWarehouse);
+      fetchSalesMetrics();
+    } else if (!selectedWarehouse) {
+      // Clear products when no warehouse is selected
+      setProducts([]);
+      setFilteredProducts([]);
+      setIsLoading(false);
     }
   }, [selectedWarehouse, isCartOpen]);
+
+  // Commented out to prevent infinite loop - payment method logic is now handled in addToCart
+  // useEffect(() => {
+  //   if (selectedPaymentMethod && cart.length > 0) {
+  //     const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
+  //     if (paymentMethod) {
+  //       const isOutstanding = paymentMethod.display_name_en.toLowerCase().includes('outstanding');
+  //       
+  //       // Only update items that haven't been manually configured yet
+  //       setCart(prevCart => prevCart.map(item => {
+  //         // Calculate item total inline to avoid dependency issues
+  //         const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
+  //         const quantity = item.quantity;
+  //         const discount = item.discount_percent / 100;
+  //         const itemTotal = price * quantity * (1 - discount);
+  //         
+  //         // Only update if this looks like a newly added item (paid amount matches total exactly)
+  //         // and the user hasn't manually changed the payment status
+  //         const isNewlyAdded = Math.abs(item.paid_amount - itemTotal) < 0.001;
+  //         const shouldUpdate = isNewlyAdded && (
+  //           (isOutstanding && item.is_paid) || (!isOutstanding && !item.is_paid)
+  //         );
+  //         
+  //         if (shouldUpdate) {
+  //           return {
+  //             ...item,
+  //             is_paid: !isOutstanding,
+  //             paid_amount: !isOutstanding ? itemTotal : 0
+  //           };
+  //         }
+  //         // Don't change items that user has manually configured
+  //         return item;
+  //       }));
+  //     }
+  //   }
+  // }, [selectedPaymentMethod, paymentMethods]);
 
   // Add PaginationControls to the products section
   const PaginationControls = () => (
@@ -915,151 +1196,169 @@ export default function POSPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>Invoice Settings</Label>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs"
-                        onClick={() => setShowInvoiceControls(!showInvoiceControls)}
-                      >
-                        {showInvoiceControls ? "Hide" : "Show"} Details
-                      </Button>
-                    </div>
+                    <Label>Invoice Settings</Label>
                     <div className="space-y-2">
+                      <div className="flex items-center gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 p-2 border rounded-md bg-muted/50">
+                            <span className="text-sm">
+                              {selectedWarehouse ? warehouses.find(w => w.id === selectedWarehouse)?.name_en : "No warehouse selected"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 p-2 border rounded-md bg-muted/50">
+                            <span className="text-sm">
+                              {selectedInvoiceType ? invoiceTypes.find(type => type.id === selectedInvoiceType)?.display_name_en : "No invoice type selected"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                       <Select
-                        value={selectedWarehouse?.toString() || ""}
-                        onValueChange={(value) => {
-                          setSelectedWarehouse(Number(value));
-                          // Remove the fetchData() call from here
-                        }}
+                        value={selectedPaymentMethod?.toString() || ""}
+                        onValueChange={(value) => setSelectedPaymentMethod(Number(value))}
                       >
-                        <SelectTrigger className="w-[200px]">
-                          <SelectValue placeholder="Select warehouse" />
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select payment method" />
                         </SelectTrigger>
                         <SelectContent>
-                          {warehouses.map((warehouse) => (
-                            <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                              {warehouse.name_en}
+                          {paymentMethods.map((method) => (
+                            <SelectItem key={method.id} value={method.id.toString()}>
+                              {method.display_name_en}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {showInvoiceControls && (
-                        <>
-                        <Select
-                          value={selectedInvoiceType?.toString() || ""}
-                          onValueChange={(value) => setSelectedInvoiceType(Number(value))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select invoice type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {invoiceTypes.map((type) => (
-                              <SelectItem key={type.id} value={type.id.toString()}>
-                                {type.display_name_en}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={selectedPaymentMethod?.toString() || ""}
-                          onValueChange={(value) => setSelectedPaymentMethod(Number(value))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select payment method" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {paymentMethods.map((method) => (
-                              <SelectItem key={method.id} value={method.id.toString()}>
-                                {method.display_name_en}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        </>
-                      )}
                     </div>
-                    {!showInvoiceControls && selectedInvoiceType && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          {invoiceTypes.find(type => type.id === selectedInvoiceType)?.display_name_en}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 text-xs"
-                          onClick={handleSwitchToReturn}
-                        >
-                          Switch to Return
-                        </Button>
-                      </div>
-                    )}
                   </div>
 
                   <div className="space-y-2">
                     <Label>Items</Label>
+                    {selectedPaymentMethod && (
+                      <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <strong>Payment Method:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en}
+                            {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase().includes('outstanding') 
+                              ? ' - Items will be marked as unpaid by default'
+                              : ' - Items will be marked as paid by default'
+                            }
+                          </div>
+                          {cart.length > 0 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={applyPaymentMethodToExistingItems}
+                              className="h-6 text-xs"
+                            >
+                              Apply to All Items
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="border rounded-md p-4 space-y-4 max-h-[300px] overflow-y-auto">
                       {cart.length === 0 ? (
                         <p className="text-center text-muted-foreground">No items in cart</p>
                       ) : (
-                        cart.map((item) => (
-                          <div key={item.product.id} className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-medium">{item.product.title_en}</h4>
-                                <p className="text-sm text-muted-foreground">
-                                  {(item.product.latest_price ? parseFloat(item.product.latest_price).toFixed(3) : "N/A")} OMR
-                                </p>
+                        cart.map((item) => {
+                          const itemTotal = calculateItemTotal(item);
+                          const remainingAmount = itemTotal - item.paid_amount;
+                          const isFullyPaid = item.paid_amount >= itemTotal;
+                          const isPartiallyPaid = item.paid_amount > 0 && item.paid_amount < itemTotal;
+                          
+                          return (
+                            <div key={item.product.id} className={`space-y-2 p-3 rounded-lg border ${
+                              isFullyPaid ? 'bg-green-50 border-green-200' : 
+                              isPartiallyPaid ? 'bg-orange-50 border-orange-200' : 
+                              'bg-white border-gray-200'
+                            }`}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 flex-1">
+                                  <Checkbox
+                                    checked={item.is_paid}
+                                    onChange={(e) => updateItemPaymentStatus(item.product.id, e.target.checked)}
+                                    className="shrink-0"
+                                  />
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <h4 className="font-medium">{item.product.title_en}</h4>
+                                      {getPaymentStatusBadge(item)}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">
+                                      {(item.product.latest_price ? parseFloat(item.product.latest_price).toFixed(3) : "N/A")} OMR
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                                  >
+                                    <Minus className="h-4 w-4" />
+                                  </Button>
+                                  <span className="w-8 text-center">{item.quantity}</span>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => removeFromCart(item.product.id)}>
+                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                  </Button>
+                                </div>
                               </div>
+                              
                               <div className="flex items-center gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                                <Label className="text-xs">Item Discount:</Label>
+                                <Select
+                                  value={item.discount_percent.toString()}
+                                  onValueChange={(value) => updateItemDiscount(item.product.id, Number(value))}
                                 >
-                                  <Minus className="h-4 w-4" />
-                                </Button>
-                                <span className="w-8 text-center">{item.quantity}</span>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
-                                >
-                                  <Plus className="h-4 w-4" />
-                                </Button>
-                                <Button variant="ghost" size="sm" onClick={() => removeFromCart(item.product.id)}>
-                                  <Trash2 className="h-4 w-4 text-red-500" />
-                                </Button>
+                                  <SelectTrigger className="h-7 text-xs">
+                                    <SelectValue placeholder="0%" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="0">0%</SelectItem>
+                                    <SelectItem value="5">5%</SelectItem>
+                                    <SelectItem value="10">10%</SelectItem>
+                                    <SelectItem value="15">15%</SelectItem>
+                                    <SelectItem value="20">20%</SelectItem>
+                                    <SelectItem value="25">25%</SelectItem>
+                                    <SelectItem value="50">50%</SelectItem>
+                                    <SelectItem value="75">75%</SelectItem>
+                                    <SelectItem value="100">100%</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <span className="text-xs ml-auto">
+                                  Total: {itemTotal.toFixed(3)} OMR
+                                </span>
                               </div>
+
+                              {item.is_paid && (
+                                <div className="flex items-center gap-2 pt-2 border-t">
+                                  <Label className="text-xs">Paid Amount:</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    max={itemTotal}
+                                    value={item.paid_amount}
+                                    onChange={(e) => updateItemPaidAmount(item.product.id, parseFloat(e.target.value) || 0)}
+                                    className="h-7 text-xs w-24"
+                                    placeholder="0.000"
+                                  />
+                                  <span className="text-xs text-muted-foreground">
+                                    {remainingAmount > 0 ? `Remaining: ${remainingAmount.toFixed(3)} OMR` : "Fully Paid"}
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Label className="text-xs">Item Discount:</Label>
-                              <Select
-                                value={item.discount_percent.toString()}
-                                onValueChange={(value) => updateItemDiscount(item.product.id, Number(value))}
-                              >
-                                <SelectTrigger className="h-7 text-xs">
-                                  <SelectValue placeholder="0%" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="0">0%</SelectItem>
-                                  <SelectItem value="5">5%</SelectItem>
-                                  <SelectItem value="10">10%</SelectItem>
-                                  <SelectItem value="15">15%</SelectItem>
-                                  <SelectItem value="20">20%</SelectItem>
-                                  <SelectItem value="25">25%</SelectItem>
-                                  <SelectItem value="50">50%</SelectItem>
-                                  <SelectItem value="75">75%</SelectItem>
-                                  <SelectItem value="100">100%</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <span className="text-xs ml-auto">
-                                Total: {calculateItemTotal(item).toFixed(3)} OMR
-                              </span>
-                            </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -1134,12 +1433,68 @@ export default function POSPage() {
                       <span>Total</span>
                       <span>{total.toFixed(3)} OMR</span>
                     </div>
+
+                    {/* Payment Summary Section */}
+                    {(totalPaidAmount > 0 || hasPartialPayment) && (
+                      <>
+                        <Separator />
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-medium">Payment Summary</span>
+                          </div>
+                          
+                          {paidItems.length > 0 && (
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                Paid Items ({paidItems.length})
+                              </span>
+                              <span className="text-green-600 font-medium">
+                                {effectivePaidAmount.toFixed(3)} OMR
+                              </span>
+                            </div>
+                          )}
+                          
+                          {unpaidItems.length > 0 && (
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                Unpaid Items ({unpaidItems.length})
+                              </span>
+                              <span className="text-red-600 font-medium">
+                                {totalUnpaidAmount.toFixed(3)} OMR
+                              </span>
+                            </div>
+                          )}
+                          
+                          {hasPartialPayment && (
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                                Partial Payments
+                              </span>
+                              <span className="text-orange-600 font-medium">
+                                {cart.filter(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item)).length} items
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    <Separator />
+                    <div className="flex justify-between font-bold text-lg">
+                      <span>Amount Due</span>
+                      <span className={totalUnpaidAmount > 0 ? "text-red-600" : "text-green-600"}>
+                        {totalUnpaidAmount.toFixed(3)} OMR
+                      </span>
+                    </div>
                   </div>
 
                   <Button
                     className="w-full mt-4"
                     size="lg"
-                    disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse}
+                    disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse || totalUnpaidAmount < 0}
                     onClick={handleCompleteSale}
                   >
                     {isSubmitting ? (
@@ -1148,7 +1503,12 @@ export default function POSPage() {
                         Processing...
                       </>
                     ) : (
-                      "Complete Sale"
+                      <div className="flex items-center justify-between w-full">
+                        <span>Complete Sale</span>
+                        <span className="text-sm">
+                          {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} OMR` : "Fully Paid"}
+                        </span>
+                      </div>
                     )}
                   </Button>
                 </div>
@@ -1159,9 +1519,12 @@ export default function POSPage() {
               onClick={() => {
                 setCart([])
                 setSelectedCustomer(null)
+                setSelectedWarehouse(null)
+                setProducts([])
+                setFilteredProducts([])
                 setInvoiceNotes("")
                 setDiscountPercentage(0)
-                setTaxPercentage(5)
+                setTaxPercentage(0)
               }}
             >
               New Sale
@@ -1253,7 +1616,7 @@ export default function POSPage() {
                             size="sm"
                             onClick={() => setIsWarehouseDropdownOpen(true)}
                           >
-                            {selectedWarehouse ? warehouses.find(w => w.id === selectedWarehouse)?.name_en : "All Warehouses"}
+                            {selectedWarehouse ? warehouses.find(w => w.id === selectedWarehouse)?.name_en : "Select Warehouse"}
                             <ChevronDown className="ml-2 h-4 w-4" />
                           </Button>
                         </PopoverTrigger>
@@ -1263,28 +1626,12 @@ export default function POSPage() {
                             <CommandList>
                               <CommandEmpty>No warehouse found.</CommandEmpty>
                               <CommandGroup>
-                                <CommandItem
-                                  onSelect={() => {
-                                    setSelectedWarehouse(null);
-                                    setIsWarehouseDropdownOpen(false);
-                                    fetchData(); // Refresh data when selecting "All Warehouses"
-                                  }}
-                                >
-                                  <Check
-                                    className={cn(
-                                      "mr-2 h-4 w-4",
-                                      selectedWarehouse === null ? "opacity-100" : "opacity-0"
-                                    )}
-                                  />
-                                  All Warehouses
-                                </CommandItem>
                                 {warehouses.map((warehouse) => (
                                   <CommandItem
                                     key={warehouse.id}
                                     onSelect={() => {
                                       setSelectedWarehouse(warehouse.id);
                                       setIsWarehouseDropdownOpen(false);
-                                      fetchData(); // Refresh data when selecting a specific warehouse
                                     }}
                                   >
                                     <Check
@@ -1376,7 +1723,11 @@ export default function POSPage() {
                             variant="ghost"
                             size="sm"
                             className="h-4 w-4 p-0 hover:bg-transparent"
-                            onClick={() => setSelectedWarehouse(null)}
+                            onClick={() => {
+                              setSelectedWarehouse(null);
+                              setProducts([]);
+                              setFilteredProducts([]);
+                            }}
                           >
                             <X className="h-3 w-3" />
                           </Button>
@@ -1384,14 +1735,38 @@ export default function POSPage() {
                       )}
                     </div>
                   </div>
-                  {isLoading ? (
+                  {!selectedWarehouse ? (
+                    <div className="text-center py-12">
+                      <div className="flex flex-col items-center gap-4">
+                        <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center">
+                          <ShoppingCart className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold">Select a Warehouse</h3>
+                          <p className="text-muted-foreground">Please select a warehouse to view available products</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : isLoading ? (
                     <div className="flex justify-center items-center py-12">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <span className="ml-2">Loading products...</span>
+                      <span className="ml-2">Loading products for {warehouses.find(w => w.id === selectedWarehouse)?.name_en}...</span>
                     </div>
                   ) : filteredProducts.length === 0 ? (
                     <div className="text-center py-12">
-                      <p className="text-muted-foreground">No products found</p>
+                      <div className="flex flex-col items-center gap-4">
+                        <p className="text-muted-foreground">No products found in this warehouse</p>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            console.log('Debug: Fetching products for warehouse', selectedWarehouse);
+                            fetchProducts(selectedWarehouse);
+                          }}
+                        >
+                          Retry Load Products
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -1515,6 +1890,23 @@ export default function POSPage() {
                   <span className="font-semibold">Total</span>
                   <span className="font-bold text-lg">{total.toFixed(3)} OMR</span>
                 </div>
+                
+                {/* Payment Summary */}
+                {(totalPaidAmount > 0 || hasPartialPayment) && (
+                  <>
+                    <Separator />
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Amount Paid</span>
+                        <span className="font-medium text-green-600">{totalPaidAmount.toFixed(3)} OMR</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Amount Due</span>
+                        <span className="font-medium text-red-600">{totalUnpaidAmount.toFixed(3)} OMR</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <DialogFooter>
@@ -1526,7 +1918,7 @@ export default function POSPage() {
               </Button>
               <Button
                 onClick={handleCompleteSale}
-                disabled={isSubmitting || !selectedCustomer || !selectedWarehouse}
+                disabled={isSubmitting || !selectedCustomer || !selectedWarehouse || totalUnpaidAmount < 0}
               >
                 {isSubmitting ? (
                   <>
@@ -1534,7 +1926,12 @@ export default function POSPage() {
                     Processing...
                   </>
                 ) : (
-                  "Confirm Sale"
+                  <div className="flex items-center justify-between w-full">
+                    <span>Confirm Sale</span>
+                    <span className="text-sm">
+                      {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} OMR` : "Fully Paid"}
+                    </span>
+                  </div>
                 )}
               </Button>
             </DialogFooter>
@@ -1550,7 +1947,7 @@ export default function POSPage() {
           setSelectedCustomer(null);
           setInvoiceNotes("");
           setDiscountPercentage(0);
-          setTaxPercentage(5);
+          setTaxPercentage(0);
           // Reset the page (reload)
           window.location.reload();
         }
@@ -1576,6 +1973,9 @@ export default function POSPage() {
                 {receiptData?.customer_contact && (
                   <p className="whitespace-pre-line text-xs text-muted-foreground">{receiptData.customer_contact}</p>
                 )}
+                <p><strong>Payment Method:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en || "N/A"}</p>
+                <p><strong>Invoice Type:</strong> {invoiceTypes.find(t => t.id === selectedInvoiceType)?.display_name_en || "N/A"}</p>
+                <p><strong>Warehouse:</strong> {warehouses.find(w => w.id === selectedWarehouse)?.name_en || "N/A"}</p>
               </div>
               <table className="w-full mb-4">
                 <thead>
@@ -1585,32 +1985,56 @@ export default function POSPage() {
                     <th className="text-right">Price</th>
                     <th className="text-right">Disc%</th>
                     <th className="text-right">Total</th>
+                    <th className="text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {receiptData?.items?.map((item: any, idx: number) => (
-                    <tr key={idx}>
-                      <td>{item.product_name}</td>
-                      <td className="text-right">{item.quantity}</td>
-                      <td className="text-right">{item.unit_price?.toFixed(3)}</td>
-                      <td className="text-right">{item.discount_percent}%</td>
-                      <td className="text-right">{item.total_price?.toFixed(3)}</td>
-                    </tr>
-                  ))}
+                  {receiptData?.items?.map((item: any, idx: number) => {
+                    const cartItem = cart.find(c => c.product.id === item.product);
+                    const isPaid = cartItem?.is_paid || false;
+                    const paidAmount = cartItem?.paid_amount || 0;
+                    const itemTotal = item.total_price || 0;
+                    const remaining = itemTotal - paidAmount;
+                    
+                    return (
+                      <tr key={idx}>
+                        <td>{item.product_name}</td>
+                        <td className="text-right">{item.quantity}</td>
+                        <td className="text-right">{item.unit_price?.toFixed(3)}</td>
+                        <td className="text-right">{item.discount_percent}%</td>
+                        <td className="text-right">{item.total_price?.toFixed(3)}</td>
+                        <td className="text-right">
+                          {isPaid ? (
+                            <span className="text-green-600 text-xs">
+                              {paidAmount >= itemTotal ? "Paid" : `Partial (${paidAmount.toFixed(3)})`}
+                            </span>
+                          ) : (
+                            <span className="text-red-600 text-xs">Outstanding</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={4} className="text-right"><strong>Subtotal:</strong></td>
+                    <td colSpan={5} className="text-right"><strong>Subtotal:</strong></td>
                     <td className="text-right">{receiptData?.total_amount?.toFixed(3)} OMR</td>
                   </tr>
                   <tr>
-                    <td colSpan={4} className="text-right"><strong>Total Paid:</strong></td>
-                    <td className="text-right">{receiptData?.total_paid?.toFixed(3)} OMR</td>
+                    <td colSpan={5} className="text-right"><strong>Total Paid:</strong></td>
+                    <td className="text-right">{totalPaidAmount.toFixed(3)} OMR</td>
                   </tr>
                   <tr>
-                    <td colSpan={4} className="text-right"><strong>Remaining:</strong></td>
-                    <td className="text-right">{receiptData?.remaining_amount?.toFixed(3)} OMR</td>
+                    <td colSpan={5} className="text-right"><strong>Amount Due:</strong></td>
+                    <td className="text-right">{totalUnpaidAmount.toFixed(3)} OMR</td>
                   </tr>
+                  {hasPartialPayment && (
+                    <tr>
+                      <td colSpan={5} className="text-right text-orange-600"><strong>Partial Payments:</strong></td>
+                      <td className="text-right text-orange-600">{cart.filter(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item)).length} items</td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
               {receiptData?.notes && (
@@ -1639,3 +2063,4 @@ export default function POSPage() {
     </SidebarProvider>
   )
 }
+
