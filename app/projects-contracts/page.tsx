@@ -48,6 +48,7 @@ interface Project {
   title_ar: string
   title_original: string | null
   approval_status: boolean
+  type: { id: number; display_name_en: string } | null
 }
 
 interface ContractType {
@@ -150,6 +151,7 @@ export default function ProjectContract() {
   const [reviewers, setReviewers] = useState<Reviewer[]>([])
   const [selectedContractType, setSelectedContractType] = useState<number | null>(null)
   const [contentTypes, setContentTypes] = useState<{ id: number; model: string }[]>([])
+  const [selectedContractedParty, setSelectedContractedParty] = useState<number | null>(null)
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -599,15 +601,6 @@ export default function ProjectContract() {
 
   // Add function to get contracted party options based on contract type
   const getContractedPartyOptions = (contractedPartyType?: string | null) => {
-    console.log('getContractedPartyOptions called with:', {
-      contractedPartyType,
-      selectedContractType,
-      authors: authors?.length,
-      translators: translators?.length,
-      rightsOwners: rightsOwners?.length,
-      reviewers: reviewers?.length
-    })
-
     // Helper function to extract items from paginated response
     const getItems = (data: any) => {
       if (!data) return []
@@ -618,108 +611,77 @@ export default function ProjectContract() {
 
     // If a specific type is provided, use that
     if (contractedPartyType) {
-      console.log('Using provided contracted party type:', contractedPartyType)
       switch (contractedPartyType.toLowerCase()) {
         case 'author':
-          const authorItems = getItems(authors)
-          console.log('Returning authors:', authorItems)
-          return authorItems
+          return getItems(authors)
         case 'translator':
-          const translatorItems = getItems(translators)
-          console.log('Returning translators:', translatorItems)
-          return translatorItems
+          return getItems(translators)
         case 'rightsowner':
-          const rightsOwnerItems = getItems(rightsOwners)
-          console.log('Returning rights owners:', rightsOwnerItems)
-          return rightsOwnerItems
+          return getItems(rightsOwners)
         case 'reviewer':
-          const reviewerItems = getItems(reviewers)
-          console.log('Returning reviewers:', reviewerItems)
-          return reviewerItems
+          return getItems(reviewers)
         default:
-          console.log('Unknown contracted party type:', contractedPartyType)
           return []
       }
     }
     
     // Otherwise use the selected contract type
     if (!selectedContractType) {
-      console.log('No selected contract type')
       return []
     }
 
     const contractType = contractTypes.find((t) => t.id === selectedContractType)
     if (!contractType) {
-      console.log('No contract type found for ID:', selectedContractType)
       return []
     }
 
-    console.log('Using contract type:', contractType)
     const typeName = contractType.display_name_en.toLowerCase()
-    console.log('Contract type name:', typeName)
 
     if (typeName.includes("author")) {
-      const authorItems = getItems(authors)
-      console.log('Returning authors based on contract type:', authorItems)
-      return authorItems
+      return getItems(authors)
     }
     if (typeName.includes("translator")) {
-      const translatorItems = getItems(translators)
-      console.log('Returning translators based on contract type:', translatorItems)
-      return translatorItems
+      return getItems(translators)
     }
     if (typeName.includes("rights")) {
-      const rightsOwnerItems = getItems(rightsOwners)
-      console.log('Returning rights owners based on contract type:', rightsOwnerItems)
-      return rightsOwnerItems
+      return getItems(rightsOwners)
     }
     if (typeName.includes("reviewer")) {
-      const reviewerItems = getItems(reviewers)
-      console.log('Returning reviewers based on contract type:', reviewerItems)
-      return reviewerItems
+      return getItems(reviewers)
     }
 
-    console.log('No matching contract type found')
     return []
   }
 
   // Helper function to determine contracted party type from contract type
   const getContractedPartyTypeFromContractType = (contractTypeId: number | null) => {
-    console.log('getContractedPartyTypeFromContractType called with:', contractTypeId)
-    
     if (!contractTypeId) {
-      console.log('No contract type ID provided')
       return null
     }
     
     const contractType = contractTypes.find(type => type.id === contractTypeId)
     if (!contractType) {
-      console.log('No contract type found for ID:', contractTypeId)
       return null
     }
     
-    console.log('Found contract type:', contractType)
     const typeName = contractType.display_name_en.toLowerCase()
-    console.log('Contract type name:', typeName)
     
     if (typeName.includes('author')) {
-      console.log('Returning author type')
       return 'author'
     }
     if (typeName.includes('translator')) {
-      console.log('Returning translator type')
       return 'translator'
     }
-    if (typeName.includes('rights')) {
-      console.log('Returning rightsowner type')
+    if (typeName.includes('rights') || typeName.includes('rightsowner')) {
       return 'rightsowner'
     }
     if (typeName.includes('reviewer')) {
-      console.log('Returning reviewer type')
       return 'reviewer'
     }
+    if (typeName.includes('printer')) {
+      return 'printer'
+    }
     
-    console.log('No matching type found')
     return null
   }
 
@@ -728,6 +690,7 @@ export default function ProjectContract() {
     setModalView("create")
     setSelectedContract(null)
     setSelectedContractType(null)
+    setSelectedContractedParty(null)
   }
 
   // Update handleSubmitContract to handle content_type and object_id
@@ -935,7 +898,96 @@ export default function ProjectContract() {
 
     setSelectedContract(enrichedContract)
     setSelectedContractType(contract.contract_type_id)
+    setSelectedContractedParty(contract.contracted_party_details?.id ?? contract.object_id ?? null)
     setModalView("edit")
+  }
+
+  // Helper function to get project type name
+  const getProjectTypeName = (project: Project | null) => {
+    if (!project || !project.type) return null
+    const typeName = project.type.display_name_en.toLowerCase()
+    
+    // Handle different possible project type names
+    if (typeName.includes('original')) return 'original'
+    if (typeName.includes('from_arabic') || typeName.includes('from arabic')) return 'from_arabic'
+    if (typeName.includes('to_arabic') || typeName.includes('to arabic')) return 'to_arabic'
+    
+    return typeName
+  }
+
+  // Helper function to determine which fields should be shown based on project type and contracted party
+  const getVisibleFields = (projectType: string | null, contractedPartyType: string | null) => {
+    if (!projectType || !contractedPartyType) {
+      return {
+        commission_percent: false,
+        fixed_amount: false,
+        free_copies: false
+      }
+    }
+
+    const type = projectType.toLowerCase()
+    const party = contractedPartyType.toLowerCase()
+
+    // Original project type
+    if (type === 'original') {
+      if (party === 'author') {
+        return { commission_percent: true, free_copies: true, fixed_amount: true }
+      }
+      if (party === 'printer') {
+        return { commission_percent: false, free_copies: false, fixed_amount: true }
+      }
+      if (party === 'reviewer') {
+        return { commission_percent: false, free_copies: false, fixed_amount: true }
+      }
+      if (party === 'translator' || party === 'rightsowner') {
+        return { commission_percent: false, free_copies: false, fixed_amount: false }
+      }
+    }
+
+    // From Arabic project type
+    if (type === 'from_arabic') {
+      if (party === 'author') {
+        return { commission_percent: true, free_copies: true, fixed_amount: true }
+      }
+      if (party === 'translator') {
+        return { commission_percent: true, free_copies: true, fixed_amount: true }
+      }
+      if (party === 'reviewer' || party === 'printer' || party === 'rightsowner') {
+        return { commission_percent: false, free_copies: false, fixed_amount: true }
+      }
+    }
+
+    // To Arabic project type
+    if (type === 'to_arabic') {
+      if (party === 'author') {
+        return { commission_percent: true, free_copies: true, fixed_amount: true }
+      }
+      if (party === 'translator') {
+        return { commission_percent: true, free_copies: true, fixed_amount: true }
+      }
+      if (party === 'reviewer' || party === 'printer' || party === 'rightsowner') {
+        return { commission_percent: false, free_copies: false, fixed_amount: true }
+      }
+    }
+
+    // Default: hide all fields
+    return { commission_percent: false, free_copies: false, fixed_amount: false }
+  }
+
+  // Get current visible fields
+  const visibleFields = getVisibleFields(
+    getProjectTypeName(selectedProject),
+    selectedContract?.contracted_party_type_value || 
+    (selectedContractType ? getContractedPartyTypeFromContractType(selectedContractType) : null)
+  )
+
+  // Helper function to get visible fields for a contract in the list
+  const getContractVisibleFields = (contract: Contract) => {
+    const projectType = getProjectTypeName(selectedProject)
+    const contractedPartyType = contract.contracted_party_details?.type || 
+      (contract.contract_type_id ? getContractedPartyTypeFromContractType(contract.contract_type_id) : null)
+    
+    return getVisibleFields(projectType, contractedPartyType)
   }
 
   return (
@@ -1018,6 +1070,13 @@ export default function ProjectContract() {
                         {project.title_ar}
                       </h3>
                       {project.title_original && <p className="text-muted-foreground">{project.title_original}</p>}
+                      {project.type && (
+                        <div className="mt-2">
+                          <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                            {project.type.display_name_en}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Contracts Button */}
@@ -1191,36 +1250,71 @@ export default function ProjectContract() {
                           </div>
 
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-                            <div>
-                              <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <DollarSign className="h-3 w-3 mr-1" /> Royalties
-                              </p>
-                              <p className="text-sm">
-                                {contract.commission_percent !== null ? `${contract.commission_percent}%` : "Not set"}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <FileText className="h-3 w-3 mr-1" /> Free Copies
-                              </p>
-                              <p className="text-sm">
-                                {contract.free_copies !== null ? contract.free_copies : "Not set"}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <Clock className="h-3 w-3 mr-1" /> Duration
-                              </p>
-                              <p className="text-sm">
-                                {contract.contract_duration !== null ? `${contract.contract_duration} months` : "Not set"}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <Calendar className="h-3 w-3 mr-1" /> Created
-                              </p>
-                              <p className="text-sm">{formatDate(contract.created_at)}</p>
-                            </div>
+                            {(() => {
+                              const contractVisibleFields = getContractVisibleFields(contract)
+                              const visibleItems = []
+                              
+                              if (contractVisibleFields.commission_percent) {
+                                visibleItems.push(
+                                  <div key="commission_percent">
+                                    <p className="text-xs text-muted-foreground mb-1 flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-1" /> Royalties
+                                    </p>
+                                    <p className="text-sm">
+                                      {contract.commission_percent !== null ? `${contract.commission_percent}%` : "Not set"}
+                                    </p>
+                                  </div>
+                                )
+                              }
+                              
+                              if (contractVisibleFields.free_copies) {
+                                visibleItems.push(
+                                  <div key="free_copies">
+                                    <p className="text-xs text-muted-foreground mb-1 flex items-center">
+                                      <FileText className="h-3 w-3 mr-1" /> Free Copies
+                                    </p>
+                                    <p className="text-sm">
+                                      {contract.free_copies !== null ? contract.free_copies : "Not set"}
+                                    </p>
+                                  </div>
+                                )
+                              }
+                              
+                              if (contractVisibleFields.fixed_amount) {
+                                visibleItems.push(
+                                  <div key="fixed_amount">
+                                    <p className="text-xs text-muted-foreground mb-1 flex items-center">
+                                      <DollarSign className="h-3 w-3 mr-1" /> Advanced Amount
+                                    </p>
+                                    <p className="text-sm">
+                                      {contract.fixed_amount !== null ? formatCurrency(contract.fixed_amount) : "Not set"}
+                                    </p>
+                                  </div>
+                                )
+                              }
+                              
+                              visibleItems.push(
+                                <div key="duration">
+                                  <p className="text-xs text-muted-foreground mb-1 flex items-center">
+                                    <Clock className="h-3 w-3 mr-1" /> Duration
+                                  </p>
+                                  <p className="text-sm">
+                                    {contract.contract_duration !== null ? `${contract.contract_duration} months` : "Not set"}
+                                  </p>
+                                </div>
+                              )
+                              
+                              visibleItems.push(
+                                <div key="created">
+                                  <p className="text-xs text-muted-foreground mb-1 flex items-center">
+                                    <Calendar className="h-3 w-3 mr-1" /> Created
+                                  </p>
+                                  <p className="text-sm">{formatDate(contract.created_at)}</p>
+                                </div>
+                              )
+                              
+                              return visibleItems
+                            })()}
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
@@ -1269,6 +1363,8 @@ export default function ProjectContract() {
 
 {(modalView === "create" || modalView === "edit") && (
   <form ref={formRef} onSubmit={handleSubmitContract} className="py-4 space-y-4">
+
+    
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div className="space-y-2">
         <Label htmlFor="title">Contract Title</Label>
@@ -1289,6 +1385,7 @@ export default function ProjectContract() {
           onValueChange={(value) => {
             const newContractTypeId = Number.parseInt(value)
             setSelectedContractType(newContractTypeId)
+            setSelectedContractedParty(null) // Reset contracted party selection
             // Update the selected contract with new contract type and reset contracted party
             if (selectedContract) {
               const newContractedPartyType = getContractedPartyTypeFromContractType(newContractTypeId)
@@ -1330,6 +1427,10 @@ export default function ProjectContract() {
             name="contracted_party_id"
             defaultValue={selectedContract?.contracted_party_id_value?.toString() || ""}
             required
+            onValueChange={(value) => {
+              const partyId = Number.parseInt(value)
+              setSelectedContractedParty(partyId)
+            }}
             onOpenChange={(open) => {
               if (!open) {
                 // Remove focus when closing the select
@@ -1423,40 +1524,46 @@ export default function ProjectContract() {
         />
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="fixed_amount">Advanced Amount</Label>
-        <Input
-          id="fixed_amount"
-          name="fixed_amount"
-          type="number"
-          step="0.01"
-          defaultValue={selectedContract?.fixed_amount || ""}
-          placeholder="Enter fixed amount"
-        />
-      </div>
+      {visibleFields.fixed_amount && (
+        <div className="space-y-2">
+          <Label htmlFor="fixed_amount">Advanced Amount</Label>
+          <Input
+            id="fixed_amount"
+            name="fixed_amount"
+            type="number"
+            step="0.01"
+            defaultValue={selectedContract?.fixed_amount || ""}
+            placeholder="Enter fixed amount"
+          />
+        </div>
+      )}
 
-      <div className="space-y-2">
-        <Label htmlFor="commission_percent">Royalties Percentage</Label>
-        <Input
-          id="commission_percent"
-          name="commission_percent"
-          type="number"
-          step="0.01"
-          defaultValue={selectedContract?.commission_percent || ""}
-          placeholder="Enter commission percentage"
-        />
-      </div>
+      {visibleFields.commission_percent && (
+        <div className="space-y-2">
+          <Label htmlFor="commission_percent">Royalties Percentage</Label>
+          <Input
+            id="commission_percent"
+            name="commission_percent"
+            type="number"
+            step="0.01"
+            defaultValue={selectedContract?.commission_percent || ""}
+            placeholder="Enter commission percentage"
+          />
+        </div>
+      )}
 
-      <div className="space-y-2">
-        <Label htmlFor="free_copies">Free Copies</Label>
-        <Input
-          id="free_copies"
-          name="free_copies"
-          type="number"
-          defaultValue={selectedContract?.free_copies || ""}
-          placeholder="Enter number of free copies"
-        />
-      </div>
+      {visibleFields.free_copies && (
+        <div className="space-y-2">
+          <Label htmlFor="free_copies">Free Copies</Label>
+          <Input
+            id="free_copies"
+            name="free_copies"
+            type="number"
+            defaultValue={selectedContract?.free_copies || ""}
+            placeholder="Enter number of free copies"
+          />
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label htmlFor="contract_duration">Contract Duration (months)</Label>
