@@ -24,40 +24,42 @@ import jsPDF from "jspdf"
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
 interface InvoiceItem {
-  id: number;
+  id?: number;
   product?: {
     id: number;
-    title_en: string;
+  title_en: string;
     title_ar: string;
-    isbn: string;
+  isbn: string;
   };
-  product_name?: string; // Alternative field name from API
+  product_name: string; // Product name from API
   quantity: number;
   unit_price: number;
   discount_percent: number;
   total_price: number;
-  paid_amount: number;
-  remaining_amount: number;
-  is_paid: boolean;
 }
 
 interface InvoiceData {
   id: number;
-  created_at: string;
-  created_at_formatted: string;
+  composite_id: string;
   customer_name: string;
+  customer_type?: string;
   customer_contact: string;
   warehouse_name: string;
-  payment_method_name: string;
   invoice_type_name: string;
+  payment_method_name: string;
+  is_returnable: boolean;
+  items: InvoiceItem[];
+  total_amount: number;
+  total_paid: number;
+  remaining_amount: number;
   notes: string;
+  created_at_formatted: string;
+  created_by: number;
+  updated_by: number;
+  created_at: string;
+  updated_at: string;
   global_discount_percent?: number;
   tax_percent?: number;
-  subtotal?: number;
-  total_amount?: number;
-  total_paid?: number;
-  total_remaining?: number;
-  items?: InvoiceItem[];
 }
 
 export default function ReceiptPage() {
@@ -101,11 +103,17 @@ export default function ReceiptPage() {
       if (data.items && data.items.length > 0) {
         console.log("First item structure:", data.items[0]);
         console.log("Payment data for first item:", {
+          product_name: data.items[0].product_name,
           total_price: data.items[0].total_price,
-          paid_amount: data.items[0].paid_amount,
-          remaining_amount: data.items[0].remaining_amount,
-          is_paid: data.items[0].is_paid
+          unit_price: data.items[0].unit_price,
+          quantity: data.items[0].quantity
         });
+        console.log("All items payment status:", data.items.map((item: InvoiceItem) => ({
+          product_name: item.product_name,
+          total_price: item.total_price,
+          unit_price: item.unit_price,
+          quantity: item.quantity
+        })));
       }
       setInvoiceData(data);
     } catch (error) {
@@ -124,7 +132,7 @@ export default function ReceiptPage() {
   useEffect(() => {
     if (currentInvoiceId) {
       fetchInvoiceData(currentInvoiceId);
-    } else {
+        } else {
       setIsLoading(false);
     }
   }, [currentInvoiceId]);
@@ -162,6 +170,11 @@ export default function ReceiptPage() {
                   max-width: 100% !important; 
                   margin: 0 !important; 
                   padding: 0 !important; 
+                }
+                img {
+                  -webkit-print-color-adjust: exact !important;
+                  color-adjust: exact !important;
+                  print-color-adjust: exact !important;
                 }
               }
               body { 
@@ -245,28 +258,28 @@ export default function ReceiptPage() {
   }
 
   if (isLoading) {
-    return (
+  return (
       <Dialog open={isPrintDialogOpen} onOpenChange={handleClose}>
         <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
           <div className="shrink-0">
-            <DialogHeader>
+                          <DialogHeader>
               <DialogTitle>Receipt</DialogTitle>
               <DialogDescription>Loading receipt data...</DialogDescription>
-            </DialogHeader>
-          </div>
+                          </DialogHeader>
+                            </div>
           <div className="flex-1 flex items-center justify-center">
             <div className="flex items-center gap-2">
               <Loader2 className="h-6 w-6 animate-spin" />
               <span>Loading receipt...</span>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+                            </div>
+                            </div>
+                        </DialogContent>
+                      </Dialog>
     );
   }
 
   if (!invoiceData) {
-    return (
+                          return (
       <Dialog open={isPrintDialogOpen} onOpenChange={handleClose}>
         <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
           <div className="shrink-0">
@@ -274,51 +287,69 @@ export default function ReceiptPage() {
               <DialogTitle>Receipt</DialogTitle>
               <DialogDescription>Unable to load receipt data</DialogDescription>
             </DialogHeader>
-          </div>
+                </div>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <h2 className="text-xl font-semibold mb-2">No Invoice Data</h2>
               <p className="text-muted-foreground">Unable to load invoice data. Please check the invoice ID.</p>
-            </div>
-          </div>
+                </div>
+                </div>
           <div className="shrink-0 flex justify-end pt-2 border-t">
             <Button onClick={handleClose}>Close</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+                  </div>
+          </DialogContent>
+        </Dialog>
     );
   }
 
   return (
     <Dialog open={isPrintDialogOpen} onOpenChange={handleClose}>
-      <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
-        <div className="shrink-0">
-          <DialogHeader>
-            <DialogTitle>Receipt</DialogTitle>
-            <DialogDescription>View, print, or download your receipt.</DialogDescription>
-          </DialogHeader>
-        </div>
-        <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-          <div className="receipt-container" style={{
-            width: '280px',
-            maxWidth: '280px',
-            margin: '0 auto',
-            padding: '8px',
-            fontFamily: 'monospace',
-            fontSize: '10px',
-            lineHeight: '1.1',
-            backgroundColor: 'white',
-            minHeight: '100%'
-          }}>
-            <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
-              <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>Dar Arab For Publication & Translation</h2>
-              <p style={{ fontSize: '9px', margin: '2px 0' }}>123 Main Street, Muscat, Oman</p>
-              <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +968 1234 5678</p>
+        <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
+          <div className="shrink-0">
+            <DialogHeader>
+              <DialogTitle>Receipt</DialogTitle>
+              <DialogDescription>View, print, or download your receipt.</DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
+            <div className="receipt-container" style={{
+              width: '280px',
+              maxWidth: '280px',
+              margin: '0 auto',
+              padding: '8px',
+              fontFamily: 'monospace',
+              fontSize: '10px',
+              lineHeight: '1.1',
+              backgroundColor: 'white',
+              minHeight: '100%'
+            }}>
+              <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
+              <div style={{ marginBottom: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <img 
+                  src="/dararab-logo-1.png" 
+                  alt="DarArab Logo" 
+                  style={{ 
+                    maxWidth: '60px', 
+                    maxHeight: '40px', 
+                    objectFit: 'contain',
+                    filter: 'grayscale(100%) contrast(200%)', // Make it print-friendly
+                    display: 'block'
+                  }}
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                  }}
+                />
+              </div>
+              <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>DarArab for Publishing & Translation</h2>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Seeb, Muscat, Sultanate of Oman</p>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +96871523542</p>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Email: info@dararab.co.uk | Web: dararab.co.uk</p>
               <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{invoiceData.id}</p>
               <p style={{ fontSize: '9px', margin: '2px 0' }}>{invoiceData.created_at_formatted || format(new Date(), "PPP")}</p>
-            </div>
-            
-            <div className="mb-2" style={{ fontSize: '9px' }}>
+              </div>
+              
+              <div className="mb-2" style={{ fontSize: '9px' }}>
               <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {invoiceData.customer_name || "Walk-in Customer"}</p>
               {invoiceData.customer_contact && (
                 <p style={{ margin: '2px 0', fontSize: '8px' }}>{invoiceData.customer_contact}</p>
@@ -326,126 +357,162 @@ export default function ReceiptPage() {
               <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {invoiceData.payment_method_name || "N/A"}</p>
               <p style={{ margin: '2px 0' }}><strong>Type:</strong> {invoiceData.invoice_type_name || "N/A"}</p>
               <p style={{ margin: '2px 0' }}><strong>Warehouse:</strong> {invoiceData.warehouse_name || "N/A"}</p>
-            </div>
-            
-            <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
-                <span>Item</span>
-                <span>Qty</span>
-                <span>Price</span>
-                <span>Total</span>
-                <span>Status</span>
               </div>
               
-              {(invoiceData.items || []).map((item, idx) => {
-                const totalPrice = item.total_price || 0;
-                const paidAmount = item.paid_amount || 0;
-                const remainingAmount = item.remaining_amount || 0;
+              <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
+                  <span>Item</span>
+                  <span>Qty</span>
+                  <span>Price</span>
+                  <span>Total</span>
+                  <span>Status</span>
+                </div>
                 
-                // Determine payment status based on amounts rather than just the is_paid flag
-                let paymentStatus = "Outstanding";
+              {(invoiceData.items || []).map((item, idx) => {
+                // Use the same logic as POS page for receipt display
+                const calculateItemTotal = (item: InvoiceItem) => {
+                  const price = item.unit_price || 0;
+                  const quantity = item.quantity || 0;
+                  const discount = (item.discount_percent || 0) / 100;
+                  return price * quantity * (1 - discount);
+                };
+                
+                const itemTotal = calculateItemTotal(item);
+                
+                // Determine status based on invoice-level payment data
+                let status = "Outstanding";
                 let statusColor = "#dc2626";
                 
-                if (paidAmount >= totalPrice || remainingAmount <= 0) {
-                  paymentStatus = "Paid";
+                // If invoice is fully paid (remaining_amount = 0), all items are paid
+                if (invoiceData.remaining_amount === 0) {
+                  status = "Paid";
                   statusColor = "#16a34a";
-                } else if (paidAmount > 0) {
-                  paymentStatus = "Partial";
+                } else if (invoiceData.total_paid > 0) {
+                  // If there's some payment but not fully paid, show partial
+                  status = "Partial";
                   statusColor = "#ea580c";
                 }
-                
-                return (
-                  <div key={`${item.id}-${idx}`} style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'flex-start',
-                    fontSize: '8px',
-                    marginBottom: '2px',
-                    paddingBottom: '2px',
-                    borderBottom: '1px dotted #ccc'
-                  }}>
-                    <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
-                      {item.product?.title_en || item.product_name || 'Unknown Product'}
-                    </div>
+                  
+                  return (
+                  <div key={`${item.product_name}-${idx}`} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'flex-start',
+                      fontSize: '8px',
+                      marginBottom: '2px',
+                      paddingBottom: '2px',
+                      borderBottom: '1px dotted #ccc'
+                    }}>
+                      <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
+                      {item.product_name || 'Unknown Product'}
+                      </div>
                     <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
                     <div style={{ flex: '0.5', textAlign: 'right' }}>{(item.unit_price || 0).toFixed(3)}</div>
-                    <div style={{ flex: '0.5', textAlign: 'right' }}>{totalPrice.toFixed(3)}</div>
-                    <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
-                      <span style={{ color: statusColor }}>
-                        {paymentStatus}
-                      </span>
+                    <div style={{ flex: '0.5', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
+                      <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
+                        <span style={{ color: statusColor }}>{status}</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-            
-            <div style={{ marginTop: '6px', fontSize: '9px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Subtotal:</span>
-                <span>{(invoiceData.subtotal || 0).toFixed(3)} OMR</span>
+                  );
+                })}
               </div>
-              {(invoiceData.global_discount_percent || 0) > 0 && (
+              
+              <div style={{ marginTop: '6px', fontSize: '9px' }}>
+              {(() => {
+                // Use the same calculation logic as POS page
+                const calculateItemTotal = (item: InvoiceItem) => {
+                  const price = item.unit_price || 0;
+                  const quantity = item.quantity || 0;
+                  const discount = (item.discount_percent || 0) / 100;
+                  return price * quantity * (1 - discount);
+                };
+                
+                const subtotal = (invoiceData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0);
+                const globalDiscountPercent = invoiceData.global_discount_percent || 0;
+                const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100;
+                const discountedSubtotal = subtotal - globalDiscountAmount;
+                const taxPercent = invoiceData.tax_percent || 0;
+                const tax = discountedSubtotal * (taxPercent / 100);
+                const total = discountedSubtotal + tax;
+                
+                // Payment calculations - use invoice-level data from API
+                const totalPaidAmount = invoiceData.total_paid || 0;
+                const remainingAmount = invoiceData.remaining_amount || 0;
+                const allItemsFullyPaid = remainingAmount === 0;
+                
+                const effectivePaidAmount = allItemsFullyPaid ? totalPaidAmount + tax : totalPaidAmount;
+                const totalUnpaidAmount = total - effectivePaidAmount;
+                
+                return (
+                  <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Discount ({invoiceData.global_discount_percent || 0}%):</span>
-                  <span style={{ color: '#16a34a' }}>-{(((invoiceData.subtotal || 0) * (invoiceData.global_discount_percent || 0)) / 100).toFixed(3)} OMR</span>
+                  <span>Subtotal:</span>
+                  <span>{subtotal.toFixed(3)} OMR</span>
+                </div>
+                    {globalDiscountPercent > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                        <span>Discount ({globalDiscountPercent}%):</span>
+                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} OMR</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                      <span>Tax ({taxPercent}%):</span>
+                  <span>{tax.toFixed(3)} OMR</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
+                  <span>TOTAL:</span>
+                  <span>{total.toFixed(3)} OMR</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                  <span>Total Paid:</span>
+                      <span style={{ color: '#16a34a' }}>{effectivePaidAmount.toFixed(3)} OMR</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
+                  <span>Amount Due:</span>
+                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} OMR</span>
+                </div>
+                  </>
+                );
+              })()}
+              </div>
+              
+            {invoiceData.notes && (
+                <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
+                  <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
+                <p style={{ margin: '2px 0 0 0' }}>{invoiceData.notes}</p>
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Tax ({invoiceData.tax_percent || 0}%):</span>
-                <span>{(((invoiceData.subtotal || 0) - ((invoiceData.subtotal || 0) * (invoiceData.global_discount_percent || 0)) / 100) * (invoiceData.tax_percent || 0) / 100).toFixed(3)} OMR</span>
+              
+              <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
+                <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
+                <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
-                <span>TOTAL:</span>
-                <span>{(invoiceData.total_amount || 0).toFixed(3)} OMR</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Total Paid:</span>
-                <span style={{ color: '#16a34a' }}>{(invoiceData.total_paid || 0).toFixed(3)} OMR</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
-                <span>Amount Due:</span>
-                <span style={{ color: (invoiceData.total_remaining || 0) > 0 ? '#dc2626' : '#16a34a' }}>{(invoiceData.total_remaining || 0).toFixed(3)} OMR</span>
-              </div>
-            </div>
-            
-            {invoiceData.notes && (
-              <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
-                <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
-                <p style={{ margin: '2px 0 0 0' }}>{invoiceData.notes}</p>
-              </div>
-            )}
-            
-            <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
-              <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
-              <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
             </div>
           </div>
-        </div>
-        <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:justify-end pt-2 border-t bg-white">
-          <Button variant="outline" onClick={handlePrint} aria-label="Print" title="Print">
-            <Printer className="h-5 w-5" />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" aria-label="Download" title="Download">
-                <Download className="h-5 w-5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleDownloadPDF}>
-                <FileText className="h-4 w-4 mr-2" />
-                Download as PDF
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleDownloadImage}>
-                <Image className="h-4 w-4 mr-2" />
-                Download as Image
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:justify-end pt-2 border-t bg-white">
+            <Button variant="outline" onClick={handlePrint} aria-label="Print" title="Print">
+              <Printer className="h-5 w-5" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" aria-label="Download" title="Download">
+                  <Download className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleDownloadPDF}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Download as PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDownloadImage}>
+                  <Image className="h-4 w-4 mr-2" />
+                  Download as Image
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           <Button onClick={handleClose}>Close</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+          </div>
+        </DialogContent>
+      </Dialog>
   )
 }

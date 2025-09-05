@@ -1313,7 +1313,7 @@ export default function POSPage() {
                         </SelectTrigger>
                         <SelectContent>
                           {paymentMethods
-                            .filter((method) => method.display_name_en.toLowerCase() !== 'Post Paid')
+                            .filter((method) => method.value.toLowerCase() !== 'postpaid')
                             .map((method) => (
                               <SelectItem key={method.id} value={method.id.toString()}>
                                 {method.display_name_en}
@@ -2047,26 +2047,44 @@ export default function POSPage() {
         <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
           <div className="shrink-0">
             <DialogHeader>
-              <DialogTitle>Receipt</DialogTitle>
-              <DialogDescription>View, print, or download your receipt.</DialogDescription>
-            </DialogHeader>
-          </div>
-          <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-            <div className="receipt-container" style={{
-              width: '280px',
-              maxWidth: '280px',
-              margin: '0 auto',
-              padding: '8px',
-              fontFamily: 'monospace',
-              fontSize: '10px',
-              lineHeight: '1.1',
-              backgroundColor: 'white',
-              minHeight: '100%'
-            }}>
-              <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
-                <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>Dar Arab For Publication & Translation</h2>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>123 Main Street, Muscat, Oman</p>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +968 1234 5678</p>
+            <DialogTitle>Receipt</DialogTitle>
+            <DialogDescription>View, print, or download your receipt.</DialogDescription>
+          </DialogHeader>
+        </div>
+        <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
+          <div className="receipt-container" style={{
+            width: '280px',
+            maxWidth: '280px',
+            margin: '0 auto',
+            padding: '8px',
+            fontFamily: 'monospace',
+            fontSize: '10px',
+            lineHeight: '1.1',
+            backgroundColor: 'white',
+            minHeight: '100%'
+          }}>
+            <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
+              <div style={{ marginBottom: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <img 
+                  src="/dararab-logo-1.png" 
+                  alt="DarArab Logo" 
+                  style={{ 
+                    maxWidth: '60px', 
+                    maxHeight: '40px', 
+                    objectFit: 'contain',
+                    filter: 'grayscale(100%) contrast(200%)', // Make it print-friendly
+                    display: 'block'
+                  }}
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                  }}
+                />
+              </div>
+              <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>DarArab for Publishing & Translation</h2>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Seeb, Muscat, Sultanate of Oman</p>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +96871523542</p>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Email: info@dararab.co.uk | Web: dararab.co.uk</p>
                 <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{receiptData?.id}</p>
                 <p style={{ fontSize: '9px', margin: '2px 0' }}>{receiptData?.created_at_formatted || format(new Date(), "PPP")}</p>
               </div>
