@@ -34,7 +34,6 @@ import { cn } from "@/lib/utils"
 import { CalendarIcon } from "lucide-react"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
-import ReceiptPage from "../receipt/page"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -99,8 +98,6 @@ export default function InvoicesPage() {
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
-  const [isReceiptOpen, setIsReceiptOpen] = useState(false)
-  const [selectedInvoiceForReceipt, setSelectedInvoiceForReceipt] = useState<Invoice | null>(null)
 
   const headers = {
     "Content-Type": "application/json",
@@ -308,8 +305,8 @@ export default function InvoicesPage() {
 
   const handleViewReceipt = (invoice: Invoice) => {
     console.log("Opening receipt for invoice:", invoice);
-    setSelectedInvoiceForReceipt(invoice)
-    setIsReceiptOpen(true)
+    // Navigate to receipt page with invoice ID
+    window.open(`/receipt?id=${invoice.id}`, '_blank')
   }
 
   return (
@@ -651,17 +648,6 @@ export default function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Receipt Modal */}
-      {isReceiptOpen && selectedInvoiceForReceipt && (
-        <ReceiptPage 
-          key={`receipt-${selectedInvoiceForReceipt.id}`}
-          invoiceId={selectedInvoiceForReceipt.id.toString()}
-          onClose={() => {
-            setIsReceiptOpen(false)
-            setSelectedInvoiceForReceipt(null)
-          }}
-        />
-      )}
     </SidebarProvider>
   )
 }

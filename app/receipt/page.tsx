@@ -60,20 +60,15 @@ interface InvoiceData {
   items?: InvoiceItem[];
 }
 
-interface ReceiptPageProps {
-  invoiceId?: string;
-  onClose?: () => void;
-}
-
-export default function ReceiptPage({ invoiceId, onClose }: ReceiptPageProps) {
+export default function ReceiptPage() {
   const searchParams = useSearchParams()
   const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(true)
   const printRef = useRef<HTMLDivElement>(null)
 
-  // Get invoiceId from props or URL parameters
-  const currentInvoiceId = invoiceId || searchParams.get('id')
+  // Get invoiceId from URL parameters
+  const currentInvoiceId = searchParams.get('id')
 
   // Fetch invoice data by ID
   const fetchInvoiceData = async (id: string) => {
@@ -136,9 +131,8 @@ export default function ReceiptPage({ invoiceId, onClose }: ReceiptPageProps) {
 
   const handleClose = () => {
     setIsPrintDialogOpen(false)
-    if (onClose) {
-      onClose()
-    }
+    // Navigate back to invoices page
+    window.history.back()
   }
 
   // Print function
