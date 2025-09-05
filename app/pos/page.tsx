@@ -24,6 +24,8 @@ import {
   X,
   CheckCircle2,
   Download,
+  FileText,
+  Image,
 } from "lucide-react"
 import {
   Breadcrumb,
@@ -52,6 +54,12 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { toast } from "@/hooks/use-toast"
 import {
   Sheet,
@@ -766,9 +774,38 @@ export default function POSPage() {
         const printWindow = window.open("", "_blank")
         if (printWindow) {
           printWindow.document.write("<html><head><title>Receipt</title>")
-          printWindow.document.write(
-            "<style>body { font-family: Arial, sans-serif; } table { width: 100%; border-collapse: collapse; } th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; } .receipt-header { text-align: center; margin-bottom: 20px; } .receipt-footer { margin-top: 20px; text-align: center; }</style>",
-          )
+          printWindow.document.write(`
+            <style>
+              @media print {
+                @page { 
+                  size: auto; 
+                  margin: 0; 
+                }
+                body { 
+                  font-family: monospace; 
+                  font-size: 12px; 
+                  line-height: 1.3; 
+                  margin: 0; 
+                  padding: 15px; 
+                  width: 100%; 
+                }
+                .receipt-container { 
+                  width: 100% !important; 
+                  max-width: 100% !important; 
+                  margin: 0 !important; 
+                  padding: 0 !important; 
+                }
+              }
+              body { 
+                font-family: monospace; 
+                font-size: 12px; 
+                line-height: 1.3; 
+                margin: 0; 
+                padding: 15px; 
+                width: 100%; 
+              }
+            </style>
+          `)
           printWindow.document.write("</head><body>")
           printWindow.document.write(printRef.current.innerHTML)
           printWindow.document.write("</body></html>")
@@ -783,15 +820,68 @@ export default function POSPage() {
 
   const handleDownloadPDF = () => {
     if (printRef.current) {
-      const doc = new jsPDF({ unit: "pt", format: "a4" })
-      doc.html(printRef.current, {
-        callback: function (doc: any) {
-          doc.save("receipt.pdf")
-        },
-        x: 10,
-        y: 10,
-        width: 500,
-        windowWidth: 800,
+      import('html2canvas').then((html2canvas) => {
+        // Wait for content to render
+        setTimeout(() => {
+          // First generate the image
+          html2canvas.default(printRef.current!, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            allowTaint: true,
+            logging: true,
+            width: printRef.current?.scrollWidth,
+            height: printRef.current?.scrollHeight
+          }).then(canvas => {
+            // Get image dimensions
+            const imgWidth = canvas.width;
+            const imgHeight = canvas.height;
+            
+            // Create PDF with image dimensions
+            const doc = new jsPDF({
+              unit: 'px',
+              format: [imgWidth, imgHeight],
+              orientation: imgHeight > imgWidth ? 'portrait' : 'landscape'
+            });
+            
+            // Convert canvas to image data
+            const imgData = canvas.toDataURL('image/png');
+            
+            // Add image to PDF
+            doc.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+            
+            // Save PDF
+            doc.save('receipt.pdf');
+          }).catch(error => {
+            console.error('Error generating PDF:', error)
+          });
+        }, 500)
+      });
+    }
+  }
+
+  const handleDownloadImage = () => {
+    if (printRef.current) {
+      import('html2canvas').then((html2canvas) => {
+        // Wait for content to render
+        setTimeout(() => {
+          html2canvas.default(printRef.current!, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            allowTaint: true,
+            logging: true,
+            width: printRef.current?.scrollWidth,
+            height: printRef.current?.scrollHeight
+          }).then(canvas => {
+            const link = document.createElement('a')
+            link.download = 'receipt.png'
+            link.href = canvas.toDataURL()
+            link.click()
+          }).catch(error => {
+            console.error('Error generating image:', error)
+          })
+        }, 500)
       })
     }
   }
@@ -1222,11 +1312,13 @@ export default function POSPage() {
                           <SelectValue placeholder="Select payment method" />
                         </SelectTrigger>
                         <SelectContent>
-                          {paymentMethods.map((method) => (
-                            <SelectItem key={method.id} value={method.id.toString()}>
-                              {method.display_name_en}
-                            </SelectItem>
-                          ))}
+                          {paymentMethods
+                            .filter((method) => method.display_name_en.toLowerCase() !== 'Post Paid')
+                            .map((method) => (
+                              <SelectItem key={method.id} value={method.id.toString()}>
+                                {method.display_name_en}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1960,91 +2052,124 @@ export default function POSPage() {
             </DialogHeader>
           </div>
           <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-            <div className="p-4">
-              <div className="receipt-header text-center mb-6">
-                <h2 className="text-xl font-bold">Dar Arab For Publication & Translation</h2>
-                <p>123 Main Street, Muscat, Oman</p>
-                <p className="mt-2">Tel: +968 1234 5678</p>
-                <p className="text-sm mt-2">Receipt #{receiptData?.id}</p>
-                <p className="text-sm">{receiptData?.created_at_formatted || format(new Date(), "PPP")}</p>
+            <div className="receipt-container" style={{
+              width: '280px',
+              maxWidth: '280px',
+              margin: '0 auto',
+              padding: '8px',
+              fontFamily: 'monospace',
+              fontSize: '10px',
+              lineHeight: '1.1',
+              backgroundColor: 'white',
+              minHeight: '100%'
+            }}>
+              <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
+                <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>Dar Arab For Publication & Translation</h2>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>123 Main Street, Muscat, Oman</p>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +968 1234 5678</p>
+                <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{receiptData?.id}</p>
+                <p style={{ fontSize: '9px', margin: '2px 0' }}>{receiptData?.created_at_formatted || format(new Date(), "PPP")}</p>
               </div>
-              <div className="mb-4">
-                <p><strong>Customer:</strong> {receiptData?.customer_name || "Walk-in Customer"}</p>
+              
+              <div className="mb-2" style={{ fontSize: '9px' }}>
+                <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {receiptData?.customer_name || "Walk-in Customer"}</p>
                 {receiptData?.customer_contact && (
-                  <p className="whitespace-pre-line text-xs text-muted-foreground">{receiptData.customer_contact}</p>
+                  <p style={{ margin: '2px 0', fontSize: '8px' }}>{receiptData.customer_contact}</p>
                 )}
-                <p><strong>Payment Method:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en || "N/A"}</p>
-                <p><strong>Invoice Type:</strong> {invoiceTypes.find(t => t.id === selectedInvoiceType)?.display_name_en || "N/A"}</p>
-                <p><strong>Warehouse:</strong> {warehouses.find(w => w.id === selectedWarehouse)?.name_en || "N/A"}</p>
+                <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en || "N/A"}</p>
+                <p style={{ margin: '2px 0' }}><strong>Type:</strong> {invoiceTypes.find(t => t.id === selectedInvoiceType)?.display_name_en || "N/A"}</p>
+                <p style={{ margin: '2px 0' }}><strong>Warehouse:</strong> {warehouses.find(w => w.id === selectedWarehouse)?.name_en || "N/A"}</p>
               </div>
-              <table className="w-full mb-4">
-                <thead>
-                  <tr>
-                    <th className="text-left">Item</th>
-                    <th className="text-right">Qty</th>
-                    <th className="text-right">Price</th>
-                    <th className="text-right">Disc%</th>
-                    <th className="text-right">Total</th>
-                    <th className="text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {receiptData?.items?.map((item: any, idx: number) => {
-                    const cartItem = cart.find(c => c.product.id === item.product);
-                    const isPaid = cartItem?.is_paid || false;
-                    const paidAmount = cartItem?.paid_amount || 0;
-                    const itemTotal = item.total_price || 0;
-                    const remaining = itemTotal - paidAmount;
-                    
-                    return (
-                      <tr key={idx}>
-                        <td>{item.product_name}</td>
-                        <td className="text-right">{item.quantity}</td>
-                        <td className="text-right">{item.unit_price?.toFixed(3)}</td>
-                        <td className="text-right">{item.discount_percent}%</td>
-                        <td className="text-right">{item.total_price?.toFixed(3)}</td>
-                        <td className="text-right">
-                          {isPaid ? (
-                            <span className="text-green-600 text-xs">
-                              {paidAmount >= itemTotal ? "Paid" : `Partial (${paidAmount.toFixed(3)})`}
-                            </span>
-                          ) : (
-                            <span className="text-red-600 text-xs">Outstanding</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={5} className="text-right"><strong>Subtotal:</strong></td>
-                    <td className="text-right">{receiptData?.total_amount?.toFixed(3)} OMR</td>
-                  </tr>
-                  <tr>
-                    <td colSpan={5} className="text-right"><strong>Total Paid:</strong></td>
-                    <td className="text-right">{totalPaidAmount.toFixed(3)} OMR</td>
-                  </tr>
-                  <tr>
-                    <td colSpan={5} className="text-right"><strong>Amount Due:</strong></td>
-                    <td className="text-right">{totalUnpaidAmount.toFixed(3)} OMR</td>
-                  </tr>
-                  {hasPartialPayment && (
-                    <tr>
-                      <td colSpan={5} className="text-right text-orange-600"><strong>Partial Payments:</strong></td>
-                      <td className="text-right text-orange-600">{cart.filter(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item)).length} items</td>
-                    </tr>
-                  )}
-                </tfoot>
-              </table>
+              
+              <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
+                  <span>Item</span>
+                  <span>Qty</span>
+                  <span>Price</span>
+                  <span>Total</span>
+                  <span>Status</span>
+                </div>
+                
+                {cart.map((cartItem, idx) => {
+                  const itemTotal = calculateItemTotal(cartItem);
+                  const isPaid = cartItem.is_paid;
+                  const paidAmount = cartItem.paid_amount;
+                  
+                  return (
+                    <div key={idx} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'flex-start',
+                      fontSize: '8px',
+                      marginBottom: '2px',
+                      paddingBottom: '2px',
+                      borderBottom: '1px dotted #ccc'
+                    }}>
+                      <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
+                        {cartItem.product.title_en}
+                      </div>
+                      <div style={{ flex: '0.3', textAlign: 'center' }}>{cartItem.quantity}</div>
+                      <div style={{ flex: '0.5', textAlign: 'right' }}>{(cartItem.product.latest_price ? parseFloat(cartItem.product.latest_price) : 0).toFixed(3)}</div>
+                      <div style={{ flex: '0.5', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
+                      <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
+                        {isPaid ? (
+                          <span style={{ color: '#16a34a' }}>
+                            {paidAmount >= itemTotal ? "Paid" : "Partial"}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#dc2626' }}>Outstanding</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div style={{ marginTop: '6px', fontSize: '9px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                  <span>Subtotal:</span>
+                  <span>{subtotal.toFixed(3)} OMR</span>
+                </div>
+                {discountPercentage > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                    <span>Discount ({discountPercentage}%):</span>
+                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} OMR</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                  <span>Tax ({taxPercentage}%):</span>
+                  <span>{tax.toFixed(3)} OMR</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
+                  <span>TOTAL:</span>
+                  <span>{total.toFixed(3)} OMR</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                  <span>Total Paid:</span>
+                  <span style={{ color: '#16a34a' }}>{totalPaidAmount.toFixed(3)} OMR</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
+                  <span>Amount Due:</span>
+                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} OMR</span>
+                </div>
+                {hasPartialPayment && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '8px' }}>
+                    <span style={{ color: '#ea580c' }}>Partial Payments:</span>
+                    <span style={{ color: '#ea580c' }}>{cart.filter(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item)).length} items</span>
+                  </div>
+                )}
+              </div>
+              
               {receiptData?.notes && (
-                <div className="mb-4 p-2 border rounded">
-                  <p><strong>Notes:</strong> {receiptData.notes}</p>
+                <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
+                  <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
+                  <p style={{ margin: '2px 0 0 0' }}>{receiptData.notes}</p>
                 </div>
               )}
-              <div className="receipt-footer text-center mt-6">
-                <p>Thank you for your purchase!</p>
-                <p className="text-sm">Visit us again soon</p>
+              
+              <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
+                <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
+                <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
               </div>
             </div>
           </div>
@@ -2052,9 +2177,23 @@ export default function POSPage() {
             <Button variant="outline" onClick={handlePrint} aria-label="Print" title="Print">
               <Printer className="h-5 w-5" />
             </Button>
-            <Button variant="outline" onClick={handleDownloadPDF} aria-label="Download as PDF" title="Download as PDF">
-              <Download className="h-5 w-5" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" aria-label="Download" title="Download">
+                  <Download className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleDownloadPDF}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Download as PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDownloadImage}>
+                  <Image className="h-4 w-4 mr-2" />
+                  Download as Image
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button onClick={() => setIsPrintDialogOpen(false)}>Close</Button>
           </div>
         </DialogContent>

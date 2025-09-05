@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, ChevronDown, ChevronUp, Search, Trash2 } from "lucide-react"
+import { FileText, ChevronDown, ChevronUp, Search, Trash2, Receipt } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils"
 import { CalendarIcon } from "lucide-react"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
+import ReceiptPage from "../receipt/page"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
@@ -98,6 +99,8 @@ export default function InvoicesPage() {
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [isReceiptOpen, setIsReceiptOpen] = useState(false)
+  const [selectedInvoiceForReceipt, setSelectedInvoiceForReceipt] = useState<Invoice | null>(null)
 
   const headers = {
     "Content-Type": "application/json",
@@ -303,6 +306,12 @@ export default function InvoicesPage() {
     }
   }
 
+  const handleViewReceipt = (invoice: Invoice) => {
+    console.log("Opening receipt for invoice:", invoice);
+    setSelectedInvoiceForReceipt(invoice)
+    setIsReceiptOpen(true)
+  }
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -476,6 +485,15 @@ export default function InvoicesPage() {
                               </Button>
 
                               <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleViewReceipt(invoice)}
+                              >
+                                <Receipt className="h-4 w-4 mr-2" />
+                                Receipt
+                              </Button>
+
+                              <Button
                                 variant="destructive"
                                 size="icon"
                                 onClick={() => {
@@ -632,6 +650,18 @@ export default function InvoicesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Receipt Modal */}
+      {isReceiptOpen && selectedInvoiceForReceipt && (
+        <ReceiptPage 
+          key={`receipt-${selectedInvoiceForReceipt.id}`}
+          invoiceId={selectedInvoiceForReceipt.id.toString()}
+          onClose={() => {
+            setIsReceiptOpen(false)
+            setSelectedInvoiceForReceipt(null)
+          }}
+        />
+      )}
     </SidebarProvider>
   )
 }
