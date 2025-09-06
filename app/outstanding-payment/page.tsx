@@ -990,12 +990,7 @@ export default function OutstandingPaymentPage() {
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <h2 className="text-xl font-semibold mb-4">Outstanding Payment Management</h2>
             <p className="mb-6">View and manage invoices that are not fully paid, including completely unpaid invoices and those with partial payments.</p>
-            <div className="mb-6 p-4 bg-blue-50 rounded-md">
-              <p className="text-sm text-blue-800">
-                <strong>Invoice ID Format:</strong> Main invoices show as single ID (e.g., "121"), while child invoices show as "main_invoice_id_child_bill_id" (e.g., "121_223"). 
-                Child invoices are generated from outstanding payments and are marked with a blue "Child" badge. The main_invoice_id field contains the ID of the original invoice.
-              </p>
-            </div>
+
 
             {/* Filters Section */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
