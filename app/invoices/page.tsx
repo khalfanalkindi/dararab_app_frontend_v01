@@ -271,10 +271,108 @@ export default function InvoicesPage() {
     fetchInvoices()
   }
 
+  const fetchInvoiceItems = async (invoiceId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/sales/invoices/${invoiceId}/items/`, { headers })
+      if (!res.ok) {
+        throw new Error(`Failed to fetch invoice items: ${res.status}`)
+      }
+      const data = await res.json()
+      console.log('Invoice items API response:', data)
+      // Handle both array and paginated response formats
+      return data.results || data.items || data || []
+    } catch (error) {
+      console.error("Error fetching invoice items:", error)
+      throw error
+    }
+  }
+
+  const returnItemsToWarehouse = async (invoiceItems: any[], warehouseId: number) => {
+    try {
+      for (const item of invoiceItems) {
+        // Extract product ID from the item (could be item.product or item.product_id)
+        const productId = typeof item.product === 'object' ? item.product.id : item.product || item.product_id
+        
+        if (!productId) {
+          console.warn('No product ID found for item:', item)
+          continue
+        }
+        
+        console.log(`Processing item: product_id=${productId}, quantity=${item.quantity}`)
+        
+        // First, get current inventory for this product in the warehouse
+        const inventoryRes = await fetch(
+          `${API_URL}/inventory/inventory/?product_id=${productId}&warehouse_id=${warehouseId}`,
+          { headers }
+        )
+        
+        if (!inventoryRes.ok) {
+          throw new Error(`Failed to fetch inventory for product ${productId}`)
+        }
+        
+        const inventoryData = await inventoryRes.json()
+        const existingInventory = inventoryData.results?.[0] || inventoryData[0]
+        
+        if (existingInventory) {
+          // Update existing inventory by adding back the quantity
+          const newQuantity = existingInventory.quantity + item.quantity
+          console.log(`Updating existing inventory: ${existingInventory.quantity} + ${item.quantity} = ${newQuantity}`)
+          
+          const updateRes = await fetch(`${API_URL}/inventory/inventory/product/${productId}/update/`, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              product_id: productId,
+              warehouse_id: warehouseId,
+              quantity: newQuantity,
+              notes: existingInventory.notes || ''
+            }),
+          })
+          
+          if (!updateRes.ok) {
+            const errorData = await updateRes.json()
+            throw new Error(`Failed to update inventory: ${errorData.detail || errorData.message}`)
+          }
+        } else {
+          // Create new inventory record
+          console.log(`Creating new inventory record for product ${productId} with quantity ${item.quantity}`)
+          
+          const createRes = await fetch(`${API_URL}/inventory/inventory/`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              product: productId,
+              warehouse: warehouseId,
+              quantity: item.quantity,
+              notes: 'Returned from deleted invoice'
+            }),
+          })
+          
+          if (!createRes.ok) {
+            const errorData = await createRes.json()
+            throw new Error(`Failed to create inventory: ${errorData.detail || errorData.message}`)
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error returning items to warehouse:", error)
+      throw error
+    }
+  }
+
   const handleDeleteInvoice = async () => {
     if (!invoiceToDelete || deleteConfirmation !== "DELETE") return
 
     try {
+      // First, fetch the invoice items to get product details and quantities
+      const invoiceItems = await fetchInvoiceItems(invoiceToDelete.id)
+      
+      // Return items to warehouse before deleting the invoice
+      if (invoiceItems.length > 0 && invoiceToDelete.warehouse?.id) {
+        await returnItemsToWarehouse(invoiceItems, invoiceToDelete.warehouse.id)
+      }
+
+      // Now delete the invoice
       const res = await fetch(`${API_URL}/sales/invoices/${invoiceToDelete.id}/delete/`, {
         method: "DELETE",
         headers,
@@ -287,7 +385,7 @@ export default function InvoicesPage() {
       setInvoices(invoices.filter((i) => i.id !== invoiceToDelete.id))
       toast({
         title: "Invoice Deleted",
-        description: "Invoice has been deleted successfully",
+        description: "Invoice has been deleted successfully and items returned to warehouse",
         variant: "default",
       })
       setInvoiceToDelete(null)
@@ -608,6 +706,12 @@ export default function InvoicesPage() {
             <DialogTitle>Delete Invoice</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete this invoice? This action cannot be undone.
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                <p className="text-sm font-medium text-yellow-800 mb-1">⚠️ Important:</p>
+                <p className="text-sm text-yellow-700">
+                  All items from this invoice will be automatically returned to the warehouse ({invoiceToDelete?.warehouse?.name_en || "Unknown Warehouse"}) before deletion.
+                </p>
+              </div>
               <div className="mt-4">
                 <p className="text-sm font-medium mb-2">Invoice Details:</p>
                 <ul className="text-sm text-muted-foreground space-y-1">
