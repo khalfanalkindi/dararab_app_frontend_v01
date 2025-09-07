@@ -95,6 +95,7 @@ interface BookInterface {
   title_ar: string;
   genre: Genre | null;
   status: Status | null;
+  language: Language | null;
   cover_design: string | null;
   cover_image?: string | null;
   author: Author | null;
@@ -120,6 +121,13 @@ interface Genre {
 
 // Status interface
 interface Status {
+  id: number;
+  value: string;
+  display_name_en: string;
+}
+
+// Language interface
+interface Language {
   id: number;
   value: string;
   display_name_en: string;
@@ -219,6 +227,7 @@ export default function BookManagement() {
   const [productSummaries, setProductSummaries] = useState<ProductSummary[]>([]);
   const [genres, setGenres] = useState<Genre[]>([])
   const [statusOptions, setStatusOptions] = useState<StatusObject[]>([])
+  const [languages, setLanguages] = useState<Language[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [inventory, setInventory] = useState<Inventory[]>([])
   const [selectedBook, setSelectedBook] = useState<BookInterface | null>(null)
@@ -254,6 +263,7 @@ export default function BookManagement() {
     title_ar: "",
     genre: null,
     status: null,
+    language: null,
     cover_design: null,
     is_direct_product: false,
     author: null,
@@ -351,6 +361,14 @@ export default function BookManagement() {
     return genreObj?.display_name_en || 'Unknown';
   };
 
+  // Get language name by ID
+  const getLanguageName = (language: Language | number | null) => {
+    if (!language) return 'Unknown';
+    const languageId = typeof language === 'object' ? language.id : language;
+    const languageObj = languages.find(l => l.id === languageId);
+    return languageObj?.display_name_en || 'Unknown';
+  };
+
   // Load data on component mount
   useEffect(() => {
     const loadData = async () => {
@@ -360,6 +378,7 @@ export default function BookManagement() {
           booksRes,
           genresRes,
           statusRes,
+          languagesRes,
           warehousesRes,
           authorsRes,
           translatorsRes,
@@ -371,6 +390,7 @@ export default function BookManagement() {
           fetch(`${API_URL}/inventory/products/?page_size=1000`, { headers }),
           fetch(`${API_URL}/common/list-items/genre/`, { headers }),
           fetch(`${API_URL}/common/list-items/product_status/`, { headers }),
+          fetch(`${API_URL}/common/list-items/product_language/`, { headers }),
           fetch(`${API_URL}/inventory/warehouses/`, { headers }),
           fetch(`${API_URL}/inventory/authors/?page_size=1000`, { headers }),
           fetch(`${API_URL}/inventory/translators/?page_size=1000`, { headers }),
@@ -383,6 +403,7 @@ export default function BookManagement() {
         if (!booksRes.ok) throw new Error("Failed to fetch books");
         if (!genresRes.ok) throw new Error("Failed to fetch genres");
         if (!statusRes.ok) throw new Error("Failed to fetch status options");
+        if (!languagesRes.ok) throw new Error("Failed to fetch languages");
         if (!warehousesRes.ok) throw new Error("Failed to fetch warehouses");
         if (!authorsRes.ok) throw new Error("Failed to fetch authors");
         if (!translatorsRes.ok) throw new Error("Failed to fetch translators");
@@ -394,6 +415,7 @@ export default function BookManagement() {
         const booksData = await booksRes.json();
         const genresData = await genresRes.json();
         const statusData = await statusRes.json();
+        const languagesData = await languagesRes.json();
         const warehousesData = await warehousesRes.json();
         const authorsData = await authorsRes.json();
         const translatorsData = await translatorsRes.json();
@@ -405,6 +427,7 @@ export default function BookManagement() {
         setBooks(Array.isArray(booksData) ? booksData : booksData.results ?? []);
         setGenres(Array.isArray(genresData) ? genresData : genresData.results ?? []);
         setStatusOptions(Array.isArray(statusData) ? statusData : statusData.results ?? []);
+        setLanguages(Array.isArray(languagesData) ? languagesData : languagesData.results ?? []);
         setWarehouses(Array.isArray(warehousesData) ? warehousesData : warehousesData.results ?? []);
         setAuthors(Array.isArray(authorsData) ? authorsData : authorsData.results ?? []);
         setTranslators(Array.isArray(translatorsData) ? translatorsData : translatorsData.results ?? []);
@@ -720,6 +743,7 @@ export default function BookManagement() {
           title_ar: newBook.title_ar,
           genre_id: newBook.genre?.id,
           status_id: newBook.status?.id,
+          language_id: newBook.language?.id,
           author_id: newBook.author?.id,
           translator_id: newBook.translator?.id,
           rights_owner_id: newBook.rights_owner?.id,
@@ -799,6 +823,7 @@ export default function BookManagement() {
         title_ar: "",
         genre: null,
         status: null,
+        language: null,
         cover_design: null,
         author: null,
         translator: null,
@@ -834,6 +859,9 @@ async function handleUpdateBasic() {
   }
   if (selectedBook.status?.id) {
     formData.append("status_id", selectedBook.status.id.toString());
+  }
+  if (selectedBook.language?.id) {
+    formData.append("language_id", selectedBook.language.id.toString());
   }
   if (selectedBook.author?.id) {
     formData.append("author_id", selectedBook.author.id.toString());
@@ -1273,6 +1301,7 @@ async function handleUpdateInventory() {
           isbn: selectedBook?.isbn,
           genre_id: selectedBook?.genre?.id,
           status_id: selectedBook?.status?.id,
+          language_id: selectedBook?.language?.id,
           author_id: selectedBook?.author?.id,
           translator_id: selectedBook?.translator?.id,
           rights_owner_id: selectedBook?.rights_owner?.id,
@@ -2061,6 +2090,12 @@ async function handleUpdateInventory() {
                           {selectedBook.genre !== null ? getGenreName(selectedBook.genre) : 'Unknown'}
                         </Badge>
                       </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Language</p>
+                        <Badge variant="outline" className="mt-1">
+                          {selectedBook.language !== null ? getLanguageName(selectedBook.language) : 'Unknown'}
+                        </Badge>
+                      </div>
                       {/* <div>
                         <p className="text-sm text-muted-foreground">Price</p>
                         <div className="flex items-baseline gap-2">
@@ -2300,8 +2335,8 @@ async function handleUpdateInventory() {
                   </div>
                 </div>
 
-                {/* Row 3: Genre, Status, and Product Type */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Row 3: Genre, Status, Language, and Product Type */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <Label htmlFor="genre">Genre</Label>
                     <Select
@@ -2339,6 +2374,27 @@ async function handleUpdateInventory() {
                         {statusOptions.map((status) => (
                           <SelectItem key={status.id} value={status.id.toString()}>
                             {status.display_name_en}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="language">Language</Label>
+                    <Select
+                      value={newBook.language?.id?.toString() || ""}
+                      onValueChange={(value) => {
+                        const languageObj = languages.find(l => l.id === parseInt(value));
+                        setNewBook({ ...newBook, language: languageObj || null });
+                      }}
+                    >
+                      <SelectTrigger id="language" className="mt-1">
+                        <SelectValue placeholder="Select language" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {languages.map((language) => (
+                          <SelectItem key={language.id} value={language.id.toString()}>
+                            {language.display_name_en}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -2577,8 +2633,8 @@ async function handleUpdateInventory() {
                         </div>
                       </div>
 
-                      {/* Row 3: Genre, Product Status */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Row 3: Genre, Product Status, Language */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <div>
                           <Label htmlFor="edit-genre">Genre</Label>
                           <Select
@@ -2623,6 +2679,31 @@ async function handleUpdateInventory() {
                               {statusOptions.map((status) => (
                                 <SelectItem key={status.id} value={status.id.toString()}>
                                   {status.display_name_en}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="edit-language">Language</Label>
+                          <Select
+                            value={selectedBook.language?.id?.toString() || ""}
+                            onValueChange={(value) => {
+                              const languageObj = languages.find(l => l.id === parseInt(value));
+                              setSelectedBook({
+                                ...selectedBook,
+                                language: languageObj || null
+                              });
+                            }}
+                          >
+                            <SelectTrigger id="edit-language" className="mt-1">
+                              <SelectValue placeholder="Select language" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {languages.map((language) => (
+                                <SelectItem key={language.id} value={language.id.toString()}>
+                                  {language.display_name_en}
                                 </SelectItem>
                               ))}
                             </SelectContent>
