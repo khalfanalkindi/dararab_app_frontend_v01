@@ -96,8 +96,9 @@ interface BookInterface {
   genre: Genre | null;
   status: Status | null;
   language: Language | null;
-  cover_design: string | null;
-  cover_image?: string | null;
+  cover_design: string | null; // Can be file path or URL
+  cover_image?: string | null; // For file uploads
+  cover_url?: string | null; // For external URLs
   author: Author | null;
   translator: Translator | null;
   rights_owner: RightsOwner | null;
@@ -265,6 +266,8 @@ export default function BookManagement() {
     status: null,
     language: null,
     cover_design: null,
+    cover_image: null,
+    cover_url: null,
     is_direct_product: false,
     author: null,
     translator: null,
@@ -310,6 +313,10 @@ export default function BookManagement() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  
+  // Cover design input type state
+  const [coverInputType, setCoverInputType] = useState<'upload' | 'url'>('upload');
+  const [editCoverInputType, setEditCoverInputType] = useState<'upload' | 'url'>('upload');
 
   // Show alert message
   const showAlert = (type: "success" | "error" | "warning", message: string) => {
@@ -501,9 +508,15 @@ export default function BookManagement() {
         // Process print runs data
         const processedPrintRuns = Array.isArray(printRunsData) ? printRunsData : printRunsData.results ?? [];
         
+        // Determine input type based on cover_design
+        const isUrlType = isUrl(bookData.cover_design);
+        setEditCoverInputType(isUrlType ? 'url' : 'upload');
+        
         setSelectedBook({
           ...bookData,
-          print_runs: processedPrintRuns
+          print_runs: processedPrintRuns,
+          cover_url: isUrlType ? bookData.cover_design : null,
+          cover_image: !isUrlType ? bookData.cover_design : null
         });
         setSelectedBookInventory(enhancedInventory);
       } else {
@@ -533,9 +546,15 @@ export default function BookManagement() {
         // Process print runs data
         const processedPrintRuns = Array.isArray(printRunsData) ? printRunsData : printRunsData.results ?? [];
         
+        // Determine input type based on cover_design
+        const isUrlType = isUrl(book.cover_design);
+        setEditCoverInputType(isUrlType ? 'url' : 'upload');
+        
         setSelectedBook({
           ...book,
-          print_runs: processedPrintRuns
+          print_runs: processedPrintRuns,
+          cover_url: isUrlType ? book.cover_design : null,
+          cover_image: !isUrlType ? book.cover_design : null
         });
         setSelectedBookInventory(enhancedInventory);
       }
@@ -609,10 +628,16 @@ export default function BookManagement() {
         });
         console.log('📦 Inventory with warehouse names:', inventoryWithWarehouses);
         
+        // Determine input type based on cover_design
+        const isUrlType = isUrl(bookData.cover_design);
+        setEditCoverInputType(isUrlType ? 'url' : 'upload');
+        
         const updatedBookData = {
           ...bookData,
           print_runs: processedPrintRuns,
-          inventory: inventoryWithWarehouses
+          inventory: inventoryWithWarehouses,
+          cover_url: isUrlType ? bookData.cover_design : null,
+          cover_image: !isUrlType ? bookData.cover_design : null
         };
         console.log('📚 Final book data to be set:', updatedBookData);
         setEditBookInventory(inventoryWithWarehouses);
@@ -653,10 +678,17 @@ export default function BookManagement() {
         });
         console.log('📦 Inventory with warehouse names:', inventoryWithWarehouses);
         setEditBookInventory(inventoryWithWarehouses)
+        
+        // Determine input type based on cover_design
+        const isUrlType = isUrl(book.cover_design);
+        setEditCoverInputType(isUrlType ? 'url' : 'upload');
+        
         const updatedBook = {
           ...book,
           print_runs: processedPrintRuns,
-          inventory: inventoryWithWarehouses
+          inventory: inventoryWithWarehouses,
+          cover_url: isUrlType ? book.cover_design : null,
+          cover_image: !isUrlType ? book.cover_design : null
         };
         console.log('📚 Final book data to be set:', updatedBook);
         
@@ -734,23 +766,40 @@ export default function BookManagement() {
       };
 
       // 1. Create basic book information
+      const formData = new FormData();
+      formData.append("isbn", newBook.isbn);
+      formData.append("title_en", newBook.title_en);
+      formData.append("title_ar", newBook.title_ar);
+      if (newBook.genre?.id) formData.append("genre_id", newBook.genre.id.toString());
+      if (newBook.status?.id) formData.append("status_id", newBook.status.id.toString());
+      if (newBook.language?.id) formData.append("language_id", newBook.language.id.toString());
+      if (newBook.author?.id) formData.append("author_id", newBook.author.id.toString());
+      if (newBook.translator?.id) formData.append("translator_id", newBook.translator.id.toString());
+      if (newBook.rights_owner?.id) formData.append("rights_owner_id", newBook.rights_owner.id.toString());
+      if (newBook.reviewer?.id) formData.append("reviewer_id", newBook.reviewer.id.toString());
+      formData.append("is_direct_product", newBook.is_direct_product.toString());
+      
+      // Handle cover design - either file upload or URL
+      if (coverInputType === 'upload' && newBook.cover_image) {
+        // Convert base64 to file if needed
+        if (typeof newBook.cover_image === 'string' && newBook.cover_image.startsWith('data:')) {
+          const response = await fetch(newBook.cover_image);
+          const blob = await response.blob();
+          const file = new File([blob], 'cover.jpg', { type: 'image/jpeg' });
+          formData.append("cover_design", file);
+        } else {
+          formData.append("cover_design", newBook.cover_image);
+        }
+      } else if (coverInputType === 'url' && newBook.cover_url) {
+        formData.append("cover_design", newBook.cover_url);
+      }
+
       const basicInfoResponse = await fetch(`${API_URL}/inventory/products/`, {
         method: "POST",
-        headers,
-        body: JSON.stringify({
-          isbn: newBook.isbn,
-          title_en: newBook.title_en,
-          title_ar: newBook.title_ar,
-          genre_id: newBook.genre?.id,
-          status_id: newBook.status?.id,
-          language_id: newBook.language?.id,
-          author_id: newBook.author?.id,
-          translator_id: newBook.translator?.id,
-          rights_owner_id: newBook.rights_owner?.id,
-          reviewer_id: newBook.reviewer?.id,
-          is_direct_product: newBook.is_direct_product,
-          cover_design: newBook.cover_design,
-        }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
       });
 
       if (!basicInfoResponse.ok) {
@@ -825,6 +874,8 @@ export default function BookManagement() {
         status: null,
         language: null,
         cover_design: null,
+        cover_image: null,
+        cover_url: null,
         author: null,
         translator: null,
         rights_owner: null,
@@ -832,6 +883,7 @@ export default function BookManagement() {
         is_direct_product: false,
         print_runs: [],
       });
+      setCoverInputType('upload');
       setNewBookInventory([]);
       setIsAddBookOpen(false);
       showAlert("success", "Book created successfully");
@@ -879,9 +931,19 @@ async function handleUpdateBasic() {
   // Boolean field
   formData.append("is_direct_product", selectedBook.is_direct_product.toString());
   
-  // Image field
-  if (selectedBook.cover_image) {
-    formData.append("cover_design", selectedBook.cover_image);
+  // Handle cover design - either file upload or URL
+  if (editCoverInputType === 'upload' && selectedBook.cover_image) {
+    // Convert base64 to file if needed
+    if (typeof selectedBook.cover_image === 'string' && selectedBook.cover_image.startsWith('data:')) {
+      const response = await fetch(selectedBook.cover_image);
+      const blob = await response.blob();
+      const file = new File([blob], 'cover.jpg', { type: 'image/jpeg' });
+      formData.append("cover_design", file);
+    } else {
+      formData.append("cover_design", selectedBook.cover_image);
+    }
+  } else if (editCoverInputType === 'url' && selectedBook.cover_url) {
+    formData.append("cover_design", selectedBook.cover_url);
   }
 
   // Log the data being sent
@@ -1068,6 +1130,17 @@ async function handleUpdateInventory() {
     const cleanUrl = url.startsWith('/') ? url.slice(1) : url
     // Construct the full URL using the API base URL
     return `${API_URL.replace('/api', '')}${cleanUrl}`
+  }
+
+  // Helper function to check if a string is a URL
+  const isUrl = (str: string | null) => {
+    if (!str) return false
+    try {
+      new URL(str)
+      return true
+    } catch {
+      return false
+    }
   }
 
   // Handle adding inventory
@@ -2063,12 +2136,6 @@ async function handleUpdateInventory() {
                       className="w-full h-full object-contain"
                       onError={(e) => {
                         const img = e.currentTarget;
-                        console.log('Image load failed:', {
-                          src: img.src,
-                          isbn: selectedBook.isbn,
-                          cover_design: selectedBook.cover_design,
-                          fullUrl: getImageUrl(selectedBook.cover_design)
-                        });
                         img.src = "/placeholder.svg";
                       }}
                     />
@@ -2505,58 +2572,95 @@ async function handleUpdateInventory() {
                   </div>
                 </div>
 
-                {/* Row 5: Cover Page Upload */}
+                {/* Row 5: Cover Page Upload/URL */}
                 <div>
                   <Label>Book Cover Image</Label>
+                  
+                  {/* Toggle between upload and URL */}
+                  <div className="flex gap-2 mb-3">
+                    <Button
+                      type="button"
+                      variant={coverInputType === 'upload' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCoverInputType('upload')}
+                    >
+                      Upload File
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={coverInputType === 'url' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCoverInputType('url')}
+                    >
+                      External URL
+                    </Button>
+                  </div>
+
                   <div className="border rounded-md p-4 bg-muted/30 mt-1">
                     <div className="aspect-square rounded-md overflow-hidden mb-2 w-24 h-24 mx-auto">
                       <img
-                        src={getImageUrl(newBook.cover_design)}
+                        src={coverInputType === 'upload' 
+                          ? getImageUrl(newBook.cover_image || null) 
+                          : getImageUrl(newBook.cover_url || null)
+                        }
                         alt={`Book ${newBook.isbn}`}
                         className="w-full h-full object-contain"
                         onError={(e) => {
                           const img = e.currentTarget;
-                          console.log('Image load failed:', {
-                            src: img.src,
-                            isbn: newBook.isbn,
-                            cover_design: newBook.cover_design,
-                            fullUrl: getImageUrl(newBook.cover_design)
-                          });
                           img.src = "/placeholder.svg";
                         }}
                       />
                     </div>
-                    <div className="flex justify-center">
-                      <input
-                        type="file"
-                        id="cover-image"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              setNewBook({
-                                ...newBook,
-                                cover_image: reader.result as string
-                              });
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          document.getElementById('cover-image')?.click();
-                        }}
-                      >
-                        Change Image
-                      </Button>
-                    </div>
+                    
+                    {coverInputType === 'upload' ? (
+                      <div className="flex justify-center">
+                        <input
+                          type="file"
+                          id="cover-image"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                setNewBook({
+                                  ...newBook,
+                                  cover_image: reader.result as string,
+                                  cover_url: null
+                                });
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            document.getElementById('cover-image')?.click();
+                          }}
+                        >
+                          {newBook.cover_image ? 'Change Image' : 'Upload Image'}
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Input
+                          type="url"
+                          placeholder="Enter image URL (e.g., https://example.com/image.jpg)"
+                          value={newBook.cover_url || ''}
+                          onChange={(e) => {
+                            setNewBook({
+                              ...newBook,
+                              cover_url: e.target.value,
+                              cover_image: null
+                            });
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2822,58 +2926,95 @@ async function handleUpdateInventory() {
                         </div>
                       </div>
 
-                      {/* Row 5: Cover Page Upload */}
+                      {/* Row 5: Cover Page Upload/URL */}
                       <div>
                         <Label>Book Cover Image</Label>
+                        
+                        {/* Toggle between upload and URL */}
+                        <div className="flex gap-2 mb-3">
+                          <Button
+                            type="button"
+                            variant={editCoverInputType === 'upload' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setEditCoverInputType('upload')}
+                          >
+                            Upload File
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={editCoverInputType === 'url' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setEditCoverInputType('url')}
+                          >
+                            External URL
+                          </Button>
+                        </div>
+
                         <div className="border rounded-md p-4 bg-muted/30 mt-1">
                           <div className="aspect-square rounded-md overflow-hidden mb-2 w-24 h-24 mx-auto">
                             <img
-                              src={getImageUrl(selectedBook.cover_design)}
+                              src={editCoverInputType === 'upload' 
+                                ? getImageUrl(selectedBook.cover_image || null) 
+                                : getImageUrl(selectedBook.cover_url || null)
+                              }
                               alt={`Book ${selectedBook.isbn}`}
                               className="w-full h-full object-contain"
                               onError={(e) => {
                                 const img = e.currentTarget;
-                                console.log('Image load failed:', {
-                                  src: img.src,
-                                  isbn: selectedBook.isbn,
-                                  cover_design: selectedBook.cover_design,
-                                  fullUrl: getImageUrl(selectedBook.cover_design)
-                                });
                                 img.src = "/placeholder.svg";
                               }}
                             />
                           </div>
-                          <div className="flex justify-center">
-                            <input
-                              type="file"
-                              id="edit-cover-image"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  const reader = new FileReader();
-                                  reader.onloadend = () => {
-                                    setSelectedBook({
-                                      ...selectedBook,
-                                      cover_image: reader.result as string
-                                    });
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                document.getElementById('edit-cover-image')?.click();
-                              }}
-                            >
-                              Change Image
-                            </Button>
-                          </div>
+                          
+                          {editCoverInputType === 'upload' ? (
+                            <div className="flex justify-center">
+                              <input
+                                type="file"
+                                id="edit-cover-image"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => {
+                                      setSelectedBook({
+                                        ...selectedBook,
+                                        cover_image: reader.result as string,
+                                        cover_url: null
+                                      });
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  document.getElementById('edit-cover-image')?.click();
+                                }}
+                              >
+                                {selectedBook.cover_image ? 'Change Image' : 'Upload Image'}
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <Input
+                                type="url"
+                                placeholder="Enter image URL (e.g., https://example.com/image.jpg)"
+                                value={selectedBook.cover_url || ''}
+                                onChange={(e) => {
+                                  setSelectedBook({
+                                    ...selectedBook,
+                                    cover_url: e.target.value,
+                                    cover_image: null
+                                  });
+                                }}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
