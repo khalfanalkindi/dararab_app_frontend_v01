@@ -174,7 +174,7 @@ export default function POSPage() {
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [discountPercentage, setDiscountPercentage] = useState<number>(0)
+  const [discountPercentage, setDiscountPercentage] = useState<number>(30)
   const [taxPercentage, setTaxPercentage] = useState<number>(0)
   const [invoiceNotes, setInvoiceNotes] = useState("")
   const [todaySales, setTodaySales] = useState(0)
@@ -434,18 +434,24 @@ export default function POSPage() {
   const calculateItemTotal = (item: CartItem) => {
     const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
     const quantity = item.quantity;
-    const discount = item.discount_percent / 100;
-    return price * quantity * (1 - discount);
+    const discount = Math.max(0, Math.min(100, item.discount_percent)) / 100; // Ensure discount is between 0-100%
+    const total = price * quantity * (1 - discount);
+    return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
   };
 
   const subtotal = cart.reduce((sum, item) => sum + calculateItemTotal(item), 0)
-  const globalDiscountAmount = (subtotal * discountPercentage) / 100
-  const discountedSubtotal = subtotal - globalDiscountAmount
-  const tax = discountedSubtotal * (taxPercentage / 100)
+  const safeDiscountPercentage = Math.max(0, Math.min(100, discountPercentage || 0))
+  const globalDiscountAmount = (subtotal * safeDiscountPercentage) / 100
+  const discountedSubtotal = Math.max(0, subtotal - globalDiscountAmount)
+  const safeTaxPercentage = Math.max(0, Math.min(100, taxPercentage || 0))
+  const tax = discountedSubtotal * (safeTaxPercentage / 100)
   const total = discountedSubtotal + tax
 
   // Payment calculations
-  const totalPaidAmount = cart.reduce((sum, item) => sum + item.paid_amount, 0)
+  const totalPaidAmount = cart.reduce((sum, item) => {
+    const paidAmount = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
+    return sum + paidAmount;
+  }, 0)
   
   // If all items are fully paid, include tax in paid amount
   const allItemsFullyPaid = cart.every(item => {
@@ -454,7 +460,7 @@ export default function POSPage() {
   });
   
   const effectivePaidAmount = allItemsFullyPaid ? totalPaidAmount + tax : totalPaidAmount;
-  const totalUnpaidAmount = total - effectivePaidAmount
+  const totalUnpaidAmount = Math.max(0, total - effectivePaidAmount) // Ensure non-negative
   const paidItems = cart.filter(item => item.is_paid)
   const unpaidItems = cart.filter(item => !item.is_paid)
   const hasPartialPayment = cart.some(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item))
@@ -496,7 +502,7 @@ export default function POSPage() {
 
   // Function to apply payment method to existing items
   const applyPaymentMethodToExistingItems = () => {
-    if (!selectedPaymentMethod) return;
+    if (!selectedPaymentMethod || cart.length === 0) return;
     
     const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
     if (!paymentMethod) return;
@@ -604,9 +610,23 @@ export default function POSPage() {
         notes: invoiceNotes,
         global_discount_percent: discountPercentage,
         tax_percent: taxPercentage,
+        total_amount: total, // Send the calculated total amount
+        total_paid: totalPaidAmount, // Send the total paid amount
+        remaining_amount: totalUnpaidAmount, // Send the remaining amount
       }
       
       console.log("Creating invoice with data:", invoiceData)
+      console.log("Calculation breakdown:", {
+        subtotal: subtotal.toFixed(3),
+        globalDiscountAmount: globalDiscountAmount.toFixed(3),
+        discountedSubtotal: discountedSubtotal.toFixed(3),
+        tax: tax.toFixed(3),
+        total: total.toFixed(3),
+        totalPaidAmount: totalPaidAmount.toFixed(3),
+        totalUnpaidAmount: totalUnpaidAmount.toFixed(3),
+        discountPercentage: discountPercentage,
+        taxPercentage: taxPercentage
+      })
 
       const invoiceResponse = await fetch(`${API_URL}/sales/invoices/`, {
         method: "POST",
@@ -632,11 +652,20 @@ export default function POSPage() {
           quantity: item.quantity,
           unit_price: item.product.latest_price ? parseFloat(item.product.latest_price) : 0,
           discount_percent: item.discount_percent,
-          total_price: itemTotal,
+          total_price: itemTotal, // This should be the item total after item-level discount
           paid_amount: item.paid_amount,
           remaining_amount: itemTotal - item.paid_amount,
           is_paid: item.is_paid,
         }
+        
+        console.log(`Creating invoice item for ${item.product.title_en}:`, {
+          unit_price: itemData.unit_price,
+          quantity: itemData.quantity,
+          discount_percent: itemData.discount_percent,
+          total_price: itemData.total_price,
+          paid_amount: itemData.paid_amount,
+          remaining_amount: itemData.remaining_amount
+        })
 
         const itemResponse = await fetch(`${API_URL}/sales/invoice-items/`, {
           method: "POST",
@@ -1420,8 +1449,13 @@ export default function POSPage() {
                                     <SelectItem value="15">15%</SelectItem>
                                     <SelectItem value="20">20%</SelectItem>
                                     <SelectItem value="25">25%</SelectItem>
+                                    <SelectItem value="30">30%</SelectItem>
+                                    <SelectItem value="40">40%</SelectItem>
                                     <SelectItem value="50">50%</SelectItem>
+                                    <SelectItem value="60">60%</SelectItem>
                                     <SelectItem value="75">75%</SelectItem>
+                                    <SelectItem value="80">80%</SelectItem>
+                                    <SelectItem value="90">90%</SelectItem>
                                     <SelectItem value="100">100%</SelectItem>
                                   </SelectContent>
                                 </Select>
@@ -1487,8 +1521,13 @@ export default function POSPage() {
                             <SelectItem value="15">15%</SelectItem>
                             <SelectItem value="20">20%</SelectItem>
                             <SelectItem value="25">25%</SelectItem>
+                            <SelectItem value="30">30%</SelectItem>
+                            <SelectItem value="40">40%</SelectItem>
                             <SelectItem value="50">50%</SelectItem>
+                            <SelectItem value="60">60%</SelectItem>
                             <SelectItem value="75">75%</SelectItem>
+                            <SelectItem value="80">80%</SelectItem>
+                            <SelectItem value="90">90%</SelectItem>
                             <SelectItem value="100">100%</SelectItem>
                           </SelectContent>
                         </Select>
@@ -1586,7 +1625,7 @@ export default function POSPage() {
                   <Button
                     className="w-full mt-4"
                     size="lg"
-                    disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse || totalUnpaidAmount < 0}
+                    disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
                     onClick={handleCompleteSale}
                   >
                     {isSubmitting ? (
@@ -2010,7 +2049,7 @@ export default function POSPage() {
               </Button>
               <Button
                 onClick={handleCompleteSale}
-                disabled={isSubmitting || !selectedCustomer || !selectedWarehouse || totalUnpaidAmount < 0}
+                disabled={isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
               >
                 {isSubmitting ? (
                   <>
@@ -2220,4 +2259,3 @@ export default function POSPage() {
     </SidebarProvider>
   )
 }
-
