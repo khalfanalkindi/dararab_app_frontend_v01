@@ -318,35 +318,38 @@ export default function POSPage() {
   // Cart functions
   const addToCart = (product: Product) => {
     setCart((prevCart) => {
-      const existingItem = prevCart.find((item) => item.product.id === product.id)
+      const existingItem = prevCart.find((item) => item.product.id === product.id);
       if (existingItem) {
-        return prevCart.map((item) =>
-          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
-        )
+        // increment quantity FIRST, then allocate later
+        const updated = prevCart.map((item) =>
+          item.product.id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
+
+        return updated;
       }
-      
-      // Determine default payment behavior based on selected payment method
-      const itemTotal = (product.latest_price ? parseFloat(product.latest_price) : 0) * 1; // quantity = 1
-      let isPaid = true;
-      let paidAmount = itemTotal;
-      
-      if (selectedPaymentMethod) {
-        const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
-        if (paymentMethod) {
-          const isOutstanding = paymentMethod.display_name_en.toLowerCase().includes('outstanding');
-          isPaid = !isOutstanding;
-          paidAmount = !isOutstanding ? itemTotal : 0;
-        }
-      }
-      
-      return [...prevCart, { 
-        product, 
-        quantity: 1, 
-        discount_percent: 0, 
-        is_paid: isPaid, 
-        paid_amount: paidAmount 
-      }]
-    })
+
+      // New line item starts unpaid; allocation is handled centrally
+      return [
+        ...prevCart,
+        {
+          product,
+          quantity: 1,
+          discount_percent: 0,
+          is_paid: false,
+          paid_amount: 0,
+        },
+      ];
+    });
+
+    // If current payment method is cash-like, auto-allocate to GRAND TOTAL
+    // (slight timeout lets React commit state before we read totals)
+    setTimeout(() => {
+      const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
+      const isCash = pm.includes("cash"); // adjust if you have other immediate-pay methods
+      if (isCash) allocatePayInFull();
+    }, 0);
   }
 
   const removeFromCart = (productId: number) => {
@@ -439,6 +442,28 @@ export default function POSPage() {
     return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
   };
 
+  // Allocate payments for cash transactions - items should be fully paid at their individual totals
+  const allocatePayInFull = () => {
+    if (cart.length === 0) return;
+
+    // For cash payments, mark all items as fully paid at their individual totals
+    // Global discount is handled at the transaction level, not at item level
+    const nextCart = cart.map((it) => {
+      const itTotal = calculateItemTotal(it);
+      return {
+        ...it,
+        is_paid: true,
+        paid_amount: Number(itTotal.toFixed(3)),
+      };
+    });
+
+    // Only update state if something actually changed (prevents loops)
+    const changed = nextCart.some((n, i) => 
+      n.paid_amount !== cart[i].paid_amount || n.is_paid !== cart[i].is_paid
+    );
+    if (changed) setCart(nextCart);
+  };
+
   const subtotal = cart.reduce((sum, item) => sum + calculateItemTotal(item), 0)
   const safeDiscountPercentage = Math.max(0, Math.min(100, discountPercentage || 0))
   const globalDiscountAmount = (subtotal * safeDiscountPercentage) / 100
@@ -453,14 +478,8 @@ export default function POSPage() {
     return sum + paidAmount;
   }, 0)
   
-  // If all items are fully paid, include tax in paid amount
-  const allItemsFullyPaid = cart.every(item => {
-    const itemTotal = calculateItemTotal(item);
-    return item.paid_amount >= itemTotal;
-  });
-  
-  const effectivePaidAmount = allItemsFullyPaid ? totalPaidAmount + tax : totalPaidAmount;
-  const totalUnpaidAmount = Math.max(0, total - effectivePaidAmount) // Ensure non-negative
+  // Calculate unpaid amount as difference between grand total and sum of item payments
+  const totalUnpaidAmount = Math.max(0, total - totalPaidAmount) // Ensure non-negative
   const paidItems = cart.filter(item => item.is_paid)
   const unpaidItems = cart.filter(item => !item.is_paid)
   const hasPartialPayment = cart.some(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item))
@@ -600,6 +619,12 @@ export default function POSPage() {
         Authorization: `Bearer ${token}`,
       }
 
+      // Calculate the total paid amount from individual items
+      const ledgerPaidAmount = cart.reduce((sum, item) => {
+        const v = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
+        return sum + v;
+      }, 0);
+
       // 1. Create the invoice with updated field names
       const invoiceData = {
         customer_id: selectedCustomer.id,
@@ -610,9 +635,9 @@ export default function POSPage() {
         notes: invoiceNotes,
         global_discount_percent: discountPercentage,
         tax_percent: taxPercentage,
-        total_amount: total, // Send the calculated total amount
-        total_paid: totalPaidAmount, // Send the total paid amount
-        remaining_amount: totalUnpaidAmount, // Send the remaining amount
+        total_amount: total, // Grand total after global discount and tax
+        total_paid: ledgerPaidAmount, // Sum of individual item payments
+        remaining_amount: total - ledgerPaidAmount, // Remaining amount after payments
       }
       
       console.log("Creating invoice with data:", invoiceData)
@@ -715,12 +740,19 @@ export default function POSPage() {
       }
 
       // 3. Create payment record for all sales (both cash and outstanding)
+      console.log('DEBUG payment amount about to POST:', ledgerPaidAmount);
+      console.log('DEBUG cart items:', cart.map(item => ({
+        product: item.product.title_en,
+        paid_amount: item.paid_amount,
+        item_total: calculateItemTotal(item),
+        is_paid: item.is_paid
+      })));
+      
       const paymentData = {
         invoice: invoiceId,
-        amount: parseFloat(totalPaidAmount.toFixed(2)),
+        amount: parseFloat(ledgerPaidAmount.toFixed(2)), // sum of individual item payments
         payment_date: format(new Date(), "yyyy-MM-dd"),
-        notes: `Payment received at time of sale. Total: ${total.toFixed(3)} OMR, Paid: ${totalPaidAmount.toFixed(3)} OMR, Due: ${totalUnpaidAmount.toFixed(3)} OMR`,
-      }
+      };
 
       const paymentResponse = await fetch(`${API_URL}/sales/payments/`, {
         method: "POST",
@@ -733,11 +765,12 @@ export default function POSPage() {
         throw new Error(errorData.message || "Failed to create payment")
       }
 
+      const remainingAmount = total - ledgerPaidAmount;
       toast({
         title: "Success",
-        description: totalUnpaidAmount === 0 
+        description: remainingAmount === 0 
           ? "Sale completed successfully - Fully Paid" 
-          : `Sale completed successfully - ${totalUnpaidAmount.toFixed(3)} OMR remaining`,
+          : `Sale completed successfully - ${remainingAmount.toFixed(3)} OMR remaining`,
       })
 
       // Fetch invoice summary for receipt
@@ -750,7 +783,7 @@ export default function POSPage() {
       setIsPrintDialogOpen(true)
 
       // Update sales summary locally - only count the amount actually paid
-      setTodaySales(prev => prev + totalPaidAmount)
+      setTodaySales(prev => prev + ledgerPaidAmount)
       setTotalCustomers(prev => prev + 1)
       // Find the most popular product in the cart
       const productCounts = new Map<number, number>()
@@ -1015,6 +1048,25 @@ export default function POSPage() {
       setIsLoading(false);
     }
   }, [selectedWarehouse, isCartOpen]);
+
+  // Auto-reallocate when anything affecting the grand total changes
+  useEffect(() => {
+    if (!selectedPaymentMethod) return;
+    const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
+    const isCash = pm.includes("cash");
+    if (!isCash) return;
+    if (cart.length === 0) return;
+
+    // Re-allocate to match current GRAND TOTAL
+    allocatePayInFull();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedPaymentMethod,
+    discountPercentage,
+    taxPercentage,
+    cart.length,
+    // If you want even finer reactivity, you can also depend on a stable hash of cart quantities/discounts.
+  ]);
 
   // Commented out to prevent infinite loop - payment method logic is now handled in addToCart
   // useEffect(() => {
@@ -1581,7 +1633,7 @@ export default function POSPage() {
                                 Paid Items ({paidItems.length})
                               </span>
                               <span className="text-green-600 font-medium">
-                                {effectivePaidAmount.toFixed(3)} OMR
+                                {totalPaidAmount.toFixed(3)} OMR
                               </span>
                             </div>
                           )}
@@ -2199,15 +2251,15 @@ export default function POSPage() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
                   <span>TOTAL:</span>
-                  <span>{total.toFixed(3)} OMR</span>
+                  <span>{subtotal.toFixed(3)} OMR</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
                   <span>Total Paid:</span>
-                  <span style={{ color: '#16a34a' }}>{totalPaidAmount.toFixed(3)} OMR</span>
+                  <span style={{ color: '#16a34a' }}>{total.toFixed(3)} OMR</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
                   <span>Amount Due:</span>
-                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} OMR</span>
+                  <span style={{ color: '#16a34a' }}>0.000 OMR</span>
                 </div>
                 {hasPartialPayment && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '8px' }}>
