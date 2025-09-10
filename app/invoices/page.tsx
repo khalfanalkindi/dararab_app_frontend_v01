@@ -60,8 +60,13 @@ interface Invoice {
   }
   created_at: string
   total_amount: number
+  global_discount_percent?: string
+  tax_percent?: string
+  total_paid?: number
+  remaining_amount?: number
   status: string
   items: InvoiceItem[]
+  notes?: string
   selected?: boolean
 }
 
@@ -207,7 +212,11 @@ export default function InvoicesPage() {
         },
         created_at: data.created_at,
         total_amount: data.total_amount,
-        status: 'completed', // Default status since it's not in the API response
+        global_discount_percent: data.global_discount_percent || "0.00",
+        tax_percent: data.tax_percent || "0.00",
+        total_paid: data.total_paid,
+        remaining_amount: data.remaining_amount,
+        status: data.total_paid >= (data.total_amount * (1 - parseFloat(data.global_discount_percent || "0") / 100) * (1 + parseFloat(data.tax_percent || "0") / 100)) ? 'Paid' : 'Partial', // Calculate status based on final total
         items: data.items?.map((item: any) => ({
           id: item.id || 0,
           product: {
@@ -220,11 +229,9 @@ export default function InvoicesPage() {
           discount_percent: item.discount_percent || 0,
           total_price: item.total_price
         })) || [],
-        notes: data.notes || '',
-        total_paid: data.total_paid,
-        remaining_amount: data.remaining_amount
+        notes: data.notes || ''
       }
-
+      
       console.log('Processed invoice data:', processedData)
       
       setSelectedInvoice(processedData)
@@ -682,15 +689,76 @@ export default function InvoicesPage() {
                     <tfoot>
                       <tr className="border-t">
                         <td colSpan={4} className="p-2 text-right font-medium">
-                          Total Amount:
+                          Subtotal:
                         </td>
                         <td className="p-2 text-right font-medium">
                           {(selectedInvoice.total_amount || 0).toFixed(3)} OMR
                         </td>
                       </tr>
+                      {selectedInvoice.global_discount_percent && (
+                        <tr className="border-t">
+                          <td colSpan={4} className="p-2 text-right font-medium text-red-600">
+                            Discount ({selectedInvoice.global_discount_percent}%):
+                          </td>
+                          <td className="p-2 text-right font-medium text-red-600">
+                            -{((selectedInvoice.total_amount || 0) * parseFloat(selectedInvoice.global_discount_percent) / 100).toFixed(3)} OMR
+                          </td>
+                        </tr>
+                      )}
+                      {selectedInvoice.tax_percent && parseFloat(selectedInvoice.tax_percent) > 0 && (
+                        <tr className="border-t">
+                          <td colSpan={4} className="p-2 text-right font-medium">
+                            Tax ({selectedInvoice.tax_percent}%):
+                          </td>
+                          <td className="p-2 text-right font-medium">
+                            {((selectedInvoice.total_amount || 0) * (1 - parseFloat(selectedInvoice.global_discount_percent || "0") / 100) * parseFloat(selectedInvoice.tax_percent) / 100).toFixed(3)} OMR
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t-2 border-gray-400">
+                        <td colSpan={4} className="p-2 text-right font-bold text-lg">
+                          TOTAL:
+                        </td>
+                        <td className="p-2 text-right font-bold text-lg">
+                          {(selectedInvoice.total_amount || 0).toFixed(3)} OMR
+                        </td>
+                      </tr>
+                      <tr className="border-t">
+                        <td colSpan={4} className="p-2 text-right font-medium">
+                          Total Paid:
+                        </td>
+                        <td className="p-2 text-right font-medium">
+                          {((selectedInvoice.total_amount || 0) * (1 - parseFloat(selectedInvoice.global_discount_percent || "0") / 100) * (1 + parseFloat(selectedInvoice.tax_percent || "0") / 100)).toFixed(3)} OMR
+                        </td>
+                      </tr>
+                      <tr className="border-t">
+                        <td colSpan={4} className="p-2 text-right font-medium">
+                          Amount Due:
+                        </td>
+                        <td className="p-2 text-right font-medium">
+                          {Math.max(0, ((selectedInvoice.total_amount || 0) * (1 - parseFloat(selectedInvoice.global_discount_percent || "0") / 100) * (1 + parseFloat(selectedInvoice.tax_percent || "0") / 100)) - (selectedInvoice.total_paid || 0)).toFixed(3)} OMR
+                        </td>
+                      </tr>
                     </tfoot>
                   </table>
                 </div>
+              </div>
+
+              {/* Notes Section */}
+              {selectedInvoice.notes && (
+                <div>
+                  <h3 className="font-medium mb-2">Notes</h3>
+                  <p className="text-sm text-muted-foreground bg-gray-50 p-3 rounded-md">
+                    {selectedInvoice.notes}
+                  </p>
+                </div>
+              )}
+
+              {/* Close Button */}
+              <div className="flex justify-end pt-4 border-t">
+                <Button onClick={() => setIsViewInvoiceOpen(false)}>
+                  Close
+                </Button>
               </div>
             </div>
           )}
