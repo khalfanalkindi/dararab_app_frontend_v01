@@ -36,6 +36,8 @@ interface InvoiceItem {
   unit_price: number;
   discount_percent: number;
   total_price: number;
+  paid_amount?: number; // Payment amount for this item
+  is_paid?: boolean; // Payment status for this item
 }
 
 interface InvoiceData {
@@ -368,8 +370,8 @@ export default function ReceiptPage() {
                   <span>Status</span>
                 </div>
                 
-              {(invoiceData.items || []).map((item, idx) => {
-                // Use the same logic as POS page for receipt display
+              {(() => {
+                // Calculate totals first
                 const calculateItemTotal = (item: InvoiceItem) => {
                   const price = item.unit_price || 0;
                   const quantity = item.quantity || 0;
@@ -377,21 +379,30 @@ export default function ReceiptPage() {
                   return price * quantity * (1 - discount);
                 };
                 
-                const itemTotal = calculateItemTotal(item);
+                const subtotal = (invoiceData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0);
+                const globalDiscountPercent = invoiceData.global_discount_percent || 0;
+                const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100;
+                const discountedSubtotal = subtotal - globalDiscountAmount;
+                const taxPercent = invoiceData.tax_percent || 0;
+                const tax = discountedSubtotal * (taxPercent / 100);
+                const finalTotal = discountedSubtotal + tax;
                 
-                // Determine status based on invoice-level payment data
-                let status = "Outstanding";
-                let statusColor = "#dc2626";
+                // Determine if invoice is fully paid
+                const isFullyPaid = Math.abs(invoiceData.total_paid - finalTotal) < 0.001;
                 
-                // If invoice is fully paid (remaining_amount = 0), all items are paid
-                if (invoiceData.remaining_amount === 0) {
-                  status = "Paid";
-                  statusColor = "#16a34a";
-                } else if (invoiceData.total_paid > 0) {
-                  // If there's some payment but not fully paid, show partial
-                  status = "Partial";
-                  statusColor = "#ea580c";
-                }
+                return (invoiceData.items || []).map((item, idx) => {
+                  const itemTotal = calculateItemTotal(item);
+                  
+                  let status = "Outstanding";
+                  let statusColor = "#dc2626";
+                  
+                  if (isFullyPaid) {
+                    status = "Paid";
+                    statusColor = "#16a34a";
+                  } else if (invoiceData.total_paid > 0) {
+                    status = "Partial";
+                    statusColor = "#ea580c";
+                  }
                   
                   return (
                   <div key={`${item.product_name}-${idx}`} style={{ 
@@ -414,12 +425,13 @@ export default function ReceiptPage() {
                       </div>
                     </div>
                   );
-                })}
+                });
+              })()}
               </div>
               
               <div style={{ marginTop: '6px', fontSize: '9px' }}>
               {(() => {
-                // Use the same calculation logic as POS page
+                // Recalculate totals for financial summary
                 const calculateItemTotal = (item: InvoiceItem) => {
                   const price = item.unit_price || 0;
                   const quantity = item.quantity || 0;
@@ -437,11 +449,8 @@ export default function ReceiptPage() {
                 
                 // Payment calculations - use invoice-level data from API
                 const totalPaidAmount = invoiceData.total_paid || 0;
-                const remainingAmount = invoiceData.remaining_amount || 0;
-                const allItemsFullyPaid = remainingAmount === 0;
-                
-                const effectivePaidAmount = allItemsFullyPaid ? totalPaidAmount + tax : totalPaidAmount;
-                const totalUnpaidAmount = total - effectivePaidAmount;
+                // Amount due is the difference between final total and total paid
+                const totalUnpaidAmount = Math.max(0, total - totalPaidAmount);
                 
                 return (
                   <>
@@ -461,11 +470,11 @@ export default function ReceiptPage() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
                   <span>TOTAL:</span>
-                  <span>{total.toFixed(3)} OMR</span>
+                  <span>{subtotal.toFixed(3)} OMR</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
                   <span>Total Paid:</span>
-                      <span style={{ color: '#16a34a' }}>{effectivePaidAmount.toFixed(3)} OMR</span>
+                      <span style={{ color: '#16a34a' }}>{total.toFixed(3)} OMR</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
                   <span>Amount Due:</span>
