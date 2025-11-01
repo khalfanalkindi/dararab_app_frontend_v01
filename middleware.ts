@@ -8,7 +8,7 @@ export function middleware(request: NextRequest) {
   response.headers.set(
     'Content-Security-Policy',
     "default-src 'self'; " +
-    "connect-src 'self' https://dararabappbackendv01-production.up.railway.app; " +
+    "connect-src 'self' https://dararabappbackendv01-production.up.railway.app https://dararabappbackendv01-dev.up.railway.app; " +
     "img-src 'self' data: blob: https://dararab.co.uk https://www.dararab.co.uk; " +
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules'; " +
     "style-src 'self' 'unsafe-inline'; " +
