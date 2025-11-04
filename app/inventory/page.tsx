@@ -105,6 +105,7 @@ export default function InventoryManagementPage() {
 
   const [alertMsg, setAlertMsg] = useState<{ type: "success" | "error" | "warning" | null; message: string }>({ type: null, message: "" })
   const [draftQtyByKey, setDraftQtyByKey] = useState<Record<string, number>>({})
+  const [isSavingAll, setIsSavingAll] = useState<boolean>(false)
 
   const authHeaders = useMemo(
     () => ({
@@ -450,6 +451,53 @@ export default function InventoryManagementPage() {
     }
   }
 
+  const saveAll = async () => {
+    if (!hasRequested) return
+    setIsSavingAll(true)
+    try {
+      // Determine changed rows by comparing draft vs current quantity
+      const rows = mergedRows as any[]
+      const changes = rows.filter((inv) => {
+        const current = Number(inv.quantity) || 0
+        const draft = getDraftQty(inv)
+        return Number(draft) !== current
+      })
+
+      for (const inv of changes) {
+        const pid = typeof inv.product === "number" ? inv.product : inv.product?.id || inv.product_id
+        const wid = typeof inv.warehouse === "number" ? inv.warehouse : inv.warehouse?.id || inv.warehouse_id
+        const qty = getDraftQty(inv)
+        if (!pid || !wid) continue
+        let res: Response
+        if (inv.id && inv.id !== 0) {
+          res = await fetch(`${API_URL}/inventory/inventory/${inv.id}/`, {
+            method: "PATCH",
+            headers: authHeaders,
+            body: JSON.stringify({ quantity: Number(qty) }),
+          })
+        } else {
+          res = await fetch(`${API_URL}/inventory/inventory/`, {
+            method: "POST",
+            headers: authHeaders,
+            body: JSON.stringify({ product_id: Number(pid), warehouse_id: Number(wid), quantity: Number(qty) }),
+          })
+        }
+        if (!res.ok) {
+          const text = await res.text().catch(() => "")
+          throw new Error(`Save failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
+        }
+      }
+
+      toast({ title: "All changes saved" })
+      await fetchInventory()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to save changes"
+      toast({ title: "Error", description: msg, variant: "destructive" })
+    } finally {
+      setIsSavingAll(false)
+    }
+  }
+
   if (!mounted) {
     return null
   }
@@ -657,10 +705,10 @@ export default function InventoryManagementPage() {
                     />
                   </div>
                   <div className="flex gap-2 md:justify-end">
-                    <Button variant="outline" onClick={() => { setFilterProductId(""); setFilterWarehouseId(""); setHasRequested(false); setItems([]); setCount(0) }}>
+                    <Button variant="outline" disabled={isSavingAll} onClick={() => { setFilterProductId(""); setFilterWarehouseId(""); setHasRequested(false); setItems([]); setCount(0) }}>
                       Reset
                     </Button>
-                    <Button onClick={() => { 
+                    <Button disabled={isSavingAll} onClick={() => { 
                       if (!filterProductId && !filterWarehouseId) { 
                         toast({ title: "Select a filter", description: "Choose product or warehouse, then click Apply." })
                         return
@@ -668,6 +716,9 @@ export default function InventoryManagementPage() {
                       setHasRequested(true)
                       void fetchInventory()
                     }}>Apply</Button>
+                    <Button variant="default" disabled={!hasRequested || isLoading || isSavingAll} onClick={() => void saveAll()}>
+                      {isSavingAll ? "Saving..." : "Save All Changes"}
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -716,7 +767,7 @@ export default function InventoryManagementPage() {
                                   value={getDraftQty(inv)}
                                   onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
                                 />
-                                <Button size="sm" variant="outline" onClick={() => void saveRow(inv)}>
+                                <Button size="sm" variant="outline" disabled={isSavingAll} onClick={() => void saveRow(inv)}>
                                   Save
                                 </Button>
                               </div>
