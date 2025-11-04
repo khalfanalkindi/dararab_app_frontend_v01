@@ -55,6 +55,13 @@ const data = {
       items: [], // Empty items array means no submenu
     },
     {
+      title: "Products Inventory",
+      url: "/inventory",
+      icon: SquareLibrary,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
+    {
       title: "Sales",
       url: "/pos",
       icon: ShoppingCart,
