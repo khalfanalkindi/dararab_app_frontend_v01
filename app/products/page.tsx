@@ -1221,7 +1221,7 @@ async function handleUpdateInventory() {
         Authorization: `Bearer ${token}`,
       };
 
-      const response = await fetch(`${API_URL}/inventory/products/${deleteBookId}/`, {
+      const response = await fetch(`${API_URL}/inventory/products/${deleteBookId}/delete/`, {
         method: "DELETE",
         headers,
       });
