@@ -392,8 +392,20 @@ export default function BookManagement() {
       }
 
       const response = await fetch(`${API_URL}/inventory/product-summary/?${params.toString()}`, { headers });
+      
+      // Handle 401 Unauthorized - token expired or invalid
+      if (response.status === 401) {
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("refreshToken");
+        showAlert("error", "Session expired. Please log in again.");
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 2000);
+        return;
+      }
+      
       if (!response.ok) {
-        throw new Error("Failed to fetch product summaries");
+        throw new Error(`Failed to fetch product summaries: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -404,7 +416,7 @@ export default function BookManagement() {
       
       setProductSummaries(results);
       setTotalCount(count);
-      
+
       return { results, count };
     } catch (error) {
       console.error("Error fetching product summaries:", error);
@@ -453,7 +465,12 @@ export default function BookManagement() {
         setIsLoading(true);
         const token = localStorage.getItem("accessToken");
         if (!token) {
-          showAlert("error", "Authentication token not found");
+          showAlert("error", "Authentication token not found. Please log in.");
+          // Redirect to login after a short delay
+          setTimeout(() => {
+            window.location.href = "/login";
+          }, 2000);
+          setIsLoading(false);
           return;
         }
 
@@ -461,8 +478,21 @@ export default function BookManagement() {
         
         // Fetch bootstrap data (genres, statuses, warehouses, etc.)
         const bootstrapRes = await fetch(`${API_URL}/inventory/bootstrap/`, { headers });
+        
+        // Handle 401 Unauthorized - token expired or invalid
+        if (bootstrapRes.status === 401) {
+          localStorage.removeItem("accessToken");
+          localStorage.removeItem("refreshToken");
+          showAlert("error", "Session expired. Please log in again.");
+          setTimeout(() => {
+            window.location.href = "/login";
+          }, 2000);
+        setIsLoading(false);
+          return;
+        }
+        
         if (!bootstrapRes.ok) {
-          throw new Error("Failed to fetch bootstrap data");
+          throw new Error(`Failed to fetch bootstrap data: ${bootstrapRes.status} ${bootstrapRes.statusText}`);
         }
 
         const bootstrapData = await bootstrapRes.json();
@@ -483,7 +513,7 @@ export default function BookManagement() {
         console.error("Error loading bootstrap data:", error);
         toast({
           title: "Error",
-          description: "Failed to load data",
+          description: error instanceof Error ? error.message : "Failed to load data",
           variant: "destructive",
         });
         setIsLoading(false);
@@ -532,58 +562,78 @@ export default function BookManagement() {
       return productCacheRef.current.get(productId)!;
     }
 
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
       throw new Error("Authentication token not found");
-    }
+      }
 
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
 
     // Fetch aggregated data
     const response = await fetch(`${API_URL}/inventory/products/${productId}/aggregated/`, { headers });
+    
+    // Handle 401 Unauthorized - token expired or invalid
+    if (response.status === 401) {
+      localStorage.removeItem("accessToken");
+      localStorage.removeItem("refreshToken");
+      showAlert("error", "Session expired. Please log in again.");
+      setTimeout(() => {
+        window.location.href = "/login";
+      }, 2000);
+      throw new Error("Session expired");
+    }
+    
     if (!response.ok) {
-      throw new Error("Failed to fetch aggregated product data");
+      // Try to get error details from response
+      let errorMessage = `Failed to fetch aggregated product data: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        // If response is not JSON, use the status text
+      }
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
-    
-    // Process inventory data
+        
+        // Process inventory data
     const processedInventory = (data.inventory ?? []).map((item: any) => {
-      const wid = typeof item.warehouse === "object" ? item.warehouse.id : item.warehouse;
-      const wh = warehouses.find((w) => w.id === wid);
-      return {
-        ...item,
-        warehouse: wid,
+          const wid = typeof item.warehouse === "object" ? item.warehouse.id : item.warehouse;
+          const wh = warehouses.find((w) => w.id === wid);
+          return {
+            ...item,
+            warehouse: wid,
         warehouse_name: wh?.name_en ?? item.warehouse?.name_en ?? "Unknown",
-      };
-    });
+          };
+        });
 
-    // Process print runs data
+        // Process print runs data
     const processedPrintRuns = data.print_runs ?? [];
-
-    // Determine input type based on cover_design
+        
+        // Determine input type based on cover_design
     const isUrlType = isUrl(data.product.cover_design);
-    
+        
     const aggregatedData = {
       product: {
         ...data.product,
-        print_runs: processedPrintRuns,
+          print_runs: processedPrintRuns,
         cover_url: isUrlType ? data.product.cover_design : null,
         cover_image: !isUrlType ? data.product.cover_design : null
       },
       inventory: processedInventory,
       print_runs: processedPrintRuns,
     };
-
+        
     // Update cache
     productCacheRef.current.set(productId, aggregatedData);
 
     return aggregatedData;
   }, [warehouses]);
-
+        
   // Open book details modal
   const openBookDetails = async (book: BookInterface | ProductSummary) => {
     try {
@@ -611,26 +661,26 @@ export default function BookManagement() {
       const productId = book.id!;
       
       const aggregatedData = await fetchAggregatedProduct(productId);
-      
+        
       // Add warehouse information to inventory items for edit form
       const inventoryWithWarehouses = aggregatedData.inventory.map((item: any) => {
-        return {
-          id: item.id,
+          return {
+            id: item.id,
           product: item.product || productId,
           warehouse: typeof item.warehouse === "object" ? item.warehouse.id : item.warehouse,
-          quantity: item.quantity,
-          notes: item.notes || '',
+            quantity: item.quantity,
+            notes: item.notes || '',
           warehouse_name: item.warehouse_name || ''
-        };
-      });
+          };
+        });
       
       setEditCoverInputType(isUrl(aggregatedData.product.cover_design) ? 'url' : 'upload');
-      setEditBookInventory(inventoryWithWarehouses);
+        setEditBookInventory(inventoryWithWarehouses);
       setSelectedBook({
         ...aggregatedData.product,
         inventory: inventoryWithWarehouses,
       });
-      
+
       // Set active tab to basic information
       setActiveTab("basic");
       setIsEditBookOpen(true);
@@ -689,6 +739,12 @@ export default function BookManagement() {
   // Handle adding a new book
   const handleAddBook = async () => {
     try {
+      // Validate cover URL if using URL input type
+      if (coverInputType === 'url' && newBook.cover_url && !newBook.cover_url.startsWith("https://dararab.co.uk/")) {
+        showAlert("error", "Cover URL must start with https://dararab.co.uk/");
+        return;
+      }
+
       setIsSubmitting(true);
       const token = localStorage.getItem("accessToken");
       if (!token) {
@@ -832,6 +888,13 @@ export default function BookManagement() {
   // 1) Basic info
 async function handleUpdateBasic() {
   if (!selectedBook?.id) return;
+  
+  // Validate cover URL if using URL input type
+  if (editCoverInputType === 'url' && selectedBook.cover_url && !selectedBook.cover_url.startsWith("https://dararab.co.uk/")) {
+    showAlert("error", "Cover URL must start with https://dararab.co.uk/");
+    return;
+  }
+  
   const formData = new FormData();
   
   // Required fields
@@ -920,22 +983,22 @@ async function handleUpdateDetails() {
     if (selectedBook.print_runs && selectedBook.print_runs.length > 0) {
       const printRunData = selectedBook.print_runs.map(run => ({
         id: run.id || undefined,
-        product_id: selectedBook.id,
-        edition_number: run.edition_number,
-        price: run.price,
-        print_cost: run.print_cost,
-        status_id: run.status?.id,
-        notes: run.notes,
-        published_at: run.published_at,
+          product_id: selectedBook.id,
+          edition_number: run.edition_number,
+          price: run.price,
+          print_cost: run.print_cost,
+          status_id: run.status?.id,
+          notes: run.notes,
+          published_at: run.published_at,
       }));
 
-      const response = await fetch(
+        const response = await fetch(
         `${API_URL}/inventory/print-runs/bulk/`,
         { method: 'POST', headers, body: JSON.stringify(printRunData) }
       );
 
-      if (!response.ok) {
-        const errorData = await response.json();
+        if (!response.ok) {
+          const errorData = await response.json();
         console.error('Bulk update failed:', errorData);
         throw new Error(errorData.detail || errorData.message || "Failed to update print runs");
       }
@@ -1193,6 +1256,12 @@ async function handleUpdateInventory() {
   // Update handleSaveChanges to use refreshData
   const handleSaveChanges = async () => {
     try {
+      // Validate cover URL if using URL input type
+      if (editCoverInputType === 'url' && selectedBook?.cover_url && !selectedBook.cover_url.startsWith("https://dararab.co.uk/")) {
+        showAlert("error", "Cover URL must start with https://dararab.co.uk/");
+        return;
+      }
+
       setIsSubmitting(true);
       const token = localStorage.getItem("accessToken");
       if (!token) {
@@ -1231,17 +1300,17 @@ async function handleUpdateInventory() {
         const printRunData = selectedBook.print_runs.map(printRun => ({
           id: printRun.id || undefined,
           product_id: selectedBook.id,
-          edition_number: printRun.edition_number,
-          price: printRun.price,
-          print_cost: printRun.print_cost,
-          status_id: printRun.status?.id,
-          notes: printRun.notes,
-          published_at: printRun.published_at,
+              edition_number: printRun.edition_number,
+              price: printRun.price,
+              print_cost: printRun.print_cost,
+              status_id: printRun.status?.id,
+              notes: printRun.notes,
+              published_at: printRun.published_at,
         }));
 
         const printRunResponse = await fetch(`${API_URL}/inventory/print-runs/bulk/`, {
-          method: 'POST',
-          headers,
+            method: 'POST',
+            headers,
           body: JSON.stringify(printRunData),
         });
 
@@ -1255,17 +1324,17 @@ async function handleUpdateInventory() {
       if (editBookInventory.length > 0) {
         const inventoryData = editBookInventory.map(item => ({
           id: item.id || undefined,
-          product_id: selectedBook?.id,
-          warehouse_id: item.warehouse,
-          quantity: item.quantity,
-          notes: item.notes || '',
+              product_id: selectedBook?.id,
+              warehouse_id: item.warehouse,
+              quantity: item.quantity,
+              notes: item.notes || '',
         }));
 
         const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/bulk/`, {
-          method: 'POST',
-          headers,
+            method: 'POST',
+            headers,
           body: JSON.stringify(inventoryData),
-        });
+          });
 
         if (!inventoryResponse.ok) {
           const errorData = await inventoryResponse.json();
@@ -1430,13 +1499,13 @@ async function handleUpdateInventory() {
       // Refresh inventory data for the selected book
       const inventoryRes = await fetch(`${API_URL}/inventory/inventory/?product=${selectedBook.id}`, { headers });
       if (inventoryRes.ok) {
-        const inventoryData = await inventoryRes.json();
+      const inventoryData = await inventoryRes.json();
         const updatedInventory = Array.isArray(inventoryData) ? inventoryData : inventoryData.results ?? [];
         if (selectedBook) {
-          setSelectedBook({
-            ...selectedBook,
-            inventory: updatedInventory
-          });
+        setSelectedBook({
+          ...selectedBook,
+          inventory: updatedInventory
+        });
         }
       }
 
@@ -1589,7 +1658,7 @@ async function handleUpdateInventory() {
                 </div>
               </div>
               <div className="flex-1">
-                  <Select 
+                <Select 
                   value={selectedGenre || "all"} 
                   onValueChange={(value) => {
                     setSelectedGenre(value === "all" ? null : value)
@@ -1609,7 +1678,7 @@ async function handleUpdateInventory() {
                 </Select>
               </div>
               <div className="flex-1">
-                  <Select 
+                <Select 
                   value={selectedStatus || "all"} 
                   onValueChange={(value) => {
                     setSelectedStatus(value === "all" ? null : value)
@@ -1903,7 +1972,7 @@ async function handleUpdateInventory() {
         onClose={() => setIsBookDetailsOpen(false)}
         onEdit={(book) => {
           void openEditBook(book)
-        }}
+                      }}
         onTransfer={(book) => openTransferModal(book)}
       />
 
@@ -1915,7 +1984,7 @@ async function handleUpdateInventory() {
         formRef={formRef}
         onSubmit={() => {
           void handleAddBook()
-        }}
+            }}
         newBook={newBook}
         setNewBook={setNewBook}
         coverInputType={coverInputType}
@@ -1931,6 +2000,7 @@ async function handleUpdateInventory() {
         newBookInventory={newBookInventory}
         setNewBookInventory={setNewBookInventory}
         getImageUrl={getImageUrl}
+        isSubmitting={isSubmitting}
       />
 
       {/* Edit Book Dialog */}

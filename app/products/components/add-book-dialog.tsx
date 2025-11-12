@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, type ChangeEvent, type FormEvent, type MutableRefObject } from "react"
+import { useMemo, useState, type ChangeEvent, type FormEvent, type MutableRefObject } from "react"
 
 import { Check, ChevronsUpDown, X } from "lucide-react"
 
@@ -56,6 +56,7 @@ type AddBookDialogProps = {
   newBookInventory: InventoryItem[]
   setNewBookInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>
   getImageUrl: (url: string | null) => string
+  isSubmitting: boolean
 }
 
 export function AddBookDialog({
@@ -79,10 +80,33 @@ export function AddBookDialog({
   newBookInventory,
   setNewBookInventory,
   getImageUrl,
+  isSubmitting,
 }: AddBookDialogProps) {
+  const [coverUrlError, setCoverUrlError] = useState<string>("")
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (coverInputType === "url" && newBook.cover_url) {
+      if (!newBook.cover_url.startsWith("https://dararab.co.uk/")) {
+        setCoverUrlError("URL must start with https://dararab.co.uk/")
+        return
+      }
+    }
+    setCoverUrlError("")
     onSubmit()
+  }
+
+  const validateCoverUrl = (url: string) => {
+    if (!url) {
+      setCoverUrlError("")
+      return true
+    }
+    if (!url.startsWith("https://dararab.co.uk/")) {
+      setCoverUrlError("URL must start with https://dararab.co.uk/")
+      return false
+    }
+    setCoverUrlError("")
+    return true
   }
 
   const defaultWarehouseId = useMemo(() => warehouses[0]?.id ?? 0, [warehouses])
@@ -121,14 +145,31 @@ export function AddBookDialog({
     ])
   }
 
+  const handleOpenChange = (newOpen: boolean) => {
+    // Prevent closing dialog while submitting
+    if (!newOpen && isSubmitting) {
+      return
+    }
+    onOpenChange(newOpen)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add New Book</DialogTitle>
           <DialogDescription>Create a new book for your inventory.</DialogDescription>
         </DialogHeader>
-        <form ref={formRef} className="space-y-6 py-4" onSubmit={handleSubmit}>
+        <div className="relative">
+          {isSubmitting && (
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-10 flex items-center justify-center rounded-lg">
+              <div className="flex flex-col items-center gap-2">
+                <div className="h-8 w-8 animate-spin border-4 border-primary border-t-transparent rounded-full" />
+                <p className="text-sm text-muted-foreground">Saving book...</p>
+              </div>
+            </div>
+          )}
+          <form ref={formRef} className="space-y-6 py-4" onSubmit={handleSubmit}>
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4">
               <div>
@@ -479,16 +520,28 @@ export function AddBookDialog({
                     <div className="space-y-2">
                       <Input
                         type="url"
-                        placeholder="Enter image URL (e.g., https://example.com/image.jpg)"
+                        placeholder="Enter image URL (must start with https://dararab.co.uk/)"
                         value={newBook.cover_url || ""}
                         onChange={(e) => {
+                          const url = e.target.value
+                          validateCoverUrl(url)
                           setNewBook({
                             ...newBook,
-                            cover_url: e.target.value,
+                            cover_url: url,
                             cover_image: null,
                           })
                         }}
+                        onPaste={(e) => {
+                          const pastedUrl = e.clipboardData.getData("text")
+                          setTimeout(() => {
+                            validateCoverUrl(pastedUrl)
+                          }, 0)
+                        }}
+                        className={coverUrlError ? "border-red-500" : ""}
                       />
+                      {coverUrlError && (
+                        <p className="text-sm text-red-500">{coverUrlError}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -496,66 +549,17 @@ export function AddBookDialog({
             </div>
           </div>
 
-          <div className="space-y-4">
-            {newBookInventory.length === 0 ? (
-              <div className="text-center py-8 border rounded-lg bg-muted/30">
-                <p className="text-muted-foreground mb-4">No inventory items added yet.</p>
-                <Button type="button" variant="outline" onClick={handleAddInventoryRow}>
-                  Add Warehouse
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {newBookInventory.map((item, index) => (
-                  <div key={index} className="flex items-center gap-4">
-                    <Select
-                      value={item.warehouse.toString()}
-                      onValueChange={(value) => handleInventoryWarehouseChange(index, value)}
-                    >
-                      <SelectTrigger className="w-[200px]">
-                        <SelectValue placeholder="Select warehouse" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {warehouses.map((warehouse) => (
-                          <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                            {warehouse.name_en}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      type="number"
-                      min="0"
-                      value={item.quantity}
-                      onChange={(event) => handleInventoryQuantityChange(index, event)}
-                      className="w-[100px]"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveInventoryItem(index)}
-                    >
-                      <span className="sr-only">Remove</span>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <Button type="button" variant="outline" className="w-full" onClick={handleAddInventoryRow}>
-              Add Warehouse
-            </Button>
-          </div>
-
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit">Add Book</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting && <span className="mr-2 inline-block h-4 w-4 animate-spin border-2 border-current border-t-transparent rounded-full" />}
+              Add Book
+            </Button>
           </DialogFooter>
         </form>
+        </div>
       </DialogContent>
     </Dialog>
   )

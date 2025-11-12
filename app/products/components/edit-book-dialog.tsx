@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -74,23 +75,55 @@ export function EditBookDialog({
   handleSaveChanges,
   isSubmitting,
 }: EditBookDialogProps) {
+  const [coverUrlError, setCoverUrlError] = useState<string>("")
+
+  const validateCoverUrl = (url: string) => {
+    if (!url) {
+      setCoverUrlError("")
+      return true
+    }
+    if (!url.startsWith("https://dararab.co.uk/")) {
+      setCoverUrlError("URL must start with https://dararab.co.uk/")
+      return false
+    }
+    setCoverUrlError("")
+    return true
+  }
+
+  const handleOpenChange = (newOpen: boolean) => {
+    // Prevent closing dialog while submitting
+    if (!newOpen && isSubmitting) {
+      return
+    }
+    onOpenChange(newOpen)
+  }
+
   if (!selectedBook) return null
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Book: {selectedBook.isbn}</DialogTitle>
           <DialogDescription>Update book information.</DialogDescription>
         </DialogHeader>
-        <form
-          ref={formRef}
-          className="space-y-6 py-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSaveChanges();
-          }}
-        >
+        <div className="relative">
+          {isSubmitting && (
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-10 flex items-center justify-center rounded-lg">
+              <div className="flex flex-col items-center gap-2">
+                <div className="h-8 w-8 animate-spin border-4 border-primary border-t-transparent rounded-full" />
+                <p className="text-sm text-muted-foreground">Saving changes...</p>
+              </div>
+            </div>
+          )}
+          <form
+            ref={formRef}
+            className="space-y-6 py-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSaveChanges();
+            }}
+          >
           <Tabs defaultValue="basic" className="w-full" value={activeTab} onValueChange={(v) => setActiveTab(v)}>
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="basic">Basic Information</TabsTrigger>
@@ -380,16 +413,28 @@ export function EditBookDialog({
                       <div className="space-y-2">
                         <Input
                           type="url"
-                          placeholder="Enter image URL (e.g., https://example.com/image.jpg)"
+                          placeholder="Enter image URL (must start with https://dararab.co.uk/)"
                           value={selectedBook.cover_url || ''}
                           onChange={(e) => {
+                            const url = e.target.value
+                            validateCoverUrl(url)
                             setSelectedBook({
                               ...selectedBook,
-                              cover_url: e.target.value,
+                              cover_url: url,
                               cover_image: null
                             });
                           }}
+                          onPaste={(e) => {
+                            const pastedUrl = e.clipboardData.getData("text")
+                            setTimeout(() => {
+                              validateCoverUrl(pastedUrl)
+                            }, 0)
+                          }}
+                          className={coverUrlError ? "border-red-500" : ""}
                         />
+                        {coverUrlError && (
+                          <p className="text-sm text-red-500">{coverUrlError}</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -696,7 +741,7 @@ export function EditBookDialog({
           </Tabs>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="button" onClick={handleSaveChanges} disabled={isSubmitting}>
@@ -705,6 +750,7 @@ export function EditBookDialog({
             </Button>
           </DialogFooter>
         </form>
+        </div>
       </DialogContent>
     </Dialog>
   )
