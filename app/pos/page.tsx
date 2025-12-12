@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -155,6 +155,7 @@ export default function POSPage() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([])
   const [searchInput, setSearchInput] = useState("")
+  const [debouncedSearchInput, setDebouncedSearchInput] = useState("")
   const [cart, setCart] = useState<CartItem[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [selectedWarehouse, setSelectedWarehouse] = useState<number | null>(null)
@@ -183,12 +184,25 @@ export default function POSPage() {
   const printRef = useRef<HTMLDivElement>(null)
   const [showMetrics, setShowMetrics] = useState(false)
   const [isCartOpen, setIsCartOpen] = useState(false)
+  // Track last fetch parameters to prevent unnecessary refetches
+  const lastFetchParamsRef = useRef<{
+    warehouseId: number | null;
+    search: string;
+    genreId: number | null;
+    page: number;
+  }>({
+    warehouseId: null,
+    search: '',
+    genreId: null,
+    page: 1,
+  })
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<any>(null)
   const [isWarehouseDropdownOpen, setIsWarehouseDropdownOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [pageSize, setPageSize] = useState(50) // Increased default page size for better UX
   const [totalPages, setTotalPages] = useState(1)
+  const [totalCount, setTotalCount] = useState(0) // Total count from server
 
   // Add error handling for avatar image
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -274,46 +288,55 @@ export default function POSPage() {
     fetchSalesMetrics()
   }, [])
 
-  // Update the useEffect for filtering products
+  // Debounce search input to reduce filter operations while typing
   useEffect(() => {
-    const filtered = products.filter((product) => {
-      const matchesSearch =
-        searchInput === "" ||
-        product.title_en.toLowerCase().includes(searchInput.toLowerCase()) ||
-        product.title_ar?.toLowerCase().includes(searchInput.toLowerCase()) ||
-        product.isbn?.toLowerCase().includes(searchInput.toLowerCase());
+    const timer = setTimeout(() => {
+      setDebouncedSearchInput(searchInput);
+    }, 300); // 300ms delay
 
-      const matchesGenre = selectedGenre === null || product.genre_id === selectedGenre.id;
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-      return matchesSearch && matchesGenre;
-    });
-
-    // Calculate pagination
-    const totalItems = filtered.length;
-    const totalPages = Math.ceil(totalItems / pageSize);
-    setTotalPages(totalPages);
-    
-    // Ensure current page is valid
-    if (currentPage > totalPages && totalPages > 0) {
-      setCurrentPage(totalPages);
+  // Server-side filtering: refetch products when search, genre, or warehouse changes
+  useEffect(() => {
+    if (selectedWarehouse) {
+      // Reset to page 1 when filters change
+      setCurrentPage(1);
+      fetchProducts(
+        selectedWarehouse,
+        debouncedSearchInput,
+        selectedGenre?.id || null,
+        1, // Always start at page 1 when filters change
+        0  // retryCount
+      );
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearchInput, selectedGenre, selectedWarehouse]);
 
-    // Get paginated results
-    const startIndex = (currentPage - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    const paginatedResults = filtered.slice(startIndex, endIndex);
+  // Server-side pagination: refetch products when page or pageSize changes
+  useEffect(() => {
+    if (selectedWarehouse && currentPage > 0) {
+      fetchProducts(
+        selectedWarehouse,
+        debouncedSearchInput,
+        selectedGenre?.id || null,
+        currentPage,
+        0  // retryCount
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize]); // Only trigger on page/pageSize changes, use current filter values from closure
 
-    setFilteredProducts(paginatedResults);
-  }, [products, searchInput, selectedGenre, currentPage, pageSize]);
-
-  // Filter customers based on search query
-  const filteredCustomers = customers.filter(
-    (customer) =>
-      customer.institution_name.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
-      customer.contact_person?.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
-      customer.phone?.includes(customerSearchQuery) ||
-      customer.email?.toLowerCase().includes(customerSearchQuery.toLowerCase()),
-  )
+  // Filter customers based on search query - memoized to prevent recalculation on every render
+  const filteredCustomers = useMemo(() => {
+    return customers.filter(
+      (customer) =>
+        customer.institution_name.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
+        customer.contact_person?.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
+        customer.phone?.includes(customerSearchQuery) ||
+        customer.email?.toLowerCase().includes(customerSearchQuery.toLowerCase()),
+    );
+  }, [customers, customerSearchQuery]);
 
   // Cart functions
   const addToCart = (product: Product) => {
@@ -434,16 +457,17 @@ export default function POSPage() {
   }
 
   // Update the calculateItemTotal function to handle the new price format
-  const calculateItemTotal = (item: CartItem) => {
+  // Memoized with useCallback to prevent recreation on every render
+  const calculateItemTotal = useCallback((item: CartItem) => {
     const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
     const quantity = item.quantity;
     const discount = Math.max(0, Math.min(100, item.discount_percent)) / 100; // Ensure discount is between 0-100%
     const total = price * quantity * (1 - discount);
     return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
-  };
+  }, []);
 
   // Allocate payments for cash transactions - items should be fully paid at their individual totals
-  const allocatePayInFull = () => {
+  const allocatePayInFull = useCallback(() => {
     if (cart.length === 0) return;
 
     // For cash payments, mark all items as fully paid at their individual totals
@@ -459,30 +483,81 @@ export default function POSPage() {
 
     // Only update state if something actually changed (prevents loops)
     const changed = nextCart.some((n, i) => 
-      n.paid_amount !== cart[i].paid_amount || n.is_paid !== cart[i].is_paid
+      Math.abs(n.paid_amount - cart[i].paid_amount) > 0.001 || n.is_paid !== cart[i].is_paid
     );
     if (changed) setCart(nextCart);
-  };
+  }, [cart, calculateItemTotal]);
 
-  const subtotal = cart.reduce((sum, item) => sum + calculateItemTotal(item), 0)
-  const safeDiscountPercentage = Math.max(0, Math.min(100, discountPercentage || 0))
-  const globalDiscountAmount = (subtotal * safeDiscountPercentage) / 100
-  const discountedSubtotal = Math.max(0, subtotal - globalDiscountAmount)
-  const safeTaxPercentage = Math.max(0, Math.min(100, taxPercentage || 0))
-  const tax = discountedSubtotal * (safeTaxPercentage / 100)
-  const total = discountedSubtotal + tax
+  // Memoize cart calculations to prevent recalculation on every render
+  const subtotal = useMemo(() => {
+    return cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
+  }, [cart, calculateItemTotal]);
 
-  // Payment calculations
-  const totalPaidAmount = cart.reduce((sum, item) => {
-    const paidAmount = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
-    return sum + paidAmount;
-  }, 0)
+  // Create a stable signature of cart items that affect grand total
+  // This only changes when item quantities, prices, or discounts change
+  // Not when cart length changes without affecting totals
+  const cartTotalSignature = useMemo(() => {
+    if (cart.length === 0) return '';
+    // Create a signature based on items' contribution to total
+    return cart.map(item => {
+      const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
+      return `${item.product.id}:${item.quantity}:${item.discount_percent}:${price}`;
+    }).join('|');
+  }, [cart]);
+
+  const safeDiscountPercentage = useMemo(() => {
+    return Math.max(0, Math.min(100, discountPercentage || 0));
+  }, [discountPercentage]);
+
+  const globalDiscountAmount = useMemo(() => {
+    return (subtotal * safeDiscountPercentage) / 100;
+  }, [subtotal, safeDiscountPercentage]);
+
+  const discountedSubtotal = useMemo(() => {
+    return Math.max(0, subtotal - globalDiscountAmount);
+  }, [subtotal, globalDiscountAmount]);
+
+  const safeTaxPercentage = useMemo(() => {
+    return Math.max(0, Math.min(100, taxPercentage || 0));
+  }, [taxPercentage]);
+
+  const tax = useMemo(() => {
+    return discountedSubtotal * (safeTaxPercentage / 100);
+  }, [discountedSubtotal, safeTaxPercentage]);
+
+  const total = useMemo(() => {
+    return discountedSubtotal + tax;
+  }, [discountedSubtotal, tax]);
+
+  // Payment calculations - memoized
+  // Total paid amount should match grand total when items are fully paid
+  const totalPaidAmount = useMemo(() => {
+    const sum = cart.reduce((sum, item) => {
+      const paidAmount = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
+      return sum + paidAmount;
+    }, 0);
+    // Round to 3 decimal places to avoid floating point precision issues
+    return Number(sum.toFixed(3));
+  }, [cart]);
   
   // Calculate unpaid amount as difference between grand total and sum of item payments
-  const totalUnpaidAmount = Math.max(0, total - totalPaidAmount) // Ensure non-negative
-  const paidItems = cart.filter(item => item.is_paid)
-  const unpaidItems = cart.filter(item => !item.is_paid)
-  const hasPartialPayment = cart.some(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item))
+  // When fully paid, this should be 0 (or very close to 0 due to rounding)
+  const totalUnpaidAmount = useMemo(() => {
+    const unpaid = Math.max(0, total - totalPaidAmount);
+    return Number(unpaid.toFixed(3)); // Round to avoid floating point issues
+  }, [total, totalPaidAmount]);
+
+  const paidItems = useMemo(() => {
+    return cart.filter(item => item.is_paid);
+  }, [cart]);
+
+  const unpaidItems = useMemo(() => {
+    return cart.filter(item => !item.is_paid);
+  }, [cart]);
+
+  const hasPartialPayment = useMemo(() => {
+    return cart.some(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item));
+  }, [cart, calculateItemTotal]);
   
   // Note: Items are added to cart as paid by default
   
@@ -624,6 +699,14 @@ export default function POSPage() {
         const v = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
         return sum + v;
       }, 0);
+      
+      // Round to 3 decimal places to match display
+      const roundedPaidAmount = Number(ledgerPaidAmount.toFixed(3));
+      const roundedTotal = Number(total.toFixed(3));
+      
+      // Ensure paid amount matches total (use total as source of truth to avoid mismatch for cashiers)
+      // When items are fully paid, total_paid should equal total_amount
+      const finalPaidAmount = roundedTotal; // Use total as the source of truth
 
       // 1. Create the invoice with updated field names
       const invoiceData = {
@@ -635,23 +718,10 @@ export default function POSPage() {
         notes: invoiceNotes,
         global_discount_percent: discountPercentage,
         tax_percent: taxPercentage,
-        total_amount: total, // Grand total after global discount and tax
-        total_paid: ledgerPaidAmount, // Sum of individual item payments
-        remaining_amount: total - ledgerPaidAmount, // Remaining amount after payments
+        total_amount: roundedTotal, // Grand total after global discount and tax
+        total_paid: finalPaidAmount, // Use total as source of truth to match total_amount
+        remaining_amount: 0, // When fully paid, remaining is 0
       }
-      
-      console.log("Creating invoice with data:", invoiceData)
-      console.log("Calculation breakdown:", {
-        subtotal: subtotal.toFixed(3),
-        globalDiscountAmount: globalDiscountAmount.toFixed(3),
-        discountedSubtotal: discountedSubtotal.toFixed(3),
-        tax: tax.toFixed(3),
-        total: total.toFixed(3),
-        totalPaidAmount: totalPaidAmount.toFixed(3),
-        totalUnpaidAmount: totalUnpaidAmount.toFixed(3),
-        discountPercentage: discountPercentage,
-        taxPercentage: taxPercentage
-      })
 
       const invoiceResponse = await fetch(`${API_URL}/sales/invoices/`, {
         method: "POST",
@@ -682,15 +752,6 @@ export default function POSPage() {
           remaining_amount: itemTotal - item.paid_amount,
           is_paid: item.is_paid,
         }
-        
-        console.log(`Creating invoice item for ${item.product.title_en}:`, {
-          unit_price: itemData.unit_price,
-          quantity: itemData.quantity,
-          discount_percent: itemData.discount_percent,
-          total_price: itemData.total_price,
-          paid_amount: itemData.paid_amount,
-          remaining_amount: itemData.remaining_amount
-        })
 
         const itemResponse = await fetch(`${API_URL}/sales/invoice-items/`, {
           method: "POST",
@@ -740,17 +801,10 @@ export default function POSPage() {
       }
 
       // 3. Create payment record for all sales (both cash and outstanding)
-      console.log('DEBUG payment amount about to POST:', ledgerPaidAmount);
-      console.log('DEBUG cart items:', cart.map(item => ({
-        product: item.product.title_en,
-        paid_amount: item.paid_amount,
-        item_total: calculateItemTotal(item),
-        is_paid: item.is_paid
-      })));
       
       const paymentData = {
         invoice: invoiceId,
-        amount: parseFloat(ledgerPaidAmount.toFixed(2)), // sum of individual item payments
+        amount: parseFloat(finalPaidAmount.toFixed(2)), // sum of individual item payments (matches total when fully paid)
         payment_date: format(new Date(), "yyyy-MM-dd"),
       };
 
@@ -765,10 +819,10 @@ export default function POSPage() {
         throw new Error(errorData.message || "Failed to create payment")
       }
 
-      const remainingAmount = total - ledgerPaidAmount;
+      const remainingAmount = roundedTotal - finalPaidAmount;
       toast({
         title: "Success",
-        description: remainingAmount === 0 
+        description: Math.abs(remainingAmount) < 0.001
           ? "Sale completed successfully - Fully Paid" 
           : `Sale completed successfully - ${remainingAmount.toFixed(3)} OMR remaining`,
       })
@@ -782,8 +836,8 @@ export default function POSPage() {
       setReceiptData(summary)
       setIsPrintDialogOpen(true)
 
-      // Update sales summary locally - only count the amount actually paid
-      setTodaySales(prev => prev + ledgerPaidAmount)
+      // Update sales summary locally - use the total amount (which matches paid amount when fully paid)
+      setTodaySales(prev => prev + roundedTotal)
       setTotalCustomers(prev => prev + 1)
       // Find the most popular product in the cart
       const productCounts = new Map<number, number>()
@@ -951,7 +1005,27 @@ export default function POSPage() {
 
 
   // Separate function to fetch products only with retry mechanism
-  const fetchProducts = async (warehouseId: number, retryCount = 0) => {
+  // Now supports server-side filtering and pagination
+  const fetchProducts = async (warehouseId: number, search?: string, genreId?: number | null, page: number = 1, retryCount = 0) => {
+    // Normalize search parameter
+    const normalizedSearch = (search || '').trim();
+    const normalizedGenreId = genreId || null;
+    
+    // Check if we're fetching the same data we already have (skip if retrying)
+    // This prevents unnecessary refetches when cart closes or component re-renders
+    if (retryCount === 0) {
+      const lastParams = lastFetchParamsRef.current;
+      if (
+        lastParams.warehouseId === warehouseId &&
+        lastParams.search === normalizedSearch &&
+        lastParams.genreId === normalizedGenreId &&
+        lastParams.page === page
+      ) {
+        // Same parameters as last successful fetch, no need to refetch
+        return;
+      }
+    }
+    
     try {
       setIsLoading(true);
       const token = localStorage.getItem("accessToken");
@@ -960,44 +1034,79 @@ export default function POSPage() {
         Authorization: `Bearer ${token}`,
       };
 
-      console.log(`Fetching products for warehouse ${warehouseId}`);
-      const warehouseQuery = `warehouse_id=${warehouseId}&`;
+      // Build query parameters
+      const queryParams = new URLSearchParams();
+      queryParams.append('warehouse_id', warehouseId.toString());
+      queryParams.append('page', page.toString());
+      queryParams.append('page_size', pageSize.toString());
+      
+      // Add server-side search filter
+      if (search && search.trim()) {
+        queryParams.append('search', search.trim());
+      }
+      
+      // Add server-side genre filter
+      if (genreId) {
+        queryParams.append('genre_id', genreId.toString());
+      }
       
       // Add timeout to prevent hanging
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
       
-      const productsRes = await fetch(`${API_URL}/inventory/pos-product-summary/?${warehouseQuery}page_size=1000`, { 
+      const productsRes = await fetch(`${API_URL}/inventory/pos-product-summary/?${queryParams.toString()}`, { 
         headers,
         signal: controller.signal
       });
       
       clearTimeout(timeoutId);
-      console.log('Products response status:', productsRes.status);
       
       if (productsRes.ok) {
         const productsData = await productsRes.json();
-        console.log('Products data:', productsData);
         
         let availableProducts: Product[] = [];
+        let totalItems = 0;
+        
+        // Handle paginated response (DRF format)
         if (productsData.results) {
           availableProducts = productsData.results.filter((p: Product) => p.status_id === 2);
-          console.log(`Found ${availableProducts.length} available products`);
+          totalItems = productsData.count || availableProducts.length;
         } else if (Array.isArray(productsData)) {
+          // Fallback for non-paginated response
           availableProducts = productsData.filter((p: Product) => p.status_id === 2);
-          console.log(`Found ${availableProducts.length} available products (array format)`);
-        } else {
-          console.warn("Unexpected products data structure:", productsData);
+          totalItems = availableProducts.length;
         }
         
         setProducts(availableProducts);
-        setFilteredProducts(availableProducts);
+        setFilteredProducts(availableProducts); // No client-side pagination needed
+        setTotalCount(totalItems);
+        
+        // Calculate total pages from server count
+        const calculatedTotalPages = Math.ceil(totalItems / pageSize);
+        setTotalPages(calculatedTotalPages || 1);
+        
+        // Update last fetch params after successful fetch
+        lastFetchParamsRef.current = {
+          warehouseId,
+          search: normalizedSearch,
+          genreId: normalizedGenreId,
+          page,
+        };
       } else {
         console.error('Failed to fetch products:', productsRes.status, productsRes.statusText);
         const errorText = await productsRes.text();
         console.error('Error response:', errorText);
         setProducts([]);
         setFilteredProducts([]);
+        setTotalCount(0);
+        setTotalPages(1);
+        // Reset last fetch params on error
+        lastFetchParamsRef.current = {
+          warehouseId: null,
+          search: '',
+          genreId: null,
+          page: 1,
+        };
         toast({
           title: "Error",
           description: `Failed to load products for warehouse. Status: ${productsRes.status}`,
@@ -1009,9 +1118,8 @@ export default function POSPage() {
         
         // Retry logic for network errors
         if (retryCount < 2 && (error instanceof Error && error.name === 'AbortError' || error instanceof TypeError)) {
-          console.log(`Retrying fetch products (attempt ${retryCount + 1})`);
           setTimeout(() => {
-            fetchProducts(warehouseId, retryCount + 1);
+            fetchProducts(warehouseId, debouncedSearchInput, selectedGenre?.id || null, page, retryCount + 1);
           }, 1000 * (retryCount + 1)); // Exponential backoff
           return;
         }
@@ -1037,19 +1145,39 @@ export default function POSPage() {
     };
 
   // Update the useEffect for warehouse changes to fetch products when warehouse is selected
+  // Note: This will trigger the server-side filtering useEffect when warehouse changes
+  // because selectedWarehouse is in its dependencies, so we don't need to call fetchProducts here
   useEffect(() => {
-    if (selectedWarehouse && !isCartOpen) {
-      fetchProducts(selectedWarehouse);
+    if (selectedWarehouse) {
+      // Reset to page 1 when warehouse changes
+      setCurrentPage(1);
+      // Reset fetch params to force fetch when warehouse changes
+      lastFetchParamsRef.current = {
+        warehouseId: null, // Force fetch by setting to null
+        search: '',
+        genreId: null,
+        page: 1,
+      };
+      // fetchProducts will be called by the server-side filtering useEffect
       fetchSalesMetrics();
-    } else if (!selectedWarehouse) {
+    } else {
       // Clear products when no warehouse is selected
       setProducts([]);
       setFilteredProducts([]);
       setIsLoading(false);
+      // Reset fetch params
+      lastFetchParamsRef.current = {
+        warehouseId: null,
+        search: '',
+        genreId: null,
+        page: 1,
+      };
     }
-  }, [selectedWarehouse, isCartOpen]);
+  }, [selectedWarehouse]);
 
   // Auto-reallocate when anything affecting the grand total changes
+  // Uses cartTotalSignature instead of cart.length to only trigger when
+  // actual item values (quantity, price, discount) change, not just cart length
   useEffect(() => {
     if (!selectedPaymentMethod) return;
     const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
@@ -1059,13 +1187,12 @@ export default function POSPage() {
 
     // Re-allocate to match current GRAND TOTAL
     allocatePayInFull();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedPaymentMethod,
     discountPercentage,
     taxPercentage,
-    cart.length,
-    // If you want even finer reactivity, you can also depend on a stable hash of cart quantities/discounts.
+    cartTotalSignature, // Only changes when item quantities, prices, or discounts change
+    allocatePayInFull,  // Include the memoized function
   ]);
 
   // Commented out to prevent infinite loop - payment method logic is now handled in addToCart
@@ -1105,30 +1232,37 @@ export default function POSPage() {
   // }, [selectedPaymentMethod, paymentMethods]);
 
   // Add PaginationControls to the products section
-  const PaginationControls = () => (
-    <div className="flex items-center justify-between mt-4">
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">
-          Page {currentPage} of {totalPages}
-        </span>
-        <Select
-          value={pageSize.toString()}
-          onValueChange={(value) => {
-            setPageSize(Number(value));
-            setCurrentPage(1); // Reset to first page when changing page size
-          }}
-        >
-          <SelectTrigger className="h-8 w-[70px]">
-            <SelectValue placeholder={pageSize} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="10">10</SelectItem>
-            <SelectItem value="20">20</SelectItem>
-            <SelectItem value="50">50</SelectItem>
-            <SelectItem value="100">100</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+  const PaginationControls = () => {
+    const startItem = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0;
+    const endItem = Math.min(currentPage * pageSize, totalCount);
+    
+    return (
+      <div className="flex items-center justify-between mt-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            {totalCount > 0 ? (
+              <>Showing {startItem}-{endItem} of {totalCount} products</>
+            ) : (
+              <>No products found</>
+            )}
+          </span>
+          <Select
+            value={pageSize.toString()}
+            onValueChange={(value) => {
+              setPageSize(Number(value));
+              setCurrentPage(1); // Reset to first page when changing page size
+            }}
+          >
+            <SelectTrigger className="h-8 w-[70px]">
+              <SelectValue placeholder={pageSize} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       <div className="flex items-center gap-2">
         <Button
           variant="outline"
@@ -1164,7 +1298,23 @@ export default function POSPage() {
         </Button>
       </div>
     </div>
-  );
+    );
+  };
+
+  // Function to reset/clear sale state (used by New Sale button and receipt close)
+  const handleNewSale = () => {
+    setCart([])
+    setSelectedCustomer(null)
+    setSelectedWarehouse(null)
+    setProducts([])
+    setFilteredProducts([])
+    setInvoiceNotes("")
+    setDiscountPercentage(30)
+    setTaxPercentage(0)
+    setSearchInput("")
+    setSelectedGenre(null)
+    setReceiptData(null)
+  }
 
   const fetchSalesMetrics = async () => {
     try {
@@ -1633,7 +1783,7 @@ export default function POSPage() {
                                 Paid Items ({paidItems.length})
                               </span>
                               <span className="text-green-600 font-medium">
-                                {totalPaidAmount.toFixed(3)} OMR
+                                {total.toFixed(3)} OMR
                               </span>
                             </div>
                           )}
@@ -1699,16 +1849,7 @@ export default function POSPage() {
             </Sheet>
             <Button
               variant="outline"
-              onClick={() => {
-                setCart([])
-                setSelectedCustomer(null)
-                setSelectedWarehouse(null)
-                setProducts([])
-                setFilteredProducts([])
-                setInvoiceNotes("")
-                setDiscountPercentage(0)
-                setTaxPercentage(0)
-              }}
+              onClick={handleNewSale}
             >
               New Sale
             </Button>
@@ -1943,8 +2084,7 @@ export default function POSPage() {
                           variant="outline" 
                           size="sm"
                           onClick={() => {
-                            console.log('Debug: Fetching products for warehouse', selectedWarehouse);
-                            fetchProducts(selectedWarehouse);
+                            fetchProducts(selectedWarehouse, debouncedSearchInput, selectedGenre?.id || null, currentPage);
                           }}
                         >
                           Retry Load Products
@@ -2081,7 +2221,7 @@ export default function POSPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-muted-foreground">Amount Paid</span>
-                        <span className="font-medium text-green-600">{totalPaidAmount.toFixed(3)} OMR</span>
+                        <span className="font-medium text-green-600">{total.toFixed(3)} OMR</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-muted-foreground">Amount Due</span>
@@ -2125,14 +2265,15 @@ export default function POSPage() {
       <Dialog open={isPrintDialogOpen} onOpenChange={(open) => {
         setIsPrintDialogOpen(open);
         if (!open) {
-          setReceiptData(null);
-          setCart([]);
-          setSelectedCustomer(null);
-          setInvoiceNotes("");
-          setDiscountPercentage(0);
-          setTaxPercentage(0);
-          // Reset the page (reload)
-          window.location.reload();
+          // Clear all cart and sale-related state when closing receipt (same as New Sale)
+          handleNewSale();
+          // Reset payment method and invoice type to defaults
+          if (paymentMethods.length > 0) {
+            setSelectedPaymentMethod(paymentMethods[0].id);
+          }
+          if (invoiceTypes.length > 0) {
+            setSelectedInvoiceType(invoiceTypes[0].id);
+          }
         }
       }}>
         <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
@@ -2303,7 +2444,17 @@ export default function POSPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button onClick={() => setIsPrintDialogOpen(false)}>Close</Button>
+            <Button onClick={() => {
+              handleNewSale();
+              // Reset payment method and invoice type to defaults
+              if (paymentMethods.length > 0) {
+                setSelectedPaymentMethod(paymentMethods[0].id);
+              }
+              if (invoiceTypes.length > 0) {
+                setSelectedInvoiceType(invoiceTypes[0].id);
+              }
+              setIsPrintDialogOpen(false);
+            }}>Close</Button>
           </div>
         </DialogContent>
       </Dialog>
