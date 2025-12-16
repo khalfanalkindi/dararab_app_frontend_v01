@@ -49,6 +49,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Checkbox } from "@/components/ui/checkbox"
+import { X } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 
 type Product = {
   id: number
@@ -102,10 +105,22 @@ export default function InventoryManagementPage() {
     warehouse_id: undefined,
     quantity: 0,
   })
+  const [selectedProducts, setSelectedProducts] = useState<number[]>([]) // Array of product IDs
+  const [productSearchOpen, setProductSearchOpen] = useState(false)
+  
+  // Manage Inventories Modal States
+  const [isManageOpen, setIsManageOpen] = useState<boolean>(false)
+  const [manageWarehouseId, setManageWarehouseId] = useState<number | null>(null)
+  const [warehouseInventories, setWarehouseInventories] = useState<Inventory[]>([])
+  const [selectedInventoryIds, setSelectedInventoryIds] = useState<number[]>([])
+  const [updateQuantity, setUpdateQuantity] = useState<number>(0)
+  const [isManaging, setIsManaging] = useState<boolean>(false)
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<boolean>(false)
 
   const [alertMsg, setAlertMsg] = useState<{ type: "success" | "error" | "warning" | null; message: string }>({ type: null, message: "" })
   const [draftQtyByKey, setDraftQtyByKey] = useState<Record<string, number>>({})
   const [isSavingAll, setIsSavingAll] = useState<boolean>(false)
+  const [isCreating, setIsCreating] = useState<boolean>(false)
 
   const authHeaders = useMemo(
     () => ({
@@ -212,33 +227,116 @@ export default function InventoryManagementPage() {
   }
 
   const handleCreate = async () => {
+    // Prevent double-clicks
+    if (isCreating) return
+    
     try {
-      const body = {
-        product_id: Number(newInventory.product_id),
-        warehouse_id: Number(newInventory.warehouse_id),
-        quantity: Number(newInventory.quantity ?? 0),
+      setIsCreating(true)
+      
+      // Validate warehouse and quantity
+      if (!newInventory.warehouse_id) {
+        toast({ title: "Error", description: "Please select a warehouse", variant: "destructive" })
+        setIsCreating(false)
+        return
       }
-      const res = await fetch(`${API_URL}/inventory/inventory/`, {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify(body),
-      })
-      const ct = res.headers.get("content-type") || ""
-      if (!res.ok || !ct.includes("application/json")) {
-        const text = await res.text()
-        throw new Error(`Create failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
-      }
-      const data = await res.json()
 
-      setIsAddOpen(false)
-      setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
-      toast({ title: "Inventory saved", description: "Entry created/updated successfully" })
-      showAlert("success", "Inventory saved successfully")
-      await fetchInventory()
+      const warehouseId = Number(newInventory.warehouse_id)
+      const quantity = Number(newInventory.quantity ?? 0)
+
+      // If multiple products selected, use bulk endpoint
+      if (selectedProducts.length > 0) {
+        const bulkData = selectedProducts.map((productId) => ({
+          product_id: productId,
+          warehouse_id: warehouseId,
+          quantity: quantity,
+        }))
+
+        const res = await fetch(`${API_URL}/inventory/inventory/bulk/`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify(bulkData),
+        })
+        const ct = res.headers.get("content-type") || ""
+        if (!res.ok) {
+          const text = await res.text()
+          let errorMessage = `Bulk create failed (${res.status})`
+          try {
+            const errorData = JSON.parse(text)
+            errorMessage = errorData.detail || errorData.message || errorMessage
+            if (errorData.errors) {
+              errorMessage += `: ${JSON.stringify(errorData.errors)}`
+            }
+          } catch {
+            errorMessage += `: ${text.slice(0, 200)}`
+          }
+          throw new Error(errorMessage)
+        }
+        if (!ct.includes("application/json")) {
+          const text = await res.text()
+          throw new Error(`Bulk create failed: Invalid response format - ${text.slice(0, 200)}`)
+        }
+        const data = await res.json()
+        
+        // Count created vs updated
+        const results = data.results || data
+        const createdCount = results.filter((r: any) => r._action === 'created').length
+        const updatedCount = results.filter((r: any) => r._action === 'updated').length
+        
+        let message = ""
+        if (createdCount > 0 && updatedCount > 0) {
+          message = `Created ${createdCount} new inventory ${createdCount === 1 ? 'entry' : 'entries'} and updated ${updatedCount} existing ${updatedCount === 1 ? 'entry' : 'entries'}`
+        } else if (createdCount > 0) {
+          message = `Successfully created ${createdCount} inventory ${createdCount === 1 ? 'entry' : 'entries'}`
+        } else if (updatedCount > 0) {
+          message = `Successfully updated ${updatedCount} inventory ${updatedCount === 1 ? 'entry' : 'entries'} (quantity replaced)`
+        } else {
+          message = `Processed ${results.length} inventory ${results.length === 1 ? 'entry' : 'entries'}`
+        }
+
+        setIsAddOpen(false)
+        setSelectedProducts([])
+        setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+        setIsCreating(false)
+        toast({ 
+          title: "Inventory saved", 
+          description: message
+        })
+        showAlert("success", message)
+        await fetchInventory()
+      } else if (newInventory.product_id) {
+        // Single product (backward compatibility)
+        const body = {
+          product_id: Number(newInventory.product_id),
+          warehouse_id: warehouseId,
+          quantity: quantity,
+        }
+        const res = await fetch(`${API_URL}/inventory/inventory/`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify(body),
+        })
+        const ct = res.headers.get("content-type") || ""
+        if (!res.ok || !ct.includes("application/json")) {
+          const text = await res.text()
+          throw new Error(`Create failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
+        }
+        const data = await res.json()
+
+        setIsAddOpen(false)
+        setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+        setIsCreating(false)
+        toast({ title: "Inventory saved", description: "Entry created/updated successfully" })
+        showAlert("success", "Inventory saved successfully")
+        await fetchInventory()
+      } else {
+        toast({ title: "Error", description: "Please select at least one product", variant: "destructive" })
+        setIsCreating(false)
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to save inventory"
       toast({ title: "Error", description: msg, variant: "destructive" })
       showAlert("error", msg)
+      setIsCreating(false)
     }
   }
 
@@ -306,6 +404,131 @@ export default function InventoryManagementPage() {
     setIsDeleteOpen(true)
   }
 
+  // Fetch inventories for a specific warehouse
+  const fetchWarehouseInventories = async (warehouseId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/inventory/inventory/?warehouse_id=${warehouseId}`, { headers: authHeaders })
+      const ct = res.headers.get("content-type") || ""
+      if (!res.ok || !ct.includes("application/json")) {
+        const text = await res.text()
+        throw new Error(`Failed to fetch inventories (${res.status}): ${text.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      const list: Inventory[] = data?.results ?? data ?? []
+      // Only show inventories with quantity > 0
+      setWarehouseInventories(list.filter((inv: Inventory) => (inv.quantity || 0) > 0))
+    } catch (e) {
+      console.error("Fetch warehouse inventories failed", e)
+      toast({ title: "Error", description: "Failed to load inventories", variant: "destructive" })
+      setWarehouseInventories([])
+    }
+  }
+
+  // Handle warehouse selection in manage modal
+  const handleManageWarehouseChange = (warehouseId: string) => {
+    const wid = warehouseId === "all" ? null : Number(warehouseId)
+    setManageWarehouseId(wid)
+    setSelectedInventoryIds([])
+    setUpdateQuantity(0)
+    if (wid) {
+      void fetchWarehouseInventories(wid)
+    } else {
+      setWarehouseInventories([])
+    }
+  }
+
+  // Bulk update inventories (add quantity)
+  const handleBulkUpdate = async () => {
+    if (!manageWarehouseId || selectedInventoryIds.length === 0 || updateQuantity === 0) {
+      toast({ title: "Error", description: "Please select warehouse, inventories, and enter quantity", variant: "destructive" })
+      return
+    }
+
+    setIsManaging(true)
+    try {
+      const updates = selectedInventoryIds.map((invId) => {
+        const inv = warehouseInventories.find((i) => i.id === invId)
+        if (!inv) return null
+        const currentQty = Number(inv.quantity) || 0
+        return {
+          id: invId,
+          product_id: typeof inv.product === "number" ? inv.product : inv.product?.id,
+          warehouse_id: manageWarehouseId,
+          quantity: currentQty + Number(updateQuantity), // Add to existing quantity
+        }
+      }).filter(Boolean)
+
+      const res = await fetch(`${API_URL}/inventory/inventory/bulk/`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify(updates),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        let errorMessage = `Bulk update failed (${res.status})`
+        try {
+          const errorData = JSON.parse(text)
+          errorMessage = errorData.detail || errorData.message || errorMessage
+        } catch {
+          errorMessage += `: ${text.slice(0, 200)}`
+        }
+        throw new Error(errorMessage)
+      }
+
+      toast({ 
+        title: "Success", 
+        description: `Updated ${selectedInventoryIds.length} inventory ${selectedInventoryIds.length === 1 ? 'item' : 'items'}` 
+      })
+      setSelectedInventoryIds([])
+      setUpdateQuantity(0)
+      await fetchWarehouseInventories(manageWarehouseId)
+      await fetchInventory() // Refresh main inventory list
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to update inventories"
+      toast({ title: "Error", description: msg, variant: "destructive" })
+    } finally {
+      setIsManaging(false)
+    }
+  }
+
+  // Bulk delete inventories
+  const handleBulkDelete = async () => {
+    if (!manageWarehouseId || selectedInventoryIds.length === 0) {
+      return
+    }
+
+    setIsManaging(true)
+    try {
+      // Delete each inventory item
+      for (const invId of selectedInventoryIds) {
+        const res = await fetch(`${API_URL}/inventory/inventory/${invId}/delete/`, {
+          method: "DELETE",
+          headers: authHeaders,
+        })
+        if (!res.ok) {
+          const text = await res.text().catch(() => "")
+          throw new Error(`Delete failed (${res.status}): ${text.slice(0, 200)}`)
+        }
+      }
+
+      toast({ 
+        title: "Success", 
+        description: `Deleted ${selectedInventoryIds.length} inventory ${selectedInventoryIds.length === 1 ? 'item' : 'items'}`,
+        variant: "destructive"
+      })
+      setSelectedInventoryIds([])
+      setIsDeleteConfirmOpen(false)
+      await fetchWarehouseInventories(manageWarehouseId)
+      await fetchInventory() // Refresh main inventory list
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to delete inventories"
+      toast({ title: "Error", description: msg, variant: "destructive" })
+    } finally {
+      setIsManaging(false)
+    }
+  }
+
   const productOptions = useMemo(
     () => products.map((p) => ({ id: p.id, name: p.title_en || (p as any).name || String(p.id) })),
     [products]
@@ -316,7 +539,7 @@ export default function InventoryManagementPage() {
     [warehouses]
   )
 
-  // Build merged rows so that a selected warehouse shows all products (zero quantity when missing)
+  // Build merged rows - when warehouse is selected, show only products with inventory (quantity > 0)
   const mergedRows = useMemo(() => {
     // Helper to normalize ids from item
     const extractIds = (inv: any) => {
@@ -327,73 +550,41 @@ export default function InventoryManagementPage() {
 
     if (!hasRequested) return []
 
-    // If warehouse is selected, show all products for that warehouse
+    // If warehouse is selected, show only products that have inventory (quantity > 0) in that warehouse
     if (filterWarehouseId && !filterProductId) {
       const wid = Number(filterWarehouseId)
-      const warehouseObj = warehouses.find((w) => w.id === wid)
       const existingByProduct = new Map<number, any>()
       items.forEach((inv: any) => {
         const { productId, warehouseId } = extractIds(inv)
         if (warehouseId === wid && productId) existingByProduct.set(productId, inv)
       })
-      return products.map((p) => {
-        const found = existingByProduct.get(p.id)
-        if (found) return found
-        // Synthesize zero-qty row
-        return {
-          id: 0,
-          quantity: 0,
-          product: { id: p.id, title_en: (p as any).title_en, name: (p as any).name },
-          warehouse: warehouseObj ? { id: warehouseObj.id, name_en: (warehouseObj as any).name_en, name: (warehouseObj as any).name } : { id: wid },
-          product_id: p.id,
-          warehouse_id: wid,
-          updated_at: undefined,
-        } as any
-      })
+      // Only return products that have inventory (quantity > 0) in the selected warehouse
+      return products
+        .map((p) => existingByProduct.get(p.id))
+        .filter((inv) => inv && inv.quantity > 0) // Filter out null/undefined and zero quantity items
     }
 
-    // If product is selected, show across all warehouses
+    // If product is selected, show only warehouses where the product has inventory (quantity > 0)
     if (filterProductId && !filterWarehouseId) {
       const pid = Number(filterProductId)
-      const productObj = products.find((p) => p.id === pid)
       const existingByWarehouse = new Map<number, any>()
       items.forEach((inv: any) => {
         const { productId, warehouseId } = extractIds(inv)
         if (productId === pid && warehouseId) existingByWarehouse.set(warehouseId, inv)
       })
-      return warehouses.map((w) => {
-        const found = existingByWarehouse.get(w.id)
-        if (found) return found
-        return {
-          id: 0,
-          quantity: 0,
-          product: productObj ? { id: productObj.id, title_en: (productObj as any).title_en, name: (productObj as any).name } : { id: pid },
-          warehouse: { id: w.id, name_en: (w as any).name_en, name: (w as any).name },
-          product_id: pid,
-          warehouse_id: w.id,
-          updated_at: undefined,
-        } as any
-      })
+      // Only return warehouses where the product has inventory (quantity > 0)
+      return warehouses
+        .map((w) => existingByWarehouse.get(w.id))
+        .filter((inv) => inv && inv.quantity > 0) // Filter out null/undefined and zero quantity items
     }
 
-    // If both filters set, keep API list as-is (at most one row) or synthesize if empty
+    // If both filters set, only return if there's actual inventory (quantity > 0)
     if (filterProductId && filterWarehouseId) {
-      if (items.length > 0) return items
-      const pid = Number(filterProductId)
-      const wid = Number(filterWarehouseId)
-      const productObj = products.find((p) => p.id === pid)
-      const warehouseObj = warehouses.find((w) => w.id === wid)
-      return [
-        {
-          id: 0,
-          quantity: 0,
-          product: productObj ? { id: productObj.id, title_en: (productObj as any).title_en, name: (productObj as any).name } : { id: pid },
-          warehouse: warehouseObj ? { id: warehouseObj.id, name_en: (warehouseObj as any).name_en, name: (warehouseObj as any).name } : { id: wid },
-          product_id: pid,
-          warehouse_id: wid,
-          updated_at: undefined,
-        } as any,
-      ]
+      // Only return items that have inventory (quantity > 0)
+      return items.filter((inv: any) => {
+        const qty = typeof inv.quantity === "number" ? inv.quantity : 0
+        return qty > 0
+      })
     }
 
     // Default: no synthesis
@@ -596,6 +787,269 @@ export default function InventoryManagementPage() {
     )
   }
 
+  // Multi-select component for products
+  const MultiSelectProducts = ({
+    selectedIds,
+    onSelectionChange,
+    items,
+    placeholder,
+    onOpen,
+  }: {
+    selectedIds: number[]
+    onSelectionChange: (ids: number[]) => void
+    items: { id: number; name: string }[]
+    placeholder: string
+    onOpen?: () => void
+  }) => {
+    const [open, setOpen] = useState(false)
+    const [searchQuery, setSearchQuery] = useState("")
+
+    const toggleProduct = (productId: number) => {
+      if (selectedIds.includes(productId)) {
+        onSelectionChange(selectedIds.filter((id) => id !== productId))
+      } else {
+        onSelectionChange([...selectedIds, productId])
+      }
+    }
+
+    const filteredItems = items.filter((item) =>
+      item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+
+    const selectedItems = items.filter((item) => selectedIds.includes(item.id))
+
+    return (
+      <div className="space-y-2">
+        <Popover
+          open={open}
+          onOpenChange={(next) => {
+            setOpen(next)
+            if (next && onOpen) onOpen()
+            if (!next) setSearchQuery("")
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button variant="outline" role="combobox" aria-expanded={open} className="justify-between w-full">
+              {selectedIds.length > 0
+                ? `${selectedIds.length} product${selectedIds.length === 1 ? "" : "s"} selected`
+                : placeholder}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent 
+            className="p-0 w-[400px] max-h-[400px] flex flex-col overflow-hidden"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => {
+              // Allow closing with Escape key
+              setOpen(false)
+            }}
+          >
+            <Command shouldFilter={false} className="flex flex-col h-full">
+              <div className="flex-shrink-0 border-b">
+                <CommandInput
+                  placeholder="Search products..."
+                  value={searchQuery}
+                  onValueChange={setSearchQuery}
+                />
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <CommandList className="h-full overflow-y-auto overflow-x-hidden">
+                  <CommandEmpty>No products found.</CommandEmpty>
+                  <CommandGroup>
+                  {filteredItems.map((item) => {
+                    const isSelected = selectedIds.includes(item.id)
+                    return (
+                      <CommandItem
+                        key={item.id}
+                        value={String(item.id)}
+                        onSelect={(value) => {
+                          // Prevent default closing behavior - just toggle selection
+                          // The popover will stay open for multi-select
+                          toggleProduct(item.id)
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <div 
+                          className="flex items-center space-x-2 w-full"
+                          onClick={(e) => {
+                            // Handle click on the row - toggle selection
+                            e.stopPropagation()
+                            toggleProduct(item.id)
+                          }}
+                        >
+                          <Checkbox
+                            checked={isSelected}
+                            onChange={() => {
+                              // Toggle when checkbox changes
+                              toggleProduct(item.id)
+                            }}
+                            onClick={(e) => {
+                              // Prevent event bubbling
+                              e.stopPropagation()
+                            }}
+                          />
+                          <span className="flex-1">{item.name}</span>
+                        </div>
+                      </CommandItem>
+                    )
+                  })}
+                  </CommandGroup>
+                </CommandList>
+              </div>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {selectedItems.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {selectedItems.map((item) => (
+              <Badge key={item.id} variant="secondary" className="flex items-center gap-1">
+                {item.name}
+                <button
+                  type="button"
+                  onClick={() => toggleProduct(item.id)}
+                  className="ml-1 rounded-full hover:bg-secondary-foreground/20 p-0.5"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Multi-select component for inventories (shows product name with quantity)
+  const MultiSelectInventories = ({
+    selectedIds,
+    onSelectionChange,
+    items,
+    placeholder,
+    disabled,
+  }: {
+    selectedIds: number[]
+    onSelectionChange: (ids: number[]) => void
+    items: { id: number; name: string; quantity: number }[]
+    placeholder: string
+    disabled?: boolean
+  }) => {
+    const [open, setOpen] = useState(false)
+    const [searchQuery, setSearchQuery] = useState("")
+
+    const toggleInventory = (invId: number) => {
+      if (selectedIds.includes(invId)) {
+        onSelectionChange(selectedIds.filter((id) => id !== invId))
+      } else {
+        onSelectionChange([...selectedIds, invId])
+      }
+    }
+
+    const filteredItems = items.filter((item) =>
+      item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+
+    const selectedItems = items.filter((item) => selectedIds.includes(item.id))
+
+    return (
+      <div className="space-y-2">
+        <Popover
+          open={open && !disabled}
+          onOpenChange={(next) => {
+            if (!disabled) {
+              setOpen(next)
+              if (!next) setSearchQuery("")
+            }
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button 
+              variant="outline" 
+              role="combobox" 
+              aria-expanded={open} 
+              className="justify-between w-full"
+              disabled={disabled}
+            >
+              {selectedIds.length > 0
+                ? `${selectedIds.length} product${selectedIds.length === 1 ? "" : "s"} selected`
+                : placeholder}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent 
+            className="p-0 w-[400px] max-h-[400px] flex flex-col overflow-hidden"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => {
+              setOpen(false)
+            }}
+          >
+            <Command shouldFilter={false} className="flex flex-col h-full">
+              <div className="flex-shrink-0 border-b">
+                <CommandInput
+                  placeholder="Search products..."
+                  value={searchQuery}
+                  onValueChange={setSearchQuery}
+                />
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <CommandList className="h-full overflow-y-auto overflow-x-hidden">
+                  <CommandEmpty>No products found.</CommandEmpty>
+                  <CommandGroup>
+                    {filteredItems.map((item) => {
+                      const isSelected = selectedIds.includes(item.id)
+                      return (
+                        <CommandItem
+                          key={item.id}
+                          value={String(item.id)}
+                          onSelect={(value) => {
+                            toggleInventory(item.id)
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <div 
+                            className="flex items-center space-x-2 w-full"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleInventory(item.id)
+                            }}
+                          >
+                            <Checkbox
+                              checked={isSelected}
+                              onChange={() => {
+                                toggleInventory(item.id)
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                              }}
+                            />
+                            <span className="flex-1">{item.name}</span>
+                          </div>
+                        </CommandItem>
+                      )
+                    })}
+                  </CommandGroup>
+                </CommandList>
+              </div>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {selectedItems.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {selectedItems.map((item) => (
+              <Badge key={item.id} variant="secondary" className="flex items-center gap-1">
+                {item.name}
+                <button
+                  type="button"
+                  onClick={() => toggleInventory(item.id)}
+                  className="ml-1 rounded-full hover:bg-secondary-foreground/20 p-0.5"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -634,29 +1088,185 @@ export default function InventoryManagementPage() {
                 <h2 className="text-xl font-semibold">Inventory Management</h2>
                 <p className="text-sm text-muted-foreground">Manage product stock per warehouse.</p>
               </div>
-              <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" className="bg-primary text-primary-foreground">
-                    <PlusCircle className="h-4 w-4 mr-2" /> Add Inventory
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
+              <div className="flex gap-2">
+                <Dialog 
+                  open={isAddOpen} 
+                  onOpenChange={(open) => {
+                    if (!open && !isCreating) {
+                      // Only allow closing if not currently creating
+                      setIsAddOpen(false)
+                      // Reset form when closing
+                      setSelectedProducts([])
+                      setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+                      setIsCreating(false)
+                    } else if (open) {
+                      setIsAddOpen(true)
+                    }
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button size="sm" className="bg-primary text-primary-foreground">
+                      <PlusCircle className="h-4 w-4 mr-2" /> Add Inventory
+                    </Button>
+                  </DialogTrigger>
+                </Dialog>
+                <Dialog open={isManageOpen} onOpenChange={(open) => {
+                  setIsManageOpen(open)
+                  if (!open) {
+                    setManageWarehouseId(null)
+                    setWarehouseInventories([])
+                    setSelectedInventoryIds([])
+                    setUpdateQuantity(0)
+                  }
+                }}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      Manage Inventories
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Manage Inventories (Bulk)</DialogTitle>
+                      <DialogDescription>
+                        Select a warehouse to view and manage all product inventories. You can update quantities or delete selected items.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="grid gap-2">
+                        <Label>Warehouse *</Label>
+                        <SearchableCombobox
+                          value={manageWarehouseId?.toString() || "all"}
+                          onChange={handleManageWarehouseChange}
+                          items={warehouseOptions}
+                          placeholder="Select warehouse"
+                        />
+                      </div>
+
+                      {manageWarehouseId && (
+                        <>
+                          <div className="grid gap-2">
+                            <Label>Products with Inventory (Select Multiple)</Label>
+                            <MultiSelectInventories
+                              selectedIds={selectedInventoryIds}
+                              onSelectionChange={setSelectedInventoryIds}
+                              items={warehouseInventories.map((inv) => ({
+                                id: inv.id,
+                                name: `${getInventoryProductLabel(inv)} (${inv.quantity})`,
+                                quantity: inv.quantity || 0,
+                              }))}
+                              placeholder="Select products..."
+                              disabled={!manageWarehouseId}
+                            />
+                            {selectedInventoryIds.length > 0 && (
+                              <p className="text-xs text-muted-foreground">
+                                {selectedInventoryIds.length} product{selectedInventoryIds.length === 1 ? "" : "s"} selected
+                              </p>
+                            )}
+                          </div>
+
+                          {selectedInventoryIds.length > 0 && (
+                            <>
+                              <div className="grid gap-2">
+                                <Label>Quantity to Add *</Label>
+                                <Input 
+                                  type="number" 
+                                  value={updateQuantity} 
+                                  onChange={(e) => setUpdateQuantity(Number(e.target.value || 0))} 
+                                  min="0"
+                                  step="1"
+                                  placeholder="Enter quantity to add"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  This quantity will be added to the current inventory for all selected products
+                                </p>
+                              </div>
+
+                              <div className="flex gap-2 pt-2">
+                                <Button 
+                                  onClick={handleBulkUpdate}
+                                  disabled={isManaging || updateQuantity === 0}
+                                  className="flex-1"
+                                >
+                                  {isManaging ? "Updating..." : "Update Selected"}
+                                </Button>
+                                <Button 
+                                  variant="destructive"
+                                  onClick={() => setIsDeleteConfirmOpen(true)}
+                                  disabled={isManaging}
+                                  className="flex-1"
+                                >
+                                  Delete Selected
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+
+                      {!manageWarehouseId && (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          Please select a warehouse to view available inventories
+                        </p>
+                      )}
+                    </div>
+                    <DialogFooter>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => {
+                          setIsManageOpen(false)
+                          setManageWarehouseId(null)
+                          setWarehouseInventories([])
+                          setSelectedInventoryIds([])
+                          setUpdateQuantity(0)
+                        }}
+                        disabled={isManaging}
+                      >
+                        Close
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <Dialog 
+                open={isAddOpen} 
+                onOpenChange={(open) => {
+                  if (!open && !isCreating) {
+                    // Only allow closing if not currently creating
+                    setIsAddOpen(false)
+                    // Reset form when closing
+                    setSelectedProducts([])
+                    setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+                    setIsCreating(false)
+                  } else if (open) {
+                    setIsAddOpen(true)
+                  }
+                }}
+              >
+                <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Add / Upsert Inventory</DialogTitle>
-                    <DialogDescription>Create or update inventory by product and warehouse.</DialogDescription>
+                    <DialogTitle>Add Inventory (Bulk)</DialogTitle>
+                    <DialogDescription>
+                      Select multiple products and set inventory quantity for a warehouse. All selected products will be created with the same quantity.
+                    </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 py-4">
                     <div className="grid gap-2">
-                      <Label>Product</Label>
-                      <SearchableCombobox
-                        value={newInventory.product_id?.toString()}
-                        onChange={(v) => setNewInventory((s) => ({ ...s, product_id: Number(v) }))}
+                      <Label>Products (Select Multiple)</Label>
+                      <MultiSelectProducts
+                        selectedIds={selectedProducts}
+                        onSelectionChange={setSelectedProducts}
                         items={productOptions}
-                        placeholder="Select product"
+                        placeholder="Select products..."
+                        onOpen={() => { if (!products.length) void fetchLookups() }}
                       />
+                      {selectedProducts.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          {selectedProducts.length} product{selectedProducts.length === 1 ? "" : "s"} selected
+                        </p>
+                      )}
                     </div>
                     <div className="grid gap-2">
-                      <Label>Warehouse</Label>
+                      <Label>Warehouse *</Label>
                       <SearchableCombobox
                         value={newInventory.warehouse_id?.toString()}
                         onChange={(v) => setNewInventory((s) => ({ ...s, warehouse_id: Number(v) }))}
@@ -665,23 +1275,47 @@ export default function InventoryManagementPage() {
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label>Quantity</Label>
-                      <Input type="number" value={newInventory.quantity ?? 0} onChange={(e) => setNewInventory((s) => ({ ...s, quantity: Number(e.target.value || 0) }))} />
+                      <Label>Quantity *</Label>
+                      <Input 
+                        type="number" 
+                        value={newInventory.quantity ?? 0} 
+                        onChange={(e) => setNewInventory((s) => ({ ...s, quantity: Number(e.target.value || 0) }))} 
+                        min="0"
+                        step="1"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        This quantity will be applied to all selected products
+                      </p>
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsAddOpen(false)}>
+                    <Button 
+                      variant="outline" 
+                      disabled={isCreating}
+                      onClick={() => {
+                        setIsAddOpen(false)
+                        setSelectedProducts([])
+                        setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+                        setIsCreating(false)
+                      }}
+                    >
                       Cancel
                     </Button>
-                    <Button onClick={handleCreate}>Save</Button>
+                    <Button 
+                      onClick={handleCreate}
+                      disabled={isCreating || selectedProducts.length === 0 || !newInventory.warehouse_id}
+                    >
+                      {isCreating ? "Creating..." : `Create ${selectedProducts.length > 0 ? `${selectedProducts.length} ` : ""}Inventory`}
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
             </div>
 
             <div className="border rounded-md">
-              <div className="bg-muted p-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                <div className="grid gap-2 md:grid-cols-3 md:gap-4 w-full">
+              {/* Search Section */}
+              <div className="bg-muted p-4">
+                <div className="grid gap-4 md:grid-cols-4 md:gap-4">
                   <div className="grid gap-2">
                     <Label>Filter by Product</Label>
                     <SearchableCombobox
@@ -704,24 +1338,30 @@ export default function InventoryManagementPage() {
                       onOpen={() => { if (!warehouses.length) void fetchLookups() }}
                     />
                   </div>
-                  <div className="flex gap-2 md:justify-end">
-                    <Button variant="outline" disabled={isSavingAll} onClick={() => { setFilterProductId(""); setFilterWarehouseId(""); setHasRequested(false); setItems([]); setCount(0) }}>
-                      Reset
-                    </Button>
+                  <div className="flex gap-2 items-end">
                     <Button disabled={isSavingAll} onClick={() => { 
                       if (!filterProductId && !filterWarehouseId) { 
-                        toast({ title: "Select a filter", description: "Choose product or warehouse, then click Apply." })
+                        toast({ title: "Select a filter", description: "Choose product or warehouse, then click Search." })
                         return
                       }
                       setHasRequested(true)
                       void fetchInventory()
-                    }}>Apply</Button>
-                    <Button variant="default" disabled={!hasRequested || isLoading || isSavingAll} onClick={() => void saveAll()}>
-                      {isSavingAll ? "Saving..." : "Save All Changes"}
+                    }}>Search</Button>
+                    <Button variant="outline" disabled={isSavingAll} onClick={() => { setFilterProductId(""); setFilterWarehouseId(""); setHasRequested(false); setItems([]); setCount(0) }}>
+                      Reset
                     </Button>
                   </div>
                 </div>
               </div>
+
+              {/* Save All Changes Section - Separated */}
+              {hasRequested && (
+                <div className="border-t bg-background px-4 py-3 flex justify-end">
+                  <Button variant="default" disabled={isLoading || isSavingAll} onClick={() => void saveAll()}>
+                    {isSavingAll ? "Saving..." : "Save All Changes"}
+                  </Button>
+                </div>
+              )}
 
               <div className="p-4">
                 <div className="overflow-x-auto">
@@ -739,7 +1379,7 @@ export default function InventoryManagementPage() {
                       {!hasRequested ? (
                         <tr>
                           <td colSpan={5} className="py-8 text-center text-muted-foreground">
-                            Select product or warehouse and click Apply to load inventory
+                            Select product or warehouse and click Search to load inventory
                           </td>
                         </tr>
                       ) : isLoading ? (
@@ -760,17 +1400,12 @@ export default function InventoryManagementPage() {
                             <td className="p-2 font-medium">{getInventoryProductLabel(inv)}</td>
                             <td className="p-2">{getInventoryWarehouseLabel(inv)}</td>
                             <td className="p-2">
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  type="number"
-                                  className="h-8 w-24"
-                                  value={getDraftQty(inv)}
-                                  onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
-                                />
-                                <Button size="sm" variant="outline" disabled={isSavingAll} onClick={() => void saveRow(inv)}>
-                                  Save
-                                </Button>
-                              </div>
+                              <Input
+                                type="number"
+                                className="h-8 w-24"
+                                value={getDraftQty(inv)}
+                                onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
+                              />
                             </td>
                             <td className="p-2">{formatDateUTC(inv.updated_at)}</td>
                             <td className="p-2 text-right">
@@ -875,6 +1510,37 @@ export default function InventoryManagementPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You are about to delete {selectedInventoryIds.length} inventory {selectedInventoryIds.length === 1 ? 'item' : 'items'}. This action cannot be undone.
+              <div className="mt-4">
+                <Label htmlFor="confirm-bulk-delete">Type "DELETE" to confirm</Label>
+                <Input 
+                  id="confirm-bulk-delete" 
+                  value={deleteConfirm} 
+                  onChange={(e) => setDeleteConfirm(e.target.value)} 
+                  className="mt-2" 
+                />
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleBulkDelete} 
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90" 
+              disabled={deleteConfirm !== "DELETE" || isManaging}
+            >
+              Delete {selectedInventoryIds.length} {selectedInventoryIds.length === 1 ? 'Item' : 'Items'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
