@@ -40,18 +40,25 @@ export function BookDetailsDialog({
     return null
   }
 
+  // Get status name for consistent color mapping
+  const statusName = selectedBook.status ? getStatusName(selectedBook.status) : "Unknown"
+  
   const statusClassName =
-    selectedBook.status?.id === 17
+    statusName === "Available"
       ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
-      : selectedBook.status?.id === 2
+      : statusName === "unavailable" || statusName.toLowerCase() === "unavailable"
         ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
         : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
 
-  const getPrintRunStatusClass = (statusId?: number) => {
-    if (statusId === 41) {
+  const getPrintRunStatusClass = (statusDisplayName?: string) => {
+    if (!statusDisplayName) {
+      return "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
+    }
+    const statusLower = statusDisplayName.toLowerCase()
+    if (statusLower === "available" || statusLower.includes("available")) {
       return "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
     }
-    if (statusId === 2) {
+    if (statusLower === "unavailable" || statusLower.includes("unavailable")) {
       return "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
     }
     return "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
@@ -179,7 +186,7 @@ export function BookDetailsDialog({
                       <tr className="text-sm border-b">
                         <th className="text-left font-medium p-3">Print Run Number</th>
                         <th className="text-left font-medium p-3">Price ($)</th>
-                        <th className="text-left font-medium p-3">Print Cost ($)</th>
+                        <th className="text-left font-medium p-3">Price OMR (OMR)</th>
                         <th className="text-left font-medium p-3">Status</th>
                         <th className="text-left font-medium p-3">Published Date</th>
                       </tr>
@@ -195,10 +202,10 @@ export function BookDetailsDialog({
                               <span className="font-medium">${printRun.price}</span>
                             </td>
                             <td className="p-3">
-                              <span className="font-medium">${printRun.print_cost}</span>
+                              <span className="font-medium">OMR{printRun.price_omr}</span>
                             </td>
                             <td className="p-3">
-                              <Badge className={getPrintRunStatusClass(printRun.status?.id)}>
+                              <Badge className={getPrintRunStatusClass(printRun.status?.display_name_en)}>
                                 {printRun.status?.display_name_en || "Not set"}
                               </Badge>
                             </td>

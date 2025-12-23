@@ -455,7 +455,7 @@ export function EditBookDialog({
                         product: selectedBook.id || 0,
                         edition_number: selectedBook.print_runs.length + 1,
                         price: 0,
-                        print_cost: 0,
+                        price_omr: 0,
                         status: null,
                         notes: ""
                       };
@@ -480,7 +480,7 @@ export function EditBookDialog({
                           <tr className="text-sm border-b">
                             <th className="text-left font-medium p-3">Print Run Number</th>
                             <th className="text-left font-medium p-3">Price ($)</th>
-                            <th className="text-left font-medium p-3">Print Cost ($)</th>
+                            <th className="text-left font-medium p-3">Price OMR (OMR)</th>
                             <th className="text-left font-medium p-3">Status</th>
                             <th className="text-left font-medium p-3">Published Date</th>
                             <th className="text-right font-medium p-3">Actions</th>
@@ -508,7 +508,7 @@ export function EditBookDialog({
                                         product: selectedBook.id || 0,
                                         edition_number: 1,
                                         price: 0,
-                                        print_cost: 0,
+                                        price_omr: 0,
                                         status: null,
                                         notes: ""
                                       };
@@ -554,12 +554,12 @@ export function EditBookDialog({
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={printRun.print_cost}
+                                    value={printRun.price_omr}
                                     onChange={(e) => {
                                       const updatedPrintRuns = [...selectedBook.print_runs];
                                       updatedPrintRuns[index] = {
                                         ...printRun,
-                                        print_cost: parseFloat(e.target.value) || 0
+                                        price_omr: parseFloat(e.target.value) || 0
                                       };
                                       setSelectedBook({
                                         ...selectedBook,

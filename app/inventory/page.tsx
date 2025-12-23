@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { AppSidebar } from "@/components/app-sidebar"
 import {
   Breadcrumb,
@@ -14,7 +15,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react"
+import { Edit, Trash2, MoreHorizontal, PlusCircle, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,13 +46,14 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/hooks/use-toast"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Checkbox } from "@/components/ui/checkbox"
 import { X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 type Product = {
   id: number
@@ -85,12 +87,25 @@ export default function InventoryManagementPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [hasRequested, setHasRequested] = useState<boolean>(false)
   const [count, setCount] = useState<number>(0)
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [pageSize, setPageSize] = useState<number>(25)
+  const [totalPages, setTotalPages] = useState<number>(0)
 
   const [products, setProducts] = useState<Product[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  
+  // Loading states for async dropdowns
+  const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(false)
+  const [isLoadingWarehouses, setIsLoadingWarehouses] = useState<boolean>(false)
 
   const [filterProductId, setFilterProductId] = useState<string>("")
   const [filterWarehouseId, setFilterWarehouseId] = useState<string>("")
+
+  // Sorting state
+  const [sortField, setSortField] = useState<string>("-created_at")
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false)
   const [isEditOpen, setIsEditOpen] = useState<boolean>(false)
@@ -116,24 +131,66 @@ export default function InventoryManagementPage() {
   const [updateQuantity, setUpdateQuantity] = useState<number>(0)
   const [isManaging, setIsManaging] = useState<boolean>(false)
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<boolean>(false)
+  
+  // Granular loading states for bulk operations
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{
+    total: number
+    completed: number
+    failed: number
+    processing: boolean
+  }>({ total: 0, completed: 0, failed: 0, processing: false })
 
-  const [alertMsg, setAlertMsg] = useState<{ type: "success" | "error" | "warning" | null; message: string }>({ type: null, message: "" })
+  // Cache keys for localStorage
+  const CACHE_KEYS = {
+    LOOKUPS: 'inventory_lookups_data',
+    LOOKUPS_TIMESTAMP: 'inventory_lookups_timestamp',
+  }
+  const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes in milliseconds
+
   const [draftQtyByKey, setDraftQtyByKey] = useState<Record<string, number>>({})
   const [isSavingAll, setIsSavingAll] = useState<boolean>(false)
   const [isCreating, setIsCreating] = useState<boolean>(false)
+  const [isUpdating, setIsUpdating] = useState<boolean>(false)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false)
+  const [isUpdatingRow, setIsUpdatingRow] = useState<string | null>(null) // Track which row is being updated (using key)
 
+  // AbortController ref for request cancellation
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Track access token in state to ensure headers update when token changes
+  // Initialize as null to avoid hydration mismatch - will be set in useEffect
+  const [accessToken, setAccessToken] = useState<string | null>(null)
+
+  // Update token when localStorage changes (e.g., after login/refresh)
+  useEffect(() => {
+    // Only run on client side to avoid hydration mismatch
+    if (typeof window === "undefined") return
+
+    const handleStorageChange = () => {
+      const token = localStorage.getItem("accessToken")
+      setAccessToken(token)
+    }
+
+    // Set initial token from localStorage
+    handleStorageChange()
+
+    // Listen for storage events (e.g., token refresh in another tab)
+    window.addEventListener("storage", handleStorageChange)
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange)
+    }
+  }, [])
+
+  // Memoized auth headers that updates when token changes
   const authHeaders = useMemo(
     () => ({
       "Content-Type": "application/json",
-      Authorization: `Bearer ${typeof window !== "undefined" ? localStorage.getItem("accessToken") : ""}`,
+      Authorization: `Bearer ${accessToken || ""}`,
     }),
-    []
+    [accessToken]
   )
 
-  const showAlert = (type: "success" | "error" | "warning", message: string) => {
-    setAlertMsg({ type, message })
-    setTimeout(() => setAlertMsg({ type: null, message: "" }), 5000)
-  }
 
   // Stable UTC formatter to avoid SSR/CSR locale/timezone mismatches
   const formatDateUTC = (iso?: string) => {
@@ -144,23 +201,295 @@ export default function InventoryManagementPage() {
     return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
   }
 
-  useEffect(() => {
-    setMounted(true)
-    void fetchLookups()
+  // Exponential backoff retry utility
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Check if request was aborted
+        if (options.signal?.aborted) {
+          throw new DOMException('The operation was aborted.', 'AbortError')
+        }
+        
+        const response = await fetch(url, options)
+        
+        // Don't retry on successful responses
+        if (response.ok) {
+          return response
+        }
+        
+        // Don't retry on 4xx client errors (except 429 Too Many Requests)
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return response // Return the error response without retrying
+        }
+        
+        // For 5xx server errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`)
+        }
+        
+        // For other errors, return the response
+        return response
+      } catch (error) {
+        lastError = error as Error
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry if this was the last attempt
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Calculate exponential backoff delay: baseDelay * 2^attempt
+        const delay = baseDelay * Math.pow(2, attempt)
+        
+        // Wait before retrying (respect abort signal)
+        await new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(resolve, delay)
+          
+          // If aborted during wait, clear timeout and reject
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              clearTimeout(timeoutId)
+              reject(new DOMException('The operation was aborted.', 'AbortError'))
+            })
+          }
+        })
+      }
+    }
+    
+    // If we get here, all retries failed
+    throw lastError || new Error('Request failed after retries')
   }, [])
 
-  const buildQuery = () => {
+  useEffect(() => {
+    setMounted(true)
+    
+    // Create new AbortController for this effect
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    
+    void fetchLookups(abortController.signal)
+    
+    // Cleanup: abort requests on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+        abortControllerRef.current = null
+      }
+    }
+  }, [])
+
+  const buildQuery = (page?: number, pageSizeParam?: number) => {
     const params = new URLSearchParams()
     if (filterProductId) params.set("product_id", filterProductId)
     if (filterWarehouseId) params.set("warehouse_id", filterWarehouseId)
+    
+    // Add sorting params
+    if (sortField) {
+      params.set("ordering", sortField)
+    }
+    
+    // Add pagination params
+    const pageToUse = page ?? currentPage
+    const pageSizeToUse = pageSizeParam ?? pageSize
+    params.set("page", pageToUse.toString())
+    params.set("page_size", pageSizeToUse.toString())
+    
     return params.toString()
   }
 
-  const fetchLookups = async () => {
+  // Handle column header click for sorting
+  const handleSort = useCallback((field: string) => {
+    if (sortField === field) {
+      // Toggle between asc and desc
+      const newOrder = sortOrder === "asc" ? "desc" : "asc"
+      setSortOrder(newOrder)
+      setSortField(newOrder === "asc" ? field : `-${field}`)
+    } else if (sortField === `-${field}`) {
+      // Currently descending, switch to ascending
+      setSortOrder("asc")
+      setSortField(field)
+    } else {
+      // New field, default to descending
+      setSortOrder("desc")
+      setSortField(`-${field}`)
+    }
+    setCurrentPage(1) // Reset to first page when sorting changes
+  }, [sortField, sortOrder])
+
+  // Get sort indicator for a column
+  const getSortIndicator = useCallback((field: string) => {
+    const isActive = sortField === field || sortField === `-${field}`
+    if (!isActive) {
+      return <ArrowUpDown className="h-4 w-4 ml-1 opacity-30" />
+    }
+    if (sortField === `-${field}`) {
+      return <ArrowDown className="h-4 w-4 ml-1" />
+    }
+    return <ArrowUp className="h-4 w-4 ml-1" />
+  }, [sortField])
+
+  // Fetch products with server-side search (for dropdowns)
+  const fetchProductsSearch = async (search: string = "", signal?: AbortSignal): Promise<Product[]> => {
+    setIsLoadingProducts(true)
     try {
+      // Get token directly from localStorage to ensure it's fresh
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token || ""}`,
+      }
+      
+      const params = new URLSearchParams()
+      params.append("page_size", "50") // Only fetch 50 items initially
+      if (search.trim()) {
+        params.append("search", search.trim())
+      }
+      
+      const res = await fetchWithRetry(`${API_URL}/inventory/products/?${params.toString()}`, { 
+        headers, 
+        signal: signal || abortControllerRef.current?.signal 
+      })
+      
+      const ensureJson = async (res: Response) => {
+        const ct = res.headers.get("content-type") || ""
+        if (!ct.includes("application/json")) {
+          const text = await res.text()
+          throw new Error(`Products request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
+        }
+        return res.json()
+      }
+      
+      const data = await ensureJson(res)
+      const normalizeList = (payload: any) => {
+        if (!payload) return []
+        if (Array.isArray(payload)) return payload
+        if (Array.isArray(payload.results)) return payload.results
+        if (Array.isArray(payload.data)) return payload.data
+        if (Array.isArray(payload.items)) return payload.items
+        return []
+      }
+      
+      return normalizeList(data)
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        return []
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Products search failed", e)
+      }
+      return []
+    } finally {
+      setIsLoadingProducts(false)
+    }
+  }
+
+  // Fetch warehouses with server-side search (for dropdowns)
+  const fetchWarehousesSearch = async (search: string = "", signal?: AbortSignal): Promise<Warehouse[]> => {
+    setIsLoadingWarehouses(true)
+    try {
+      // Get token directly from localStorage to ensure it's fresh
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token || ""}`,
+      }
+      
+      const params = new URLSearchParams()
+      params.append("page_size", "50") // Only fetch 50 items initially
+      if (search.trim()) {
+        params.append("search", search.trim())
+      }
+      
+      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/?${params.toString()}`, { 
+        headers, 
+        signal: signal || abortControllerRef.current?.signal 
+      })
+      
+      const ensureJson = async (res: Response) => {
+        const ct = res.headers.get("content-type") || ""
+        if (!ct.includes("application/json")) {
+          const text = await res.text()
+          throw new Error(`Warehouses request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
+        }
+        return res.json()
+      }
+      
+      const data = await ensureJson(res)
+      const normalizeList = (payload: any) => {
+        if (!payload) return []
+        if (Array.isArray(payload)) return payload
+        if (Array.isArray(payload.results)) return payload.results
+        if (Array.isArray(payload.data)) return payload.data
+        if (Array.isArray(payload.items)) return payload.items
+        return []
+      }
+      
+      return normalizeList(data)
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        return []
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Warehouses search failed", e)
+      }
+      return []
+    } finally {
+      setIsLoadingWarehouses(false)
+    }
+  }
+
+  const fetchLookups = async (signal?: AbortSignal, forceRefresh: boolean = false) => {
+    try {
+      // Check cache first (unless force refresh)
+      if (!forceRefresh) {
+        const cachedData = localStorage.getItem(CACHE_KEYS.LOOKUPS)
+        const cachedTimestamp = localStorage.getItem(CACHE_KEYS.LOOKUPS_TIMESTAMP)
+        
+        if (cachedData && cachedTimestamp) {
+          const timestamp = parseInt(cachedTimestamp, 10)
+          const now = Date.now()
+          
+          // Use cached data if it's still valid (within cache duration)
+          if (now - timestamp < CACHE_DURATION) {
+            try {
+              const data = JSON.parse(cachedData)
+              setProducts(data.products || [])
+              setWarehouses(data.warehouses || [])
+              if (process.env.NODE_ENV !== "production") {
+                console.info("Using cached lookup data (products:", (data.products || []).length, ", warehouses:", (data.warehouses || []).length, ")")
+              }
+              return
+            } catch (parseError) {
+              if (process.env.NODE_ENV !== "production") {
+                console.error("Error parsing cached lookup data:", parseError)
+              }
+              // Clear invalid cache and fetch fresh data
+              localStorage.removeItem(CACHE_KEYS.LOOKUPS)
+              localStorage.removeItem(CACHE_KEYS.LOOKUPS_TIMESTAMP)
+            }
+          } else {
+            if (process.env.NODE_ENV !== "production") {
+              console.info("Lookup cache expired, fetching fresh data")
+            }
+          }
+        }
+      }
+      
+      // Fetch fresh data from API - back to original page_size for compatibility
       const [pRes, wRes] = await Promise.all([
-        fetch(`${API_URL}/inventory/products/?page_size=1000`, { headers: authHeaders }),
-        fetch(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers: authHeaders }),
+        fetchWithRetry(`${API_URL}/inventory/products/?page_size=1000`, { headers: authHeaders, signal: signal || abortControllerRef.current?.signal }),
+        fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers: authHeaders, signal: signal || abortControllerRef.current?.signal }),
       ])
       const ensureJson = async (res: Response) => {
         const ct = res.headers.get("content-type") || ""
@@ -181,24 +510,54 @@ export default function InventoryManagementPage() {
       }
       const pList = normalizeList(pData)
       const wList = normalizeList(wData)
+      
+      // Update state
+      setProducts(pList)
+      setWarehouses(wList)
+      
+      // Cache the data
+      try {
+        const cacheData = {
+          products: pList,
+          warehouses: wList,
+        }
+        localStorage.setItem(CACHE_KEYS.LOOKUPS, JSON.stringify(cacheData))
+        localStorage.setItem(CACHE_KEYS.LOOKUPS_TIMESTAMP, Date.now().toString())
+        if (process.env.NODE_ENV !== "production") {
+          console.info("Lookup data cached successfully (products:", pList.length, ", warehouses:", wList.length, ")")
+        }
+      } catch (cacheError) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Failed to cache lookup data:", cacheError)
+        }
+        // Continue even if caching fails
+      }
+      
       // Debug in dev only
       if (process.env.NODE_ENV !== "production") {
         console.info("Products fetched:", pList.length, Array.isArray(pData?.results) ? "results" : Array.isArray(pData) ? "array" : Object.keys(pData || {}))
         console.info("Warehouses fetched:", wList.length, Array.isArray(wData?.results) ? "results" : Array.isArray(wData) ? "array" : Object.keys(wData || {}))
       }
-      setProducts(pList)
-      setWarehouses(wList)
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        return
+      }
+      if (process.env.NODE_ENV !== "production") {
       console.error("Lookup fetch failed", e)
-      showAlert("error", "Failed to load products/warehouses")
+      }
+      toast({ title: "Error", description: "Failed to load products/warehouses", variant: "destructive" })
     }
   }
 
-  const fetchInventory = async () => {
+  const fetchInventory = async (page?: number, pageSizeParam?: number, signal?: AbortSignal) => {
     setIsLoading(true)
     try {
-      const qs = buildQuery()
-      const res = await fetch(`${API_URL}/inventory/inventory/${qs ? `?${qs}` : ""}`, { headers: authHeaders })
+      const qs = buildQuery(page, pageSizeParam)
+      const res = await fetchWithRetry(`${API_URL}/inventory/inventory/?${qs}`, { 
+        headers: authHeaders,
+        signal: signal || abortControllerRef.current?.signal
+      })
       const ct = res.headers.get("content-type") || ""
       if (!res.ok || !ct.includes("application/json")) {
         const text = await res.text()
@@ -215,12 +574,32 @@ export default function InventoryManagementPage() {
         if (pid && wid) nextDraft[`${pid}-${wid}`] = Number(inv.quantity) || 0
       })
       setDraftQtyByKey((prev) => ({ ...nextDraft, ...prev }))
-      setCount(typeof data?.count === "number" ? data.count : Array.isArray(list) ? list.length : 0)
+      
+      // Handle paginated response
+      const totalCount = typeof data?.count === "number" ? data.count : Array.isArray(list) ? list.length : 0
+      setCount(totalCount)
+      
+      // Calculate total pages
+      const pageSizeToUse = pageSizeParam ?? pageSize
+      const pages = totalCount > 0 ? Math.ceil(totalCount / pageSizeToUse) : 0
+      setTotalPages(pages)
+      
+      // Update current page if provided
+      if (page !== undefined) {
+        setCurrentPage(page)
+      }
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        return
+      }
+      if (process.env.NODE_ENV !== "production") {
       console.error("Fetch inventory failed", e)
+      }
       setItems([])
       setCount(0)
-      showAlert("error", "Failed to load inventory list")
+      setTotalPages(0)
+      toast({ title: "Error", description: "Failed to load inventory list", variant: "destructive" })
     } finally {
       setIsLoading(false)
     }
@@ -243,6 +622,9 @@ export default function InventoryManagementPage() {
       const warehouseId = Number(newInventory.warehouse_id)
       const quantity = Number(newInventory.quantity ?? 0)
 
+      // Store original state for rollback
+      const originalItems = [...items]
+
       // If multiple products selected, use bulk endpoint
       if (selectedProducts.length > 0) {
         const bulkData = selectedProducts.map((productId) => ({
@@ -251,13 +633,35 @@ export default function InventoryManagementPage() {
           quantity: quantity,
         }))
 
-        const res = await fetch(`${API_URL}/inventory/inventory/bulk/`, {
+        // Optimistically add items to UI (temporary IDs for new items)
+        const optimisticItems = selectedProducts.map((productId, index) => ({
+          id: -(index + 1), // Temporary negative ID
+          product: productId as any,
+          product_id: productId,
+          warehouse: warehouseId as any,
+          warehouse_id: warehouseId,
+          quantity: quantity,
+          updated_at: new Date().toISOString(),
+        })) as Inventory[]
+        
+        setItems(prev => [...prev, ...optimisticItems])
+        setIsAddOpen(false)
+        setSelectedProducts([])
+        setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+
+        const res = await fetchWithRetry(`${API_URL}/inventory/inventory/bulk/`, {
           method: "POST",
           headers: authHeaders,
           body: JSON.stringify(bulkData),
+          signal: abortControllerRef.current?.signal
         })
         const ct = res.headers.get("content-type") || ""
         if (!res.ok) {
+          // Rollback on error
+          setItems(originalItems)
+          setIsAddOpen(true)
+          setSelectedProducts(selectedProducts)
+          setNewInventory({ product_id: undefined, warehouse_id: warehouseId, quantity: quantity })
           const text = await res.text()
           let errorMessage = `Bulk create failed (${res.status})`
           try {
@@ -272,13 +676,26 @@ export default function InventoryManagementPage() {
           throw new Error(errorMessage)
         }
         if (!ct.includes("application/json")) {
+          // Rollback on error
+          setItems(originalItems)
+          setIsAddOpen(true)
+          setSelectedProducts(selectedProducts)
+          setNewInventory({ product_id: undefined, warehouse_id: warehouseId, quantity: quantity })
           const text = await res.text()
           throw new Error(`Bulk create failed: Invalid response format - ${text.slice(0, 200)}`)
         }
         const data = await res.json()
         
-        // Count created vs updated
+        // Replace optimistic items with server response
         const results = data.results || data
+        setItems(prev => {
+          // Remove optimistic items (negative IDs)
+          const withoutOptimistic = prev.filter(item => item.id > 0)
+          // Add server response items
+          return [...withoutOptimistic, ...results]
+        })
+        
+        // Count created vs updated
         const createdCount = results.filter((r: any) => r._action === 'created').length
         const updatedCount = results.filter((r: any) => r._action === 'updated').length
         
@@ -293,104 +710,193 @@ export default function InventoryManagementPage() {
           message = `Processed ${results.length} inventory ${results.length === 1 ? 'entry' : 'entries'}`
         }
 
-        setIsAddOpen(false)
-        setSelectedProducts([])
-        setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
         setIsCreating(false)
         toast({ 
           title: "Inventory saved", 
           description: message
         })
-        showAlert("success", message)
-        await fetchInventory()
+        // Refresh to ensure consistency
+        await fetchInventory(currentPage, pageSize)
       } else if (newInventory.product_id) {
         // Single product (backward compatibility)
-        const body = {
-          product_id: Number(newInventory.product_id),
+        // Store original state for rollback
+        const originalItemsSingle = [...items]
+        
+      const body = {
+        product_id: Number(newInventory.product_id),
           warehouse_id: warehouseId,
           quantity: quantity,
         }
-        const res = await fetch(`${API_URL}/inventory/inventory/`, {
-          method: "POST",
-          headers: authHeaders,
-          body: JSON.stringify(body),
-        })
-        const ct = res.headers.get("content-type") || ""
-        if (!res.ok || !ct.includes("application/json")) {
-          const text = await res.text()
-          throw new Error(`Create failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
-        }
-        const data = await res.json()
 
+        // Optimistically add item to UI
+        const optimisticItem = {
+          id: -1, // Temporary negative ID
+          product: Number(newInventory.product_id) as any,
+          product_id: Number(newInventory.product_id),
+          warehouse: warehouseId as any,
+          warehouse_id: warehouseId,
+          quantity: quantity,
+          updated_at: new Date().toISOString(),
+        } as Inventory
+
+        setItems(prev => [...prev, optimisticItem])
         setIsAddOpen(false)
         setNewInventory({ product_id: undefined, warehouse_id: undefined, quantity: 0 })
+
+        const res = await fetchWithRetry(`${API_URL}/inventory/inventory/`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify(body),
+          signal: abortControllerRef.current?.signal
+      })
+      const ct = res.headers.get("content-type") || ""
+      if (!res.ok || !ct.includes("application/json")) {
+          // Rollback on error
+          setItems(originalItemsSingle)
+          setIsAddOpen(true)
+          setNewInventory({ product_id: Number(newInventory.product_id), warehouse_id: warehouseId, quantity: quantity })
+        const text = await res.text()
+        throw new Error(`Create failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
+      }
+      const data = await res.json()
+
+        // Replace optimistic item with server response
+        setItems(prev => {
+          const withoutOptimistic = prev.filter(item => item.id > 0)
+          return [...withoutOptimistic, data]
+        })
+
         setIsCreating(false)
-        toast({ title: "Inventory saved", description: "Entry created/updated successfully" })
-        showAlert("success", "Inventory saved successfully")
-        await fetchInventory()
+      toast({ title: "Inventory saved", description: "Entry created/updated successfully" })
+        // Refresh to ensure consistency
+        await fetchInventory(currentPage, pageSize)
       } else {
         toast({ title: "Error", description: "Please select at least one product", variant: "destructive" })
         setIsCreating(false)
       }
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsCreating(false)
+        return
+      }
       const msg = e instanceof Error ? e.message : "Failed to save inventory"
       toast({ title: "Error", description: msg, variant: "destructive" })
-      showAlert("error", msg)
       setIsCreating(false)
     }
   }
 
   const handleEdit = async () => {
-    if (!editItem) return
+    if (!editItem || isUpdating) return
+    
+    // Store original item for rollback
+    const originalItem = items.find(item => item.id === editItem.id)
+    if (!originalItem) return
+    
+    setIsUpdating(true)
     try {
-      const res = await fetch(`${API_URL}/inventory/inventory/${editItem.id}/`, {
+      // Optimistically update UI
+      setItems(prev => prev.map(item => 
+        item.id === editItem.id 
+          ? { ...item, ...editItem, quantity: Number(editItem.quantity) }
+          : item
+      ))
+      setIsEditOpen(false)
+      const itemToEdit = editItem
+      setEditItem(null)
+
+      const res = await fetchWithRetry(`${API_URL}/inventory/inventory/${itemToEdit.id}/`, {
         method: "PATCH",
         headers: authHeaders,
         body: JSON.stringify({
-          product_id: editItem.product?.id ?? editItem.product_id,
-          warehouse_id: editItem.warehouse?.id ?? editItem.warehouse_id,
-          quantity: Number(editItem.quantity),
+          product_id: itemToEdit.product?.id ?? itemToEdit.product_id,
+          warehouse_id: itemToEdit.warehouse?.id ?? itemToEdit.warehouse_id,
+          quantity: Number(itemToEdit.quantity),
         }),
+        signal: abortControllerRef.current?.signal
       })
       const ct = res.headers.get("content-type") || ""
       if (!res.ok || !ct.includes("application/json")) {
+        // Rollback on error
+        setItems(prev => prev.map(item => item.id === originalItem.id ? originalItem : item))
+        setIsEditOpen(true)
+        setEditItem(itemToEdit)
         const text = await res.text()
         throw new Error(`Update failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
       }
       const data = await res.json()
-      setIsEditOpen(false)
-      setEditItem(null)
+      
+      // Replace with server response
+      setItems(prev => prev.map(item => item.id === data.id ? data : item))
+      
       toast({ title: "Inventory updated", description: "Entry updated successfully" })
-      showAlert("success", "Inventory updated successfully")
-      await fetchInventory()
+      // Refresh to ensure consistency
+      await fetchInventory(currentPage, pageSize)
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsUpdating(false)
+        return
+      }
       const msg = e instanceof Error ? e.message : "Failed to update inventory"
       toast({ title: "Error", description: msg, variant: "destructive" })
-      showAlert("error", msg)
+    } finally {
+      setIsUpdating(false)
     }
   }
 
   const handleDelete = async () => {
-    if (deleteId == null) return
+    if (deleteId == null || isDeleting) return
+    
+    // Store original state for rollback
+    const originalItems = [...items]
+    const itemToDelete = items.find(item => item.id === deleteId)
+    
+    setIsDeleting(true)
     try {
-      const res = await fetch(`${API_URL}/inventory/inventory/${deleteId}/delete/`, {
+      // Optimistically remove from UI
+      setItems(prev => prev.filter(item => item.id !== deleteId))
+      setIsDeleteOpen(false)
+      const idToDelete = deleteId
+      setDeleteId(null)
+      setDeleteConfirm("")
+
+      const res = await fetchWithRetry(`${API_URL}/inventory/inventory/${idToDelete}/delete/`, {
         method: "DELETE",
         headers: authHeaders,
+        signal: abortControllerRef.current?.signal
       })
       if (!res.ok) {
+        // Rollback on error
+        setItems(originalItems)
+        setIsDeleteOpen(true)
+        setDeleteId(idToDelete)
+        setDeleteConfirm("")
         const text = await res.text().catch(() => "")
         throw new Error(`Delete failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
       }
-      setIsDeleteOpen(false)
-      setDeleteId(null)
-      setDeleteConfirm("")
-      toast({ title: "Inventory deleted", variant: "destructive" })
-      showAlert("warning", "Inventory entry deleted")
-      await fetchInventory()
+      
+      toast({ title: "Inventory deleted", description: "Inventory entry deleted successfully", variant: "destructive" })
+      
+      // If we deleted the last item on the page and it's not page 1, go to previous page
+      if (originalItems.length === 1 && currentPage > 1) {
+        const prevPage = currentPage - 1
+        setCurrentPage(prevPage)
+        await fetchInventory(prevPage, pageSize)
+      } else {
+        // Refresh to ensure consistency
+        await fetchInventory(currentPage, pageSize)
+      }
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsDeleting(false)
+        return
+      }
       const msg = e instanceof Error ? e.message : "Failed to delete inventory"
       toast({ title: "Error", description: msg, variant: "destructive" })
-      showAlert("error", msg)
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -405,9 +911,12 @@ export default function InventoryManagementPage() {
   }
 
   // Fetch inventories for a specific warehouse
-  const fetchWarehouseInventories = async (warehouseId: number) => {
+  const fetchWarehouseInventories = async (warehouseId: number, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`${API_URL}/inventory/inventory/?warehouse_id=${warehouseId}`, { headers: authHeaders })
+      const res = await fetchWithRetry(`${API_URL}/inventory/inventory/?warehouse_id=${warehouseId}`, { 
+        headers: authHeaders,
+        signal: signal || abortControllerRef.current?.signal
+      })
       const ct = res.headers.get("content-type") || ""
       if (!res.ok || !ct.includes("application/json")) {
         const text = await res.text()
@@ -415,10 +924,23 @@ export default function InventoryManagementPage() {
       }
       const data = await res.json()
       const list: Inventory[] = data?.results ?? data ?? []
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Fetched ${list.length} inventories for warehouse ${warehouseId}`)
+      }
       // Only show inventories with quantity > 0
-      setWarehouseInventories(list.filter((inv: Inventory) => (inv.quantity || 0) > 0))
+      const filteredList = list.filter((inv: Inventory) => (inv.quantity || 0) > 0)
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Filtered to ${filteredList.length} inventories with quantity > 0`)
+      }
+      setWarehouseInventories(filteredList)
     } catch (e) {
-      console.error("Fetch warehouse inventories failed", e)
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        return
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Fetch warehouse inventories failed", e)
+      }
       toast({ title: "Error", description: "Failed to load inventories", variant: "destructive" })
       setWarehouseInventories([])
     }
@@ -444,47 +966,140 @@ export default function InventoryManagementPage() {
       return
     }
 
+    // Store original state for rollback
+    const originalWarehouseInventories = [...warehouseInventories]
+    const originalItems = [...items]
+
     setIsManaging(true)
     try {
       const updates = selectedInventoryIds.map((invId) => {
         const inv = warehouseInventories.find((i) => i.id === invId)
-        if (!inv) return null
+        if (!inv) {
+          if (process.env.NODE_ENV !== "production") {
+            console.error(`Inventory with id ${invId} not found in warehouseInventories`)
+          }
+          return null
+        }
+        const newQty = Number(updateQuantity)
         const currentQty = Number(inv.quantity) || 0
+        
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`Updating inventory ${invId}: replacing ${currentQty} with ${newQty}`)
+        }
+        
+        // For updates with id, we only need id and quantity (partial update)
+        // This REPLACES the quantity, not adds to it
         return {
           id: invId,
-          product_id: typeof inv.product === "number" ? inv.product : inv.product?.id,
-          warehouse_id: manageWarehouseId,
-          quantity: currentQty + Number(updateQuantity), // Add to existing quantity
+          quantity: newQty,
         }
-      }).filter(Boolean)
+      }).filter((item): item is NonNullable<typeof item> => item !== null)
 
-      const res = await fetch(`${API_URL}/inventory/inventory/bulk/`, {
+      if (updates.length === 0) {
+        throw new Error("No valid inventory items to update")
+      }
+
+      // Optimistically update UI
+      setWarehouseInventories(prev => prev.map(inv => {
+        const update = updates.find(u => u.id === inv.id)
+        return update ? { ...inv, quantity: update.quantity } : inv
+      }))
+      setItems(prev => prev.map(inv => {
+        const update = updates.find(u => u.id === inv.id)
+        return update ? { ...inv, quantity: update.quantity } : inv
+      }))
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Sending bulk update:", updates)
+      }
+
+      const res = await fetchWithRetry(`${API_URL}/inventory/inventory/bulk/`, {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify(updates),
+        signal: abortControllerRef.current?.signal
       })
 
+      const responseText = await res.text()
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Bulk update response status:", res.status)
+        console.log("Bulk update response:", responseText)
+      }
+
       if (!res.ok) {
-        const text = await res.text()
+        // Rollback on error
+        setWarehouseInventories(originalWarehouseInventories)
+        setItems(originalItems)
         let errorMessage = `Bulk update failed (${res.status})`
         try {
-          const errorData = JSON.parse(text)
+          const errorData = JSON.parse(responseText)
           errorMessage = errorData.detail || errorData.message || errorMessage
+          if (errorData.errors) {
+            errorMessage += `: ${JSON.stringify(errorData.errors)}`
+          }
         } catch {
-          errorMessage += `: ${text.slice(0, 200)}`
+          errorMessage += `: ${responseText.slice(0, 200)}`
         }
         throw new Error(errorMessage)
       }
 
+      const responseData = JSON.parse(responseText)
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Bulk update success, response:", responseData)
+      }
+
+      // Store the warehouse ID before any state changes
+      const currentWarehouseId = manageWarehouseId
+      
+      // Replace with server response
+      const results = responseData.results || responseData
+      setWarehouseInventories(prev => {
+        const resultsMap = new Map(results.map((r: any) => [r.id, r as Inventory]))
+        return prev.map(inv => (resultsMap.get(inv.id) || inv) as Inventory)
+      })
+      setItems(prev => {
+        const resultsMap = new Map(results.map((r: any) => [r.id, r as Inventory]))
+        return prev.map(inv => (resultsMap.get(inv.id) || inv) as Inventory)
+      })
+      
+      // Verify the update worked by checking response
+      if (results && results.length > 0) {
+        const firstResult = results[0]
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`Updated inventory ${firstResult.id}: quantity is now ${firstResult.quantity}`)
+        }
+      }
+
       toast({ 
         title: "Success", 
-        description: `Updated ${selectedInventoryIds.length} inventory ${selectedInventoryIds.length === 1 ? 'item' : 'items'}` 
+        description: `Updated ${selectedInventoryIds.length} inventory ${selectedInventoryIds.length === 1 ? 'item' : 'items'}. Quantity set to ${updateQuantity}.` 
       })
+      
+      // Clear selections but keep warehouse selected
       setSelectedInventoryIds([])
       setUpdateQuantity(0)
-      await fetchWarehouseInventories(manageWarehouseId)
-      await fetchInventory() // Refresh main inventory list
+      
+      // Refresh data - use the stored warehouse ID to ensure we refresh the correct warehouse
+      if (currentWarehouseId) {
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`Refreshing warehouse ${currentWarehouseId} inventories after update`)
+        }
+        await fetchWarehouseInventories(currentWarehouseId)
+      } else {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("No warehouse ID available for refresh")
+        }
+      }
+      await fetchInventory(currentPage, pageSize) // Refresh main inventory list
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsManaging(false)
+        return
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Bulk update error:", e)
+      }
       const msg = e instanceof Error ? e.message : "Failed to update inventories"
       toast({ title: "Error", description: msg, variant: "destructive" })
     } finally {
@@ -492,40 +1107,125 @@ export default function InventoryManagementPage() {
     }
   }
 
-  // Bulk delete inventories
+  // Bulk delete inventories using backend bulk delete endpoint
   const handleBulkDelete = async () => {
     if (!manageWarehouseId || selectedInventoryIds.length === 0) {
       return
     }
 
-    setIsManaging(true)
-    try {
-      // Delete each inventory item
-      for (const invId of selectedInventoryIds) {
-        const res = await fetch(`${API_URL}/inventory/inventory/${invId}/delete/`, {
-          method: "DELETE",
-          headers: authHeaders,
-        })
-        if (!res.ok) {
-          const text = await res.text().catch(() => "")
-          throw new Error(`Delete failed (${res.status}): ${text.slice(0, 200)}`)
-        }
-      }
+    // Store original state for rollback
+    const originalWarehouseInventories = [...warehouseInventories]
+    const originalItems = [...items]
+    const idsToDelete = [...selectedInventoryIds]
 
-      toast({ 
-        title: "Success", 
-        description: `Deleted ${selectedInventoryIds.length} inventory ${selectedInventoryIds.length === 1 ? 'item' : 'items'}`,
-        variant: "destructive"
-      })
+    setIsManaging(true)
+    setBulkDeleteProgress({
+      total: idsToDelete.length,
+      completed: 0,
+      failed: 0,
+      processing: true
+    })
+
+    try {
+      // Optimistically remove from UI
+      setWarehouseInventories(prev => prev.filter(inv => !idsToDelete.includes(inv.id)))
+      setItems(prev => prev.filter(inv => !idsToDelete.includes(inv.id)))
       setSelectedInventoryIds([])
       setIsDeleteConfirmOpen(false)
-      await fetchWarehouseInventories(manageWarehouseId)
-      await fetchInventory() // Refresh main inventory list
+
+      // Use bulk delete endpoint
+      const res = await fetchWithRetry(`${API_URL}/inventory/inventory/bulk-delete/`, {
+        method: "DELETE",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ ids: idsToDelete }),
+        signal: abortControllerRef.current?.signal
+      })
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ detail: "Unknown error" }))
+        throw new Error(errorData.detail || `Delete failed (${res.status})`)
+      }
+
+      const result = await res.json()
+      
+      // Update progress
+      setBulkDeleteProgress({
+        total: result.total_requested || idsToDelete.length,
+        completed: result.deleted_count || 0,
+        failed: result.failed_count || 0,
+        processing: false
+      })
+
+      // Handle results
+      if (result.failed_count > 0) {
+        // Some items failed - rollback and show detailed error
+        setWarehouseInventories(originalWarehouseInventories)
+        setItems(originalItems)
+        setSelectedInventoryIds(idsToDelete)
+        
+        // Build detailed error message
+        const failedIds = result.failed_ids || []
+        const errors = result.errors || []
+        const errorMessages = errors.map((err: any) => 
+          `ID ${err.id}: ${err.error}`
+        ).join(", ")
+        
+        toast({ 
+          title: "Partial Success", 
+          description: `Deleted ${result.deleted_count} of ${result.total_requested} items. ${result.failed_count} failed: ${errorMessages}`,
+          variant: "destructive"
+        })
+        
+        // Show which items failed in console (dev only)
+        if (process.env.NODE_ENV !== "production") {
+          console.error("Bulk delete partial failure:", {
+            deleted: result.deleted_ids,
+            failed: result.failed_ids,
+            errors: result.errors
+          })
+        }
+      } else {
+        // All succeeded
+        toast({ 
+          title: "Success", 
+          description: `Deleted ${result.deleted_count} inventory ${result.deleted_count === 1 ? 'item' : 'items'}`,
+          variant: "destructive"
+        })
+        
+        // Refresh to ensure consistency
+        await fetchWarehouseInventories(manageWarehouseId)
+        await fetchInventory(currentPage, pageSize) // Refresh main inventory list
+      }
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsManaging(false)
+        setBulkDeleteProgress({ total: 0, completed: 0, failed: 0, processing: false })
+        return
+      }
+      
+      // Rollback on error
+      setWarehouseInventories(originalWarehouseInventories)
+      setItems(originalItems)
+      setSelectedInventoryIds(idsToDelete)
+      
       const msg = e instanceof Error ? e.message : "Failed to delete inventories"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast({ 
+        title: "Error", 
+        description: msg, 
+        variant: "destructive" 
+      })
+      
+      setBulkDeleteProgress({ total: 0, completed: 0, failed: 0, processing: false })
     } finally {
       setIsManaging(false)
+      // Reset progress after a short delay to allow user to see the result
+      setTimeout(() => {
+        setBulkDeleteProgress({ total: 0, completed: 0, failed: 0, processing: false })
+      }, 2000)
     }
   }
 
@@ -539,57 +1239,108 @@ export default function InventoryManagementPage() {
     [warehouses]
   )
 
-  // Build merged rows - when warehouse is selected, show only products with inventory (quantity > 0)
-  const mergedRows = useMemo(() => {
-    // Helper to normalize ids from item
-    const extractIds = (inv: any) => {
-      const productId = typeof inv.product === "number" ? inv.product : inv.product?.id
-      const warehouseId = typeof inv.warehouse === "number" ? inv.warehouse : inv.warehouse?.id
-      return { productId, warehouseId }
-    }
+  // Memoized lookup Maps for O(1) access
+  const productMap = useMemo(() => {
+    const map = new Map<number, Product>()
+    products.forEach((p) => {
+      map.set(p.id, p)
+    })
+    return map
+  }, [products])
 
+  const warehouseMap = useMemo(() => {
+    const map = new Map<number, Warehouse>()
+    warehouses.forEach((w) => {
+      map.set(w.id, w)
+    })
+    return map
+  }, [warehouses])
+
+  // Simplified merged rows - backend already handles filtering by product_id and warehouse_id
+  // We only need to filter out zero-quantity items if needed
+  // Helper functions for async dropdowns - MUST be before early return
+  const getProductNameAsync = useCallback(async (id: number): Promise<string | undefined> => {
+    // First check cache
+    const cached = productMap.get(id)
+    if (cached) {
+      return cached.title_en || (cached as any).name || undefined
+    }
+    // If not in cache, fetch it
+    try {
+      const items = await fetchProductsSearch("", abortControllerRef.current?.signal)
+      const found = items.find((p: Product) => p.id === id)
+      if (found) {
+        return found.title_en || (found as any).name || undefined
+      }
+    } catch (e) {
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Failed to fetch product name:", e)
+      }
+    }
+    return undefined
+  }, [productMap])
+
+  const getWarehouseNameAsync = useCallback(async (id: number): Promise<string | undefined> => {
+    // First check cache
+    const cached = warehouseMap.get(id)
+    if (cached) {
+      return cached.name_en || (cached as any).name || undefined
+    }
+    // If not in cache, fetch it
+    try {
+      const items = await fetchWarehousesSearch("", abortControllerRef.current?.signal)
+      const found = items.find((w: Warehouse) => w.id === id)
+      if (found) {
+        return found.name_en || (found as any).name || undefined
+      }
+    } catch (e) {
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Failed to fetch warehouse name:", e)
+      }
+    }
+    return undefined
+  }, [warehouseMap])
+
+  // Wrapper functions for async dropdowns
+  const fetchProductsForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
+    const products = await fetchProductsSearch(search, signal)
+    return products.map((p: Product) => ({
+      id: p.id,
+      name: p.title_en || (p as any).name || String(p.id)
+    }))
+  }, [])
+
+  const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
+    const warehouses = await fetchWarehousesSearch(search, signal)
+    return warehouses.map((w: Warehouse) => ({
+      id: w.id,
+      name: w.name_en || (w as any).name || String(w.id)
+    }))
+  }, [])
+
+  const mergedRows = useMemo(() => {
     if (!hasRequested) return []
 
-    // If warehouse is selected, show only products that have inventory (quantity > 0) in that warehouse
-    if (filterWarehouseId && !filterProductId) {
-      const wid = Number(filterWarehouseId)
-      const existingByProduct = new Map<number, any>()
-      items.forEach((inv: any) => {
-        const { productId, warehouseId } = extractIds(inv)
-        if (warehouseId === wid && productId) existingByProduct.set(productId, inv)
-      })
-      // Only return products that have inventory (quantity > 0) in the selected warehouse
-      return products
-        .map((p) => existingByProduct.get(p.id))
-        .filter((inv) => inv && inv.quantity > 0) // Filter out null/undefined and zero quantity items
-    }
-
-    // If product is selected, show only warehouses where the product has inventory (quantity > 0)
-    if (filterProductId && !filterWarehouseId) {
-      const pid = Number(filterProductId)
-      const existingByWarehouse = new Map<number, any>()
-      items.forEach((inv: any) => {
-        const { productId, warehouseId } = extractIds(inv)
-        if (productId === pid && warehouseId) existingByWarehouse.set(warehouseId, inv)
-      })
-      // Only return warehouses where the product has inventory (quantity > 0)
-      return warehouses
-        .map((w) => existingByWarehouse.get(w.id))
-        .filter((inv) => inv && inv.quantity > 0) // Filter out null/undefined and zero quantity items
-    }
-
-    // If both filters set, only return if there's actual inventory (quantity > 0)
-    if (filterProductId && filterWarehouseId) {
-      // Only return items that have inventory (quantity > 0)
-      return items.filter((inv: any) => {
-        const qty = typeof inv.quantity === "number" ? inv.quantity : 0
-        return qty > 0
-      })
-    }
-
-    // Default: no synthesis
+    // Backend already filters by product_id and warehouse_id via query parameters
+    // Just return the filtered items, optionally excluding zero-quantity items
+    // Note: Zero-quantity items are valid inventory entries and should be shown
+    // to allow users to update quantities. Only filter if specifically needed.
     return items
-  }, [hasRequested, filterWarehouseId, filterProductId, items, products, warehouses])
+  }, [hasRequested, items])
+
+  // Virtualization setup for table rows - only virtualize if more than 50 items
+  const tableContainerRef = useRef<HTMLDivElement>(null)
+  const shouldVirtualize = mergedRows.length > 50
+
+  const rowVirtualizer = useVirtualizer({
+    count: mergedRows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 60, // Estimated row height in pixels
+    overscan: 5, // Render 5 extra items above and below viewport for smooth scrolling
+  })
+
+  const virtualItems = shouldVirtualize ? rowVirtualizer.getVirtualItems() : []
+  const totalSize = shouldVirtualize ? rowVirtualizer.getTotalSize() : 0
 
   const getRowKey = (inv: any) => {
     const pid = typeof inv.product === "number" ? inv.product : inv.product?.id || inv.product_id
@@ -613,37 +1364,85 @@ export default function InventoryManagementPage() {
     const wid = typeof inv.warehouse === "number" ? inv.warehouse : inv.warehouse?.id || inv.warehouse_id
     const qty = getDraftQty(inv)
     if (!pid || !wid) return
+    
+    const rowKey = getRowKey(inv)
+    if (isUpdatingRow === rowKey) return // Prevent duplicate saves
+    
+    // Store original state for rollback
+    const originalItems = [...items]
+    const originalDraftQty = draftQtyByKey[`${pid}-${wid}`]
+    
+    setIsUpdatingRow(rowKey)
     try {
+      // Optimistically update UI
+      setItems(prev => prev.map(item => {
+        const itemPid = typeof item.product === "number" ? item.product : item.product?.id || item.product_id
+        const itemWid = typeof item.warehouse === "number" ? item.warehouse : item.warehouse?.id || item.warehouse_id
+        if (itemPid === pid && itemWid === wid) {
+          return { ...item, quantity: Number(qty) }
+        }
+        return item
+      }))
+      // Clear draft quantity
+      setDraftQtyByKey(prev => {
+        const updated = { ...prev }
+        delete updated[`${pid}-${wid}`]
+        return updated
+      })
+
       let res: Response
       if (inv.id && inv.id !== 0) {
-        res = await fetch(`${API_URL}/inventory/inventory/${inv.id}/`, {
+        res = await fetchWithRetry(`${API_URL}/inventory/inventory/${inv.id}/`, {
           method: "PATCH",
           headers: authHeaders,
           body: JSON.stringify({ quantity: Number(qty) }),
+          signal: abortControllerRef.current?.signal
         })
       } else {
         // Upsert by POST
-        res = await fetch(`${API_URL}/inventory/inventory/`, {
+        res = await fetchWithRetry(`${API_URL}/inventory/inventory/`, {
           method: "POST",
           headers: authHeaders,
           body: JSON.stringify({ product_id: Number(pid), warehouse_id: Number(wid), quantity: Number(qty) }),
+          signal: abortControllerRef.current?.signal
         })
       }
       const ct = res.headers.get("content-type") || ""
       if (!res.ok || !ct.includes("application/json")) {
+        // Rollback on error
+        setItems(originalItems)
+        setDraftQtyByKey(prev => ({ ...prev, [`${pid}-${wid}`]: originalDraftQty }))
         const text = await res.text()
         throw new Error(`Save failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
       }
+      const data = await res.json()
+      
+      // Replace with server response
+      setItems(prev => prev.map(item => item.id === data.id ? data : item))
+      
       toast({ title: "Saved", description: "Inventory updated" })
-      await fetchInventory()
+      // Refresh to ensure consistency
+      await fetchInventory(currentPage, pageSize)
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsUpdatingRow(null)
+        return
+      }
       const msg = e instanceof Error ? e.message : "Failed to save"
       toast({ title: "Error", description: msg, variant: "destructive" })
+    } finally {
+      setIsUpdatingRow(null)
     }
   }
 
   const saveAll = async () => {
     if (!hasRequested) return
+    
+    // Store original state for rollback
+    const originalItems = [...items]
+    const originalDraftQtyByKey = { ...draftQtyByKey }
+    
     setIsSavingAll(true)
     try {
       // Determine changed rows by comparing draft vs current quantity
@@ -654,6 +1453,25 @@ export default function InventoryManagementPage() {
         return Number(draft) !== current
       })
 
+      // Optimistically update UI for all changes
+      setItems(prev => prev.map(item => {
+        const change = changes.find(inv => {
+          const invPid = typeof inv.product === "number" ? inv.product : inv.product?.id || inv.product_id
+          const invWid = typeof inv.warehouse === "number" ? inv.warehouse : inv.warehouse?.id || inv.warehouse_id
+          const itemPid = typeof item.product === "number" ? item.product : item.product?.id || item.product_id
+          const itemWid = typeof item.warehouse === "number" ? item.warehouse : item.warehouse?.id || item.warehouse_id
+          return invPid === itemPid && invWid === itemWid
+        })
+        if (change) {
+          const qty = getDraftQty(change)
+          return { ...item, quantity: Number(qty) }
+        }
+        return item
+      }))
+      // Clear all draft quantities
+      setDraftQtyByKey({})
+
+      const savedItems: any[] = []
       for (const inv of changes) {
         const pid = typeof inv.product === "number" ? inv.product : inv.product?.id || inv.product_id
         const wid = typeof inv.warehouse === "number" ? inv.warehouse : inv.warehouse?.id || inv.warehouse_id
@@ -661,27 +1479,44 @@ export default function InventoryManagementPage() {
         if (!pid || !wid) continue
         let res: Response
         if (inv.id && inv.id !== 0) {
-          res = await fetch(`${API_URL}/inventory/inventory/${inv.id}/`, {
+          res = await fetchWithRetry(`${API_URL}/inventory/inventory/${inv.id}/`, {
             method: "PATCH",
             headers: authHeaders,
             body: JSON.stringify({ quantity: Number(qty) }),
+            signal: abortControllerRef.current?.signal
           })
         } else {
-          res = await fetch(`${API_URL}/inventory/inventory/`, {
+          res = await fetchWithRetry(`${API_URL}/inventory/inventory/`, {
             method: "POST",
             headers: authHeaders,
             body: JSON.stringify({ product_id: Number(pid), warehouse_id: Number(wid), quantity: Number(qty) }),
+            signal: abortControllerRef.current?.signal
           })
         }
         if (!res.ok) {
+          // Rollback on error
+          setItems(originalItems)
+          setDraftQtyByKey(originalDraftQtyByKey)
           const text = await res.text().catch(() => "")
           throw new Error(`Save failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
         }
+        const data = await res.json()
+        savedItems.push(data)
       }
 
+      // Replace with server responses
+      const savedItemsMap = new Map(savedItems.map(item => [item.id, item]))
+      setItems(prev => prev.map(item => savedItemsMap.get(item.id) || item))
+
       toast({ title: "All changes saved" })
-      await fetchInventory()
+      // Refresh to ensure consistency
+      await fetchInventory(currentPage, pageSize)
     } catch (e) {
+      // Ignore abort errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIsSavingAll(false)
+        return
+      }
       const msg = e instanceof Error ? e.message : "Failed to save changes"
       toast({ title: "Error", description: msg, variant: "destructive" })
     } finally {
@@ -689,19 +1524,20 @@ export default function InventoryManagementPage() {
     }
   }
 
-  if (!mounted) {
-    return null
-  }
-
+  // Regular helper functions (not hooks, can be after early return)
   const getProductName = (id?: number | string) => {
+    if (id === undefined || id === null) return undefined
     const n = Number(id)
-    const p = products.find((p) => p.id === n)
+    if (isNaN(n)) return undefined
+    const p = productMap.get(n)
     return p?.title_en || (p as any)?.name || undefined
   }
 
   const getWarehouseName = (id?: number | string) => {
+    if (id === undefined || id === null) return undefined
     const n = Number(id)
-    const w = warehouses.find((w) => w.id === n)
+    if (isNaN(n)) return undefined
+    const w = warehouseMap.get(n)
     return w?.name_en || (w as any)?.name || undefined
   }
 
@@ -719,6 +1555,162 @@ export default function InventoryManagementPage() {
     return wh.name_en || wh.name || getWarehouseName(wh.id) || "-"
   }
 
+  // Early return MUST be after all hooks
+  if (!mounted) {
+    return null
+  }
+
+  // Async SearchableCombobox with server-side search
+  const AsyncSearchableCombobox = ({
+    value,
+    onChange,
+    placeholder,
+    allowAll,
+    fetchItems,
+    isLoading,
+    getItemName,
+  }: {
+    value: string | number | undefined
+    onChange: (val: string) => void
+    placeholder: string
+    allowAll?: boolean
+    fetchItems: (search: string, signal?: AbortSignal) => Promise<{ id: number; name: string }[]>
+    isLoading: boolean
+    getItemName: (id: number) => Promise<string | undefined>
+  }) => {
+    const [open, setOpen] = useState(false)
+    const [items, setItems] = useState<{ id: number; name: string }[]>([])
+    const [searchQuery, setSearchQuery] = useState("")
+    const [debouncedSearch, setDebouncedSearch] = useState("")
+    const [currentLabel, setCurrentLabel] = useState<string | undefined>(undefined)
+    const searchAbortRef = useRef<AbortController | null>(null)
+
+    // Debounce search query
+    useEffect(() => {
+      const timer = setTimeout(() => {
+        setDebouncedSearch(searchQuery)
+      }, 300)
+      return () => clearTimeout(timer)
+    }, [searchQuery])
+
+    // Fetch items when dropdown opens or search changes
+    useEffect(() => {
+      if (!open) {
+        // Reset items when closed to avoid stale data
+        setItems([])
+        return
+      }
+
+      // Cancel previous request
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort()
+      }
+
+      const controller = new AbortController()
+      searchAbortRef.current = controller
+
+      const loadItems = async () => {
+        try {
+          const fetchedItems = await fetchItems(debouncedSearch, controller.signal)
+          if (!controller.signal.aborted) {
+            setItems(fetchedItems || [])
+          }
+        } catch (e) {
+          if (e instanceof Error && e.name !== 'AbortError') {
+            if (process.env.NODE_ENV !== "production") {
+              console.error("Failed to fetch items:", e)
+            }
+            // Set empty array on error so UI shows "No results found"
+            if (!controller.signal.aborted) {
+              setItems([])
+            }
+          }
+        }
+      }
+
+      // Fetch immediately when dropdown opens
+      void loadItems()
+
+      return () => {
+        if (searchAbortRef.current) {
+          searchAbortRef.current.abort()
+        }
+      }
+    }, [open, debouncedSearch, fetchItems])
+
+    // Load current label when value changes
+    useEffect(() => {
+      if (value && value !== "all") {
+        getItemName(Number(value)).then(name => setCurrentLabel(name || undefined))
+      } else {
+        setCurrentLabel(undefined)
+      }
+    }, [value, getItemName])
+
+    return (
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) {
+            setSearchQuery("")
+            setDebouncedSearch("")
+          }
+        }}
+      >
+        <PopoverTrigger asChild>
+          <Button variant="outline" role="combobox" aria-expanded={open} className="justify-between">
+            {currentLabel || (value === "all" ? "All" : placeholder)}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="p-0 w-[280px]">
+          <Command shouldFilter={false}>
+            <CommandInput 
+              placeholder={`Search ${placeholder.toLowerCase()}...`} 
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+            />
+            <CommandList className="max-h-[300px] overflow-y-auto">
+              {isLoading ? (
+                <div className="p-4 text-center text-sm text-muted-foreground">Loading...</div>
+              ) : items.length === 0 ? (
+                <CommandEmpty>No results found.</CommandEmpty>
+              ) : (
+                <CommandGroup>
+                  {allowAll && (
+                    <CommandItem
+                      key="all"
+                      value="all"
+                      onSelect={() => {
+                        onChange("all")
+                        setOpen(false)
+                      }}
+                    >
+                      All
+                    </CommandItem>
+                  )}
+                  {items.map((it) => (
+                    <CommandItem
+                      key={it.id}
+                      value={String(it.id)}
+                      onSelect={(v) => {
+                        onChange(v)
+                        setOpen(false)
+                      }}
+                    >
+                      {it.name}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    )
+  }
+
+  // Legacy SearchableCombobox (kept for backward compatibility)
   const SearchableCombobox = ({
     value,
     onChange,
@@ -803,6 +1795,16 @@ export default function InventoryManagementPage() {
   }) => {
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+
+    // Debounce search query (300ms delay)
+    useEffect(() => {
+      const timer = setTimeout(() => {
+        setDebouncedSearchQuery(searchQuery)
+      }, 300)
+
+      return () => clearTimeout(timer)
+    }, [searchQuery])
 
     const toggleProduct = (productId: number) => {
       if (selectedIds.includes(productId)) {
@@ -813,19 +1815,22 @@ export default function InventoryManagementPage() {
     }
 
     const filteredItems = items.filter((item) =>
-      item.name.toLowerCase().includes(searchQuery.toLowerCase())
+      item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
     )
 
     const selectedItems = items.filter((item) => selectedIds.includes(item.id))
 
-    return (
+  return (
       <div className="space-y-2">
         <Popover
           open={open}
           onOpenChange={(next) => {
             setOpen(next)
             if (next && onOpen) onOpen()
-            if (!next) setSearchQuery("")
+            if (!next) {
+              setSearchQuery("")
+              setDebouncedSearchQuery("")
+            }
           }}
         >
           <PopoverTrigger asChild>
@@ -934,6 +1939,16 @@ export default function InventoryManagementPage() {
   }) => {
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+
+    // Debounce search query (300ms delay)
+    useEffect(() => {
+      const timer = setTimeout(() => {
+        setDebouncedSearchQuery(searchQuery)
+      }, 300)
+
+      return () => clearTimeout(timer)
+    }, [searchQuery])
 
     const toggleInventory = (invId: number) => {
       if (selectedIds.includes(invId)) {
@@ -944,7 +1959,7 @@ export default function InventoryManagementPage() {
     }
 
     const filteredItems = items.filter((item) =>
-      item.name.toLowerCase().includes(searchQuery.toLowerCase())
+      item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
     )
 
     const selectedItems = items.filter((item) => selectedIds.includes(item.id))
@@ -956,7 +1971,10 @@ export default function InventoryManagementPage() {
           onOpenChange={(next) => {
             if (!disabled) {
               setOpen(next)
-              if (!next) setSearchQuery("")
+              if (!next) {
+                setSearchQuery("")
+                setDebouncedSearchQuery("")
+              }
             }
           }}
         >
@@ -1051,6 +2069,7 @@ export default function InventoryManagementPage() {
   }
 
   return (
+    <ErrorBoundary>
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
@@ -1074,13 +2093,6 @@ export default function InventoryManagementPage() {
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-          {alertMsg.type && (
-            <Alert variant={alertMsg.type === "warning" ? "destructive" : "default"} className={alertMsg.type === "success" ? "border-green-500 text-green-500" : ""}>
-              {alertMsg.type === "success" ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-              <AlertTitle>{alertMsg.type === "success" ? "Success" : alertMsg.type === "warning" ? "Warning" : "Information"}</AlertTitle>
-              <AlertDescription>{alertMsg.message}</AlertDescription>
-            </Alert>
-          )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex items-center justify-between mb-4">
@@ -1104,11 +2116,11 @@ export default function InventoryManagementPage() {
                     }
                   }}
                 >
-                  <DialogTrigger asChild>
-                    <Button size="sm" className="bg-primary text-primary-foreground">
-                      <PlusCircle className="h-4 w-4 mr-2" /> Add Inventory
-                    </Button>
-                  </DialogTrigger>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="bg-primary text-primary-foreground">
+                    <PlusCircle className="h-4 w-4 mr-2" /> Add Inventory
+                  </Button>
+                </DialogTrigger>
                 </Dialog>
                 <Dialog open={isManageOpen} onOpenChange={(open) => {
                   setIsManageOpen(open)
@@ -1125,16 +2137,16 @@ export default function InventoryManagementPage() {
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
+                  <DialogHeader>
                       <DialogTitle>Manage Inventories (Bulk)</DialogTitle>
                       <DialogDescription>
                         Select a warehouse to view and manage all product inventories. You can update quantities or delete selected items.
                       </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="grid gap-2">
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="grid gap-2">
                         <Label>Warehouse *</Label>
-                        <SearchableCombobox
+                      <SearchableCombobox
                           value={manageWarehouseId?.toString() || "all"}
                           onChange={handleManageWarehouseChange}
                           items={warehouseOptions}
@@ -1167,17 +2179,17 @@ export default function InventoryManagementPage() {
                           {selectedInventoryIds.length > 0 && (
                             <>
                               <div className="grid gap-2">
-                                <Label>Quantity to Add *</Label>
+                                <Label>New Quantity *</Label>
                                 <Input 
                                   type="number" 
                                   value={updateQuantity} 
                                   onChange={(e) => setUpdateQuantity(Number(e.target.value || 0))} 
                                   min="0"
                                   step="1"
-                                  placeholder="Enter quantity to add"
+                                  placeholder="Enter new quantity"
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                  This quantity will be added to the current inventory for all selected products
+                                  This will REPLACE the current quantity for all selected products (not add to existing)
                                 </p>
                               </div>
 
@@ -1345,9 +2357,20 @@ export default function InventoryManagementPage() {
                         return
                       }
                       setHasRequested(true)
-                      void fetchInventory()
+                      setCurrentPage(1) // Reset to first page on new search
+                      void fetchInventory(1, pageSize)
                     }}>Search</Button>
-                    <Button variant="outline" disabled={isSavingAll} onClick={() => { setFilterProductId(""); setFilterWarehouseId(""); setHasRequested(false); setItems([]); setCount(0) }}>
+                    <Button variant="outline" disabled={isSavingAll} onClick={() => { 
+                      setFilterProductId("")
+                      setFilterWarehouseId("")
+                      setHasRequested(false)
+                      setItems([])
+                      setCount(0)
+                      setCurrentPage(1)
+                      setTotalPages(0)
+                      setSortField("-created_at")
+                      setSortOrder("desc")
+                    }}>
                       Reset
                     </Button>
                   </div>
@@ -1365,57 +2388,191 @@ export default function InventoryManagementPage() {
 
               <div className="p-4">
                 <div className="overflow-x-auto">
+                  <div
+                    ref={tableContainerRef}
+                    style={{
+                      height: shouldVirtualize ? '600px' : 'auto',
+                      overflowY: shouldVirtualize ? 'auto' : 'visible',
+                      position: 'relative'
+                    }}
+                  >
                   <table className="w-full border-collapse">
-                    <thead>
+                      <thead className={shouldVirtualize ? "sticky top-0 bg-background z-10" : ""}>
                       <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Product</th>
-                        <th className="text-left font-medium p-2">Warehouse</th>
-                        <th className="text-left font-medium p-2">Quantity</th>
-                        <th className="text-left font-medium p-2">Updated At</th>
+                          <th 
+                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                            onClick={() => handleSort("product")}
+                          >
+                            <div className="flex items-center">
+                              Product
+                              {getSortIndicator("product")}
+                            </div>
+                          </th>
+                          <th 
+                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                            onClick={() => handleSort("warehouse")}
+                          >
+                            <div className="flex items-center">
+                              Warehouse
+                              {getSortIndicator("warehouse")}
+                            </div>
+                          </th>
+                          <th 
+                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                            onClick={() => handleSort("quantity")}
+                          >
+                            <div className="flex items-center">
+                              Quantity
+                              {getSortIndicator("quantity")}
+                            </div>
+                          </th>
+                          <th 
+                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                            onClick={() => handleSort("updated_at")}
+                          >
+                            <div className="flex items-center">
+                              Updated At
+                              {getSortIndicator("updated_at")}
+                            </div>
+                          </th>
                         <th className="text-right font-medium p-2">Actions</th>
                       </tr>
                     </thead>
-                    <tbody>
+                      <tbody style={{ position: 'relative', height: shouldVirtualize && totalSize > 0 ? `${totalSize}px` : 'auto' }}>
                       {!hasRequested ? (
                         <tr>
                           <td colSpan={5} className="py-8 text-center text-muted-foreground">
-                            Select product or warehouse and click Search to load inventory
+                              Select product or warehouse and click Search to load inventory
                           </td>
                         </tr>
                       ) : isLoading ? (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center">
-                            Loading inventory...
+                          // Skeleton loaders matching table structure
+                          Array.from({ length: 5 }).map((_, index) => (
+                            <tr key={`skeleton-${index}`} className="border-b last:border-0">
+                              <td className="p-2">
+                                <Skeleton className="h-5 w-32" />
+                              </td>
+                              <td className="p-2">
+                                <Skeleton className="h-5 w-28" />
+                              </td>
+                              <td className="p-2">
+                                <Skeleton className="h-8 w-24" />
+                              </td>
+                              <td className="p-2">
+                                <Skeleton className="h-4 w-36" />
+                              </td>
+                              <td className="p-2 text-right">
+                                <div className="flex justify-end gap-2">
+                                  <Skeleton className="h-8 w-8 rounded" />
+                                  <Skeleton className="h-8 w-8 rounded" />
+                                </div>
                           </td>
                         </tr>
+                          ))
                       ) : mergedRows.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="py-8 text-center">
                             No inventory entries found
                           </td>
                         </tr>
-                      ) : (
+                        ) : shouldVirtualize && virtualItems.length > 0 ? (
+                          <>
+                            {/* Spacer for items before the first visible item */}
+                            <tr>
+                              <td colSpan={5} style={{ height: virtualItems[0]?.start ?? 0 }} />
+                            </tr>
+                            {/* Render only visible items */}
+                            {virtualItems.map((virtualItem) => {
+                              const inv = mergedRows[virtualItem.index]
+                              if (!inv) return null
+                              return (
+                                <tr
+                                  key={inv.id}
+                                  data-index={virtualItem.index}
+                                  ref={rowVirtualizer.measureElement}
+                                  className="border-b last:border-0 hover:bg-muted/50"
+                                  style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: `${virtualItem.size}px`,
+                                    transform: `translateY(${virtualItem.start}px)`,
+                                    display: 'table-row',
+                                  }}
+                                >
+                                  <td className="p-2 font-medium">{getInventoryProductLabel(inv)}</td>
+                                  <td className="p-2">{getInventoryWarehouseLabel(inv)}</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      className="h-8 w-24"
+                                      value={getDraftQty(inv)}
+                                      onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
+                                    />
+                                  </td>
+                                  <td className="p-2">{formatDateUTC(inv.updated_at)}</td>
+                                  <td className="p-2 text-right">
+                                    <div className="flex justify-end gap-2">
+                                      <div className="hidden sm:flex gap-2">
+                                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
+                                          <Edit className="h-4 w-4" />
+                                          <span className="sr-only">Edit</span>
+                                        </Button>
+                                        <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
+                                          <Trash2 className="h-4 w-4" />
+                                          <span className="sr-only">Delete</span>
+                                        </Button>
+                                      </div>
+                                      <div className="sm:hidden">
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button variant="outline" size="icon" className="h-8 w-8">
+                                              <MoreHorizontal className="h-4 w-4" />
+                                              <span className="sr-only">Actions</span>
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end">
+                                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                            <DropdownMenuItem onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
+                                              <Edit className="h-4 w-4 mr-2" /> Edit
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
+                                              <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </>
+                        ) : (
+                          // Non-virtualized rendering for small lists
                         mergedRows.map((inv: any) => (
                           <tr key={inv.id} className="border-b last:border-0">
                             <td className="p-2 font-medium">{getInventoryProductLabel(inv)}</td>
                             <td className="p-2">{getInventoryWarehouseLabel(inv)}</td>
                             <td className="p-2">
-                              <Input
-                                type="number"
-                                className="h-8 w-24"
-                                value={getDraftQty(inv)}
-                                onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
-                              />
+                                <Input
+                                  type="number"
+                                  className="h-8 w-24"
+                                  value={getDraftQty(inv)}
+                                  onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
+                                />
                             </td>
                             <td className="p-2">{formatDateUTC(inv.updated_at)}</td>
                             <td className="p-2 text-right">
                               <div className="flex justify-end gap-2">
                                 <div className="hidden sm:flex gap-2">
-                                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)}>
+                                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
                                     <Edit className="h-4 w-4" />
                                     <span className="sr-only">Edit</span>
                                   </Button>
-                                  <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)}>
+                                    <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
                                     <Trash2 className="h-4 w-4" />
                                     <span className="sr-only">Delete</span>
                                   </Button>
@@ -1430,11 +2587,11 @@ export default function InventoryManagementPage() {
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
                                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openEditDialog(inv)}>
+                                        <DropdownMenuItem onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
                                         <Edit className="h-4 w-4 mr-2" /> Edit
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)}>
+                                        <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
                                         <Trash2 className="h-4 w-4 mr-2" /> Delete
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
@@ -1447,17 +2604,43 @@ export default function InventoryManagementPage() {
                       )}
                     </tbody>
                   </table>
+                  </div>
                 </div>
 
-                {/* Simple count summary + pager placeholders if needed later */}
-                {!isLoading && (
+                {/* Pagination controls */}
+                {!isLoading && hasRequested && totalPages > 0 && (
                   <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">Total: {count}</div>
-                    <div className="flex items-center gap-1">
-                      <Button variant="outline" size="icon" className="h-8 w-8" disabled>
+                    <div className="text-sm text-muted-foreground">
+                      Showing {items.length > 0 ? ((currentPage - 1) * pageSize + 1) : 0} to {Math.min(currentPage * pageSize, count)} of {count} entries
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="icon" 
+                        className="h-8 w-8" 
+                        disabled={currentPage === 1 || isLoading}
+                        onClick={() => {
+                          const prevPage = currentPage - 1
+                          setCurrentPage(prevPage)
+                          void fetchInventory(prevPage, pageSize)
+                        }}
+                      >
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8" disabled>
+                      <span className="text-sm text-muted-foreground">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <Button 
+                        variant="outline" 
+                        size="icon" 
+                        className="h-8 w-8" 
+                        disabled={currentPage >= totalPages || isLoading}
+                        onClick={() => {
+                          const nextPage = currentPage + 1
+                          setCurrentPage(nextPage)
+                          void fetchInventory(nextPage, pageSize)
+                        }}
+                      >
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
@@ -1506,7 +2689,9 @@ export default function InventoryManagementPage() {
             <Button variant="outline" onClick={() => setIsEditOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleEdit}>Save Changes</Button>
+            <Button onClick={handleEdit} disabled={isUpdating}>
+              {isUpdating ? "Saving..." : "Save Changes"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1525,18 +2710,54 @@ export default function InventoryManagementPage() {
                   value={deleteConfirm} 
                   onChange={(e) => setDeleteConfirm(e.target.value)} 
                   className="mt-2" 
+                  disabled={isManaging}
                 />
               </div>
+              {/* Progress indicator during bulk delete */}
+              {bulkDeleteProgress.processing && bulkDeleteProgress.total > 0 && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Processing...</span>
+                    <span className="text-muted-foreground">
+                      {bulkDeleteProgress.completed + bulkDeleteProgress.failed} / {bulkDeleteProgress.total}
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div 
+                      className="bg-primary h-2 rounded-full transition-all duration-300"
+                      style={{ 
+                        width: `${((bulkDeleteProgress.completed + bulkDeleteProgress.failed) / bulkDeleteProgress.total) * 100}%` 
+                      }}
+                    />
+                  </div>
+                  {bulkDeleteProgress.completed > 0 && (
+                    <div className="text-sm text-green-600">
+                      ✓ {bulkDeleteProgress.completed} deleted
+                    </div>
+                  )}
+                  {bulkDeleteProgress.failed > 0 && (
+                    <div className="text-sm text-destructive">
+                      ✗ {bulkDeleteProgress.failed} failed
+                    </div>
+                  )}
+                </div>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setDeleteConfirm("")} disabled={isManaging}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleBulkDelete} 
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90" 
               disabled={deleteConfirm !== "DELETE" || isManaging}
             >
-              Delete {selectedInventoryIds.length} {selectedInventoryIds.length === 1 ? 'Item' : 'Items'}
+              {isManaging ? (
+                <>Deleting... ({bulkDeleteProgress.completed}/{bulkDeleteProgress.total})</>
+              ) : (
+                <>Delete {selectedInventoryIds.length} {selectedInventoryIds.length === 1 ? 'Item' : 'Items'}</>
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1561,13 +2782,14 @@ export default function InventoryManagementPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleteConfirm !== "DELETE"}>
-              Delete
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleteConfirm !== "DELETE" || isDeleting}>
+              {isDeleting ? "Deleting..." : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </SidebarProvider>
+    </ErrorBoundary>
   )
 }
 
