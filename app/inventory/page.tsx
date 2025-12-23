@@ -274,11 +274,26 @@ export default function InventoryManagementPage() {
   useEffect(() => {
     setMounted(true)
     
-    // Create new AbortController for this effect
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
+    // Wait for accessToken to be available before fetching lookups
+    // This ensures we have a valid token when making the request
+    if (typeof window === "undefined") return
     
-    void fetchLookups(abortController.signal)
+    const checkAndFetch = () => {
+      const token = localStorage.getItem("accessToken")
+      if (token) {
+        // Create new AbortController for this effect
+        const abortController = new AbortController()
+        abortControllerRef.current = abortController
+        
+        void fetchLookups(abortController.signal)
+      } else {
+        // Retry after a short delay if token not yet available
+        setTimeout(checkAndFetch, 100)
+      }
+    }
+    
+    // Start checking for token
+    checkAndFetch()
     
     // Cleanup: abort requests on unmount
     return () => {
@@ -486,10 +501,25 @@ export default function InventoryManagementPage() {
         }
       }
       
+      // Get token directly from localStorage to ensure it's fresh
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
+      if (!token) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("No access token available for fetchLookups")
+        }
+        toast({ title: "Error", description: "Authentication required. Please log in again.", variant: "destructive" })
+        return
+      }
+      
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      }
+      
       // Fetch fresh data from API - back to original page_size for compatibility
       const [pRes, wRes] = await Promise.all([
-        fetchWithRetry(`${API_URL}/inventory/products/?page_size=1000`, { headers: authHeaders, signal: signal || abortControllerRef.current?.signal }),
-        fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers: authHeaders, signal: signal || abortControllerRef.current?.signal }),
+        fetchWithRetry(`${API_URL}/inventory/products/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
+        fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
       ])
       const ensureJson = async (res: Response) => {
         const ct = res.headers.get("content-type") || ""
