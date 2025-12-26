@@ -1,7 +1,7 @@
 "use client"
 
 import type * as React from "react"
-import { BookOpen, CreditCard, ShoppingCart, SquareLibrary, BookCopy, Blocks,FileSpreadsheet, Settings2, SquareTerminal, LayoutDashboard, ReceiptText } from "lucide-react"
+import { BookOpen, CreditCard, ShoppingCart, SquareLibrary, BookCopy, Blocks,FileSpreadsheet, Settings2, SquareTerminal, LayoutDashboard, ReceiptText, ArrowRightLeft } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { NavMain } from "./nav-main"
@@ -58,6 +58,13 @@ const data = {
       title: "Products Inventory",
       url: "/inventory",
       icon: SquareLibrary,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
+    {
+      title: "Product Transfer",
+      url: "/transfer",
+      icon: ArrowRightLeft,
       isActive: true,
       items: [], // Empty items array means no submenu
     },
