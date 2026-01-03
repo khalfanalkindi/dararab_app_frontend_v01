@@ -1,8 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
+import { API_URL } from "@/lib/config"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -48,9 +49,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
-// Sample user data
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
-
 type User = {
   id: number;
   username: string;
@@ -85,6 +83,91 @@ export default function UsersPage() {
   })
   const [isLoading, setIsLoading] = useState(true)
 
+  // AbortController refs for request cancellation
+  const fetchUsersAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchRolesAbortControllerRef = useRef<AbortController | null>(null)
+  const addUserAbortControllerRef = useRef<AbortController | null>(null)
+  const updateUserAbortControllerRef = useRef<AbortController | null>(null)
+  const deleteUserAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers object
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
+  }, [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+
+    toast({
+      title: "Error",
+      description: errorMessage,
+      variant: "destructive",
+    })
+  }, [])
+
   // Form state for new user
   const [newUser, setNewUser] = useState({
     username: "",
@@ -107,20 +190,25 @@ export default function UsersPage() {
 
   useEffect(() => {
     const fetchUsers = async () => {
+      // Cancel previous request if any
+      if (fetchUsersAbortControllerRef.current) {
+        fetchUsersAbortControllerRef.current.abort()
+      }
+      
+      const controller = new AbortController()
+      fetchUsersAbortControllerRef.current = controller
+      
       setIsLoading(true)
       try {
-        const response = await fetch(`${API_URL}/users/`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
+        const response = await fetchWithRetry(`${API_URL}/users/`, {
+          headers,
+          signal: controller.signal,
         })
         if (!response.ok) throw new Error("Failed to fetch users")
         const data = await response.json()
         setUsers(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to fetch users",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to fetch users")
         showAlert("error", "Failed to fetch users. Please try again later.")
       } finally {
         setIsLoading(false)
@@ -128,36 +216,57 @@ export default function UsersPage() {
     }
 
     const fetchRoles = async () => {
+      // Cancel previous request if any
+      if (fetchRolesAbortControllerRef.current) {
+        fetchRolesAbortControllerRef.current.abort()
+      }
+      
+      const controller = new AbortController()
+      fetchRolesAbortControllerRef.current = controller
+      
       try {
-        const response = await fetch(`${API_URL}/roles/`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
+        const response = await fetchWithRetry(`${API_URL}/roles/`, {
+          headers,
+          signal: controller.signal,
         })
         if (!response.ok) throw new Error("Failed to fetch roles")
         const data = await response.json()
         setRoles(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to fetch roles",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to fetch roles")
       }
     }
 
     fetchUsers()
     fetchRoles()
-  }, [])
+
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      if (fetchUsersAbortControllerRef.current) {
+        fetchUsersAbortControllerRef.current.abort()
+      }
+      if (fetchRolesAbortControllerRef.current) {
+        fetchRolesAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWithRetry, handleError, headers])
 
   // Handle adding a new user
   const handleAddUser = async () => {
+    // Cancel previous request if any
+    if (addUserAbortControllerRef.current) {
+      addUserAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    addUserAbortControllerRef.current = controller
+    
     try {
-      const response = await fetch(`${API_URL}/users/`, {
+      const response = await fetchWithRetry(`${API_URL}/users/`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
         body: JSON.stringify(newUser),
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to add user")
@@ -192,11 +301,7 @@ export default function UsersPage() {
       // Show alert message
       showAlert("success", `New user "${userName}" has been successfully added to the system.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add user",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to add user")
     }
   }
 
@@ -204,14 +309,20 @@ export default function UsersPage() {
   const handleUpdateUser = async () => {
     if (!editingUser) return
 
+    // Cancel previous request if any
+    if (updateUserAbortControllerRef.current) {
+      updateUserAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    updateUserAbortControllerRef.current = controller
+
     try {
-      const response = await fetch(`${API_URL}/users/${editingUser.id}/`, {
+      const response = await fetchWithRetry(`${API_URL}/users/${editingUser.id}/`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
         body: JSON.stringify(editingUser),
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to update user")
@@ -236,17 +347,21 @@ export default function UsersPage() {
       // Show alert message
       showAlert("success", `User "${userName}" has been successfully updated.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update user",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to update user")
     }
   }
 
   // Handle deleting a user
   const handleDeleteUser = async () => {
     if (userToDelete === null) return
+
+    // Cancel previous request if any
+    if (deleteUserAbortControllerRef.current) {
+      deleteUserAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    deleteUserAbortControllerRef.current = controller
 
     try {
       const userToDeleteData = users.find((u) => u.id === userToDelete)
@@ -257,11 +372,10 @@ export default function UsersPage() {
       const lastName = userToDeleteData.last_name || ""
       const userName = firstName && lastName ? `${firstName} ${lastName}` : userToDeleteData.username || "User"
 
-      const response = await fetch(`${API_URL}/users/${userToDelete}/`, {
+      const response = await fetchWithRetry(`${API_URL}/users/${userToDelete}/`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to delete user")
@@ -281,11 +395,7 @@ export default function UsersPage() {
       // Show alert message
       showAlert("warning", `User "${userName}" has been permanently deleted from the system.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete user",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to delete user")
     }
   }
 

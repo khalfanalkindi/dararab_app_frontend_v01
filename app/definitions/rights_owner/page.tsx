@@ -50,22 +50,20 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { API_URL } from "@/lib/config"
 
-interface Customer {
+interface RightsOwner {
   id: number
-  customer_type?: number | null
-  institution_name: string
-  contact_person: string | null
-  phone: string | null
-  email: string | null
+  name: string
+  contact_info?: string
+  bio?: string // For backward compatibility if API returns both
 }
 
-export default function CustomerManagement() {
-  const [customers, setCustomers] = useState<Customer[]>([])
+export default function RightsOwnerManagement() {
+  const [rightsOwners, setRightsOwners] = useState<RightsOwner[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
-  const [deleteCustomerId, setDeleteCustomerId] = useState<number | null>(null)
-  const [editCustomer, setEditCustomer] = useState<Customer | null>(null)
-  const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false)
-  const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false)
+  const [deleteRightsOwnerId, setDeleteRightsOwnerId] = useState<number | null>(null)
+  const [editRightsOwner, setEditRightsOwner] = useState<RightsOwner | null>(null)
+  const [isAddRightsOwnerOpen, setIsAddRightsOwnerOpen] = useState(false)
+  const [isEditRightsOwnerOpen, setIsEditRightsOwnerOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
@@ -75,20 +73,16 @@ export default function CustomerManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
-  const [customerTypes, setCustomerTypes] = useState<any[]>([])
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [totalItems, setTotalItems] = useState(0)
 
-  // Form state for new customer
-  const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({
-    customer_type: undefined,
-    institution_name: "",
-    contact_person: "",
-    phone: "",
-    email: "",
+  // Form state for new rights owner
+  const [newRightsOwner, setNewRightsOwner] = useState<Partial<RightsOwner>>({
+    name: "",
+    contact_info: "",
   })
 
   // Show alert message
@@ -101,8 +95,7 @@ export default function CustomerManagement() {
   }
 
   // AbortController refs for request cancellation
-  const fetchCustomersAbortControllerRef = useRef<AbortController | null>(null)
-  const fetchCustomerTypesAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchRightsOwnersAbortControllerRef = useRef<AbortController | null>(null)
 
   // Memoized headers to prevent recreation on every render
   const headers = useMemo(() => {
@@ -194,52 +187,25 @@ export default function CustomerManagement() {
   }, [])
 
   useEffect(() => {
-    fetchCustomers()
-    fetchCustomerTypes()
+    fetchRightsOwners()
     
     // Cleanup: abort pending requests on unmount
     return () => {
-      fetchCustomersAbortControllerRef.current?.abort()
-      fetchCustomerTypesAbortControllerRef.current?.abort()
+      fetchRightsOwnersAbortControllerRef.current?.abort()
     }
   }, [])
 
-  const fetchCustomerTypes = async () => {
+  const fetchRightsOwners = async () => {
     // Abort previous request if still pending
-    fetchCustomerTypesAbortControllerRef.current?.abort()
-    fetchCustomerTypesAbortControllerRef.current = new AbortController()
+    fetchRightsOwnersAbortControllerRef.current?.abort()
+    fetchRightsOwnersAbortControllerRef.current = new AbortController()
 
     try {
       const res = await fetchWithRetry(
-        `${API_URL}/common/list-items/customer_type/`,
+        `${API_URL}/inventory/rights-owners/?page_size=1000`,
         {
           headers,
-          signal: fetchCustomerTypesAbortControllerRef.current.signal
-        }
-      )
-      
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`)
-      }
-      
-      const data = await res.json()
-      setCustomerTypes(data.results || [])
-    } catch (error) {
-      handleError(error, "Failed to fetch customer types")
-    }
-  }
-
-  const fetchCustomers = async () => {
-    // Abort previous request if still pending
-    fetchCustomersAbortControllerRef.current?.abort()
-    fetchCustomersAbortControllerRef.current = new AbortController()
-
-    try {
-      const res = await fetchWithRetry(
-        `${API_URL}/sales/customers/?page_size=1000`,
-        {
-          headers,
-          signal: fetchCustomersAbortControllerRef.current.signal
+          signal: fetchRightsOwnersAbortControllerRef.current.signal
         }
       )
       
@@ -254,17 +220,17 @@ export default function CustomerManagement() {
       }
       
       // Handle the response structure with results array
-      const customersData = data.results || []
+      const rightsOwnersData = data.results || []
       
       if (process.env.NODE_ENV !== 'production') {
-        console.log('Processed Customers:', customersData)
+        console.log('Processed Rights Owners:', rightsOwnersData)
       }
       
-      setCustomers(customersData)
-      setTotalItems(data.count || customersData.length)
+      setRightsOwners(rightsOwnersData)
+      setTotalItems(data.count || rightsOwnersData.length)
     } catch (error) {
-      handleError(error, "Failed to fetch customers")
-      setCustomers([])
+      handleError(error, "Failed to fetch rights owners")
+      setRightsOwners([])
       setTotalItems(0)
     } finally {
       setIsLoading(false)
@@ -275,7 +241,7 @@ export default function CustomerManagement() {
   const totalPages = Math.ceil(totalItems / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const currentCustomers = customers.slice(startIndex, endIndex)
+  const currentRightsOwners = rightsOwners.slice(startIndex, endIndex)
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
@@ -288,145 +254,142 @@ export default function CustomerManagement() {
     setCurrentPage(1) // Reset to first page when changing items per page
   }
 
-  // Handle adding a new customer
-  const handleAddCustomer = async () => {
+  // Handle adding a new rights owner
+  const handleAddRightsOwner = async () => {
     try {
-      const res = await fetchWithRetry(`${API_URL}/sales/customers/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/rights-owners/`, {
         method: "POST",
         headers,
-        body: JSON.stringify(newCustomer),
+        body: JSON.stringify(newRightsOwner),
       })
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.message || errorData.detail || "Failed to add customer")
+        throw new Error(errorData.message || errorData.detail || "Failed to add rights owner")
       }
 
       const data = await res.json()
-      setCustomers([...customers, data])
+      setRightsOwners([...rightsOwners, data])
       setTotalItems(totalItems + 1)
 
       // Reset form
-      setNewCustomer({
-        customer_type: undefined,
-        institution_name: "",
-        contact_person: "",
-        phone: "",
-        email: "",
+      setNewRightsOwner({
+        name: "",
+        contact_info: "",
       })
 
-      setIsAddCustomerOpen(false)
+      setIsAddRightsOwnerOpen(false)
 
       // Show toast notification
       toast({
-        title: "Customer Added Successfully",
-        description: `${data.institution_name} has been added to the system.`,
+        title: "Rights Owner Added Successfully",
+        description: `${data.name} has been added to the system.`,
         variant: "default",
       })
 
       // Show alert message
-      showAlert("success", `New customer "${data.institution_name}" has been successfully added to the system.`)
+      showAlert("success", `New rights owner "${data.name}" has been successfully added to the system.`)
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return
       }
-      handleError(error, "Failed to add customer")
-      showAlert("error", "Failed to add customer. Please try again.")
+      handleError(error, "Failed to add rights owner")
+      showAlert("error", "Failed to add rights owner. Please try again.")
     }
   }
 
-  // Handle updating a customer
-  const handleUpdateCustomer = async () => {
-    if (!editCustomer) return
+  // Handle updating a rights owner
+  const handleUpdateRightsOwner = async () => {
+    if (!editRightsOwner) return
 
     try {
-      const res = await fetchWithRetry(`${API_URL}/sales/customers/${editCustomer.id}/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/rights-owners/${editRightsOwner.id}/`, {
         method: "PUT",
         headers,
-        body: JSON.stringify(editCustomer),
+        body: JSON.stringify(editRightsOwner),
       })
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.message || errorData.detail || "Failed to update customer")
+        throw new Error(errorData.message || errorData.detail || "Failed to update rights owner")
       }
 
       const responseData = await res.json()
 
-      setCustomers(customers.map((c) => (c.id === responseData.id ? responseData : c)))
-      setEditCustomer(null)
-      setIsEditCustomerOpen(false)
+      setRightsOwners(rightsOwners.map((r) => (r.id === responseData.id ? responseData : r)))
+      setEditRightsOwner(null)
+      setIsEditRightsOwnerOpen(false)
 
       // Show toast notification
       toast({
-        title: "Customer Updated Successfully",
-        description: `${responseData.institution_name} has been updated.`,
+        title: "Rights Owner Updated Successfully",
+        description: `${responseData.name} has been updated.`,
         variant: "default",
       })
 
       // Show alert message
-      showAlert("success", `Customer "${responseData.institution_name}" has been successfully updated.`)
+      showAlert("success", `Rights owner "${responseData.name}" has been successfully updated.`)
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return
       }
-      handleError(error, "Failed to update customer")
-      const errorMessage = error instanceof Error ? error.message : "Failed to update customer"
-      showAlert("error", `Failed to update customer: ${errorMessage}`)
+      handleError(error, "Failed to update rights owner")
+      const errorMessage = error instanceof Error ? error.message : "Failed to update rights owner"
+      showAlert("error", `Failed to update rights owner: ${errorMessage}`)
     }
   }
 
-  // Handle deleting a customer
-  const handleDeleteCustomer = async () => {
-    if (deleteCustomerId === null) return
+  // Handle deleting a rights owner
+  const handleDeleteRightsOwner = async () => {
+    if (deleteRightsOwnerId === null) return
 
     try {
-      const customerToDelete = customers.find((c) => c.id === deleteCustomerId)
-      if (!customerToDelete) return
+      const rightsOwnerToDelete = rightsOwners.find((r) => r.id === deleteRightsOwnerId)
+      if (!rightsOwnerToDelete) return
 
-      const res = await fetchWithRetry(`${API_URL}/sales/customers/${deleteCustomerId}/delete/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/rights-owners/${deleteRightsOwnerId}/delete/`, {
         method: "DELETE",
         headers,
       })
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.message || errorData.detail || "Failed to delete customer")
+        throw new Error(errorData.message || errorData.detail || "Failed to delete rights owner")
       }
 
-      setCustomers(customers.filter((c) => c.id !== deleteCustomerId))
+      setRightsOwners(rightsOwners.filter((r) => r.id !== deleteRightsOwnerId))
       setTotalItems(totalItems - 1)
-      setDeleteCustomerId(null)
+      setDeleteRightsOwnerId(null)
       setIsDeleteAlertOpen(false)
       setDeleteConfirm("")
 
       // Show toast notification
       toast({
-        title: "Customer Deleted",
-        description: `${customerToDelete.institution_name} has been permanently removed from the system.`,
+        title: "Rights Owner Deleted",
+        description: `${rightsOwnerToDelete.name} has been permanently removed from the system.`,
         variant: "destructive",
       })
 
       // Show alert message
-      showAlert("warning", `Customer "${customerToDelete.institution_name}" has been permanently deleted from the system.`)
+      showAlert("warning", `Rights owner "${rightsOwnerToDelete.name}" has been permanently deleted from the system.`)
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return
       }
-      handleError(error, "Failed to delete customer")
-      showAlert("error", "Failed to delete customer. Please try again.")
+      handleError(error, "Failed to delete rights owner")
+      showAlert("error", "Failed to delete rights owner. Please try again.")
     }
   }
 
-  // Open edit dialog with customer data
-  const openEditDialog = (customer: Customer) => {
-    setEditCustomer(customer)
-    setIsEditCustomerOpen(true)
+  // Open edit dialog with rights owner data
+  const openEditDialog = (rightsOwner: RightsOwner) => {
+    setEditRightsOwner(rightsOwner)
+    setIsEditRightsOwnerOpen(true)
   }
 
   // Open delete confirmation
-  const openDeleteDialog = (customerId: number) => {
-    setDeleteCustomerId(customerId)
+  const openDeleteDialog = (rightsOwnerId: number) => {
+    setDeleteRightsOwnerId(rightsOwnerId)
     setIsDeleteAlertOpen(true)
   }
 
@@ -447,7 +410,7 @@ export default function CustomerManagement() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Customers</BreadcrumbPage>
+                  <BreadcrumbPage>Rights Owners</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -477,86 +440,49 @@ export default function CustomerManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Customer Management</h2>
-            <p className="mb-6">Manage customers and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">Rights Owner Management</h2>
+            <p className="mb-6">Manage rights owners and their information.</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Customers</h3>
-                <Dialog open={isAddCustomerOpen} onOpenChange={setIsAddCustomerOpen}>
+                <h3 className="font-medium">Rights Owners</h3>
+                <Dialog open={isAddRightsOwnerOpen} onOpenChange={setIsAddRightsOwnerOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Customer
+                      Add Rights Owner
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Customer</DialogTitle>
-                      <DialogDescription>Create a new customer entry.</DialogDescription>
+                      <DialogTitle>Add New Rights Owner</DialogTitle>
+                      <DialogDescription>Create a new rights owner entry.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="customer_type">Customer Type</Label>
-                        <Select
-                          value={newCustomer.customer_type?.toString() || ""}
-                          onValueChange={(value) => setNewCustomer({ ...newCustomer, customer_type: value ? Number(value) : null })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select customer type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {customerTypes.map((type) => (
-                              <SelectItem key={type.id} value={type.id.toString()}>
-                                {type.display_name_en || type.name_en}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="institution_name">Institution Name</Label>
+                        <Label htmlFor="name">Name</Label>
                         <Input
-                          id="institution_name"
-                          value={newCustomer.institution_name}
-                          onChange={(e) => setNewCustomer({ ...newCustomer, institution_name: e.target.value })}
-                          placeholder="Enter institution name"
+                          id="name"
+                          value={newRightsOwner.name}
+                          onChange={(e) => setNewRightsOwner({ ...newRightsOwner, name: e.target.value })}
+                          placeholder="Enter rights owner name"
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="contact_person">Contact Person</Label>
-                        <Input
-                          id="contact_person"
-                          value={newCustomer.contact_person || ""}
-                          onChange={(e) => setNewCustomer({ ...newCustomer, contact_person: e.target.value })}
-                          placeholder="Enter contact person name"
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="phone">Phone</Label>
-                        <Input
-                          id="phone"
-                          value={newCustomer.phone || ""}
-                          onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
-                          placeholder="Enter phone number"
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          value={newCustomer.email || ""}
-                          onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
-                          placeholder="Enter email address"
+                        <Label htmlFor="contact_info">Contact Info</Label>
+                        <Textarea
+                          id="contact_info"
+                          value={newRightsOwner.contact_info || ""}
+                          onChange={(e) => setNewRightsOwner({ ...newRightsOwner, contact_info: e.target.value })}
+                          placeholder="Enter rights owner contact information"
                         />
                       </div>
                     </div>
                     <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsAddCustomerOpen(false)}>
+                      <Button variant="outline" onClick={() => setIsAddRightsOwnerOpen(false)}>
                         Cancel
                       </Button>
-                      <Button onClick={handleAddCustomer}>Add Customer</Button>
+                      <Button onClick={handleAddRightsOwner}>Add Rights Owner</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -566,37 +492,29 @@ export default function CustomerManagement() {
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Type</th>
-                        <th className="text-left font-medium p-2">Institution Name</th>
-                        <th className="text-left font-medium p-2">Contact Person</th>
-                        <th className="text-left font-medium p-2">Phone</th>
-                        <th className="text-left font-medium p-2">Email</th>
+                        <th className="text-left font-medium p-2">Name</th>
+                        <th className="text-left font-medium p-2">Contact Info</th>
                         <th className="text-right font-medium p-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {isLoading ? (
                         <tr>
-                          <td colSpan={6} className="py-8 text-center">
-                            Loading customers...
+                          <td colSpan={3} className="py-8 text-center">
+                            Loading rights owners...
                           </td>
                         </tr>
-                      ) : currentCustomers.length === 0 ? (
+                      ) : currentRightsOwners.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-8 text-center">
-                            No customers found
+                          <td colSpan={3} className="py-8 text-center">
+                            No rights owners found
                           </td>
                         </tr>
                       ) : (
-                        currentCustomers.map((customer) => (
-                          <tr key={customer.id} className="border-b last:border-0">
-                            <td className="p-2">
-                              {customerTypes.find(t => t.id === customer.customer_type)?.display_name_en || customerTypes.find(t => t.id === customer.customer_type)?.name_en || "N/A"}
-                            </td>
-                            <td className="p-2 font-medium">{customer.institution_name}</td>
-                            <td className="p-2">{customer.contact_person || "N/A"}</td>
-                            <td className="p-2">{customer.phone || "N/A"}</td>
-                            <td className="p-2">{customer.email || "N/A"}</td>
+                        currentRightsOwners.map((rightsOwner) => (
+                          <tr key={rightsOwner.id} className="border-b last:border-0">
+                            <td className="p-2 font-medium">{rightsOwner.name}</td>
+                            <td className="p-2">{rightsOwner.contact_info || rightsOwner.bio || "No contact info available"}</td>
                             <td className="p-2 text-right">
                               <div className="flex justify-end gap-2">
                                 {/* Desktop view - separate buttons */}
@@ -605,7 +523,7 @@ export default function CustomerManagement() {
                                     variant="outline"
                                     size="icon"
                                     className="h-8 w-8"
-                                    onClick={() => openEditDialog(customer)}
+                                    onClick={() => openEditDialog(rightsOwner)}
                                   >
                                     <Edit className="h-4 w-4" />
                                     <span className="sr-only">Edit</span>
@@ -614,7 +532,7 @@ export default function CustomerManagement() {
                                     variant="outline"
                                     size="icon"
                                     className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => openDeleteDialog(customer.id)}
+                                    onClick={() => openDeleteDialog(rightsOwner.id)}
                                   >
                                     <Trash2 className="h-4 w-4" />
                                     <span className="sr-only">Delete</span>
@@ -632,14 +550,14 @@ export default function CustomerManagement() {
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
                                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openEditDialog(customer)}>
+                                      <DropdownMenuItem onClick={() => openEditDialog(rightsOwner)}>
                                         <Edit className="h-4 w-4 mr-2" />
                                         Edit
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
                                         className="text-destructive"
-                                        onClick={() => openDeleteDialog(customer.id)}
+                                        onClick={() => openDeleteDialog(rightsOwner.id)}
                                       >
                                         <Trash2 className="h-4 w-4 mr-2" />
                                         Delete
@@ -657,7 +575,7 @@ export default function CustomerManagement() {
                 </div>
 
                 {/* Pagination Controls */}
-                {!isLoading && customers.length > 0 && (
+                {!isLoading && rightsOwners.length > 0 && (
                   <div className="flex items-center justify-between mt-4">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">Items per page:</span>
@@ -712,73 +630,38 @@ export default function CustomerManagement() {
         </div>
       </SidebarInset>
 
-      {/* Edit Customer Dialog */}
-      <Dialog open={isEditCustomerOpen} onOpenChange={setIsEditCustomerOpen}>
+      {/* Edit Rights Owner Dialog */}
+      <Dialog open={isEditRightsOwnerOpen} onOpenChange={setIsEditRightsOwnerOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Customer</DialogTitle>
-            <DialogDescription>Update customer information.</DialogDescription>
+            <DialogTitle>Edit Rights Owner</DialogTitle>
+            <DialogDescription>Update rights owner information.</DialogDescription>
           </DialogHeader>
-          {editCustomer && (
+          {editRightsOwner && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-customer_type">Customer Type</Label>
-                <Select
-                  value={editCustomer.customer_type?.toString() || ""}
-                  onValueChange={(value) => setEditCustomer({ ...editCustomer, customer_type: value ? Number(value) : null })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select customer type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customerTypes.map((type) => (
-                      <SelectItem key={type.id} value={type.id.toString()}>
-                        {type.display_name_en || type.name_en}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="edit-institution_name">Institution Name</Label>
+                <Label htmlFor="edit-name">Name</Label>
                 <Input
-                  id="edit-institution_name"
-                  value={editCustomer.institution_name}
-                  onChange={(e) => setEditCustomer({ ...editCustomer, institution_name: e.target.value })}
+                  id="edit-name"
+                  value={editRightsOwner.name}
+                  onChange={(e) => setEditRightsOwner({ ...editRightsOwner, name: e.target.value })}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-contact_person">Contact Person</Label>
-                <Input
-                  id="edit-contact_person"
-                  value={editCustomer.contact_person || ""}
-                  onChange={(e) => setEditCustomer({ ...editCustomer, contact_person: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="edit-phone">Phone</Label>
-                <Input
-                  id="edit-phone"
-                  value={editCustomer.phone || ""}
-                  onChange={(e) => setEditCustomer({ ...editCustomer, phone: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="edit-email">Email</Label>
-                <Input
-                  id="edit-email"
-                  type="email"
-                  value={editCustomer.email || ""}
-                  onChange={(e) => setEditCustomer({ ...editCustomer, email: e.target.value })}
+                <Label htmlFor="edit-contact_info">Contact Info</Label>
+                <Textarea
+                  id="edit-contact_info"
+                  value={editRightsOwner.contact_info || editRightsOwner.bio || ""}
+                  onChange={(e) => setEditRightsOwner({ ...editRightsOwner, contact_info: e.target.value })}
                 />
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditCustomerOpen(false)}>
+            <Button variant="outline" onClick={() => setIsEditRightsOwnerOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleUpdateCustomer}>Save Changes</Button>
+            <Button onClick={handleUpdateRightsOwner}>Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -789,11 +672,11 @@ export default function CustomerManagement() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteCustomerId !== null && (
+              {deleteRightsOwnerId !== null && (
                 <>
                   You are about to delete{" "}
-                  <strong>{customers.find((c) => c.id === deleteCustomerId)?.institution_name}</strong>. This action cannot be undone.
-                  This will permanently remove the customer from your system.
+                  <strong>{rightsOwners.find((r) => r.id === deleteRightsOwnerId)?.name}</strong>. This action cannot be undone.
+                  This will permanently remove the rights owner from your system.
                   <div className="mt-4">
                     <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
                     <Input
@@ -810,7 +693,7 @@ export default function CustomerManagement() {
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteCustomer}
+              onClick={handleDeleteRightsOwner}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={deleteConfirm !== "DELETE"}
             >

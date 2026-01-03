@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, ChevronDown, ChevronUp, Search, Link as LinkIcon, Trash2, Plus } from "lucide-react"
+import { FileText, Search, Plus, Loader2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -26,29 +26,28 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/hooks/use-toast"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { format } from "date-fns"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { cn } from "@/lib/utils"
-import { CalendarIcon } from "lucide-react"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 import { Checkbox } from "@/components/ui/checkbox"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api"
+import { API_URL } from "@/lib/config"
 
 interface Customer {
   id: number
-  institution_name: string
-  contact_person: string
+  institution_name?: string
+  name_en?: string
+  contact_person?: string
+  phone?: string
   customer_type?: string
+  type?: string
 }
 
 interface Warehouse {
   id: number
-  name_en: string
-  name_ar: string
+  name_en?: string
+  name_ar?: string
+  name?: string
 }
 
 interface Product {
@@ -68,38 +67,143 @@ interface Invoice {
   warehouse_name: string
   invoice_type_name: string
   payment_method_name: string
-  is_returnable: boolean
+  is_returnable?: boolean
   items: InvoiceItem[]
   total_amount: number
   total_paid: number
   remaining_amount: number
-  notes: string
-  created_at_formatted: string
-  created_by: number
-  updated_by: number
+  notes?: string
+  created_at_formatted?: string
+  created_by?: number
+  updated_by?: number
   created_at: string
-  updated_at: string
+  updated_at?: string
   selected?: boolean
+  status?: string
   // Nested objects from API
-  customer?: Customer
-  warehouse?: Warehouse
+  customer?: Customer | null
+  warehouse?: Warehouse | null
   invoice_type?: {
     id: number
     display_name_en?: string
     name_en?: string
     value?: string
-  }
+  } | null
   payment_method?: {
     id: number
     display_name_en?: string
     name_en?: string
     value?: string
-  }
+  } | null
 }
 
 interface InvoiceItem {
   id?: number
   product_name: string
+  quantity?: number | string
+  unit_price?: number | string
+  discount_percent?: number | string
+  tax_percent?: number | string
+  total_price?: number | string
+  paid_amount?: number | string
+  remaining_amount?: number | string
+  is_paid?: boolean
+  selected?: boolean
+  payment_status?: number
+  payment_status_display?: string
+  payment_summary?: any
+  // Nested product object from API
+  product?: Product | number
+}
+
+// API Response Types
+interface OutstandingPaymentInvoiceResponse {
+  id: number
+  composite_id?: string
+  customer?: Customer | null
+  customer_name?: string
+  customer_contact?: string
+  customer_type?: string | null
+  warehouse?: Warehouse | null
+  warehouse_name?: string
+  invoice_type?: {
+    id: number
+    display_name_en?: string
+    name_en?: string
+    value?: string
+  } | null
+  invoice_type_name?: string
+  payment_method?: {
+    id: number
+    display_name_en?: string
+    name_en?: string
+    value?: string
+  } | null
+  payment_method_name?: string
+  items?: InvoiceItem[]
+  invoice_items?: InvoiceItem[]
+  line_items?: InvoiceItem[]
+  total_amount: number | string
+  total_paid?: number | string
+  total_paid_amount?: number | string
+  remaining_amount?: number | string
+  created_at?: string
+  created_at_formatted?: string
+  updated_at?: string
+  notes?: string
+  is_returnable?: boolean
+}
+
+interface InvoiceSummaryResponse {
+  id: number
+  composite_id?: string
+  customer?: Customer | null
+  customer_name?: string
+  customer_contact?: string
+  customer_type?: string | null
+  warehouse?: Warehouse | null
+  warehouse_name?: string
+  invoice_type?: {
+    id: number
+    display_name_en?: string
+    name_en?: string
+    value?: string
+  } | null
+  invoice_type_name?: string
+  payment_method?: {
+    id: number
+    display_name_en?: string
+    name_en?: string
+    value?: string
+  } | null
+  payment_method_name?: string
+  items?: Array<{
+    id?: number
+    product?: Product | number
+    product_name?: string
+    quantity?: number | string
+    unit_price?: number | string
+    discount_percent?: number | string
+    tax_percent?: number | string
+    total_price?: number | string
+    paid_amount?: number | string
+    remaining_amount?: number | string
+    is_paid?: boolean
+  }>
+  total_amount: number | string
+  total_paid?: number | string
+  remaining_amount?: number | string
+  created_at?: string
+  created_at_formatted?: string
+  updated_at?: string
+  notes?: string
+  status?: string
+}
+
+interface InvoiceItemResponse {
+  id: number
+  product: Product | number
+  product_name?: string
   quantity: number | string
   unit_price: number | string
   discount_percent: number | string
@@ -107,10 +211,20 @@ interface InvoiceItem {
   total_price: number | string
   paid_amount?: number | string
   remaining_amount?: number | string
+  item_remaining_amount?: number | string
   is_paid?: boolean
-  selected?: boolean
-  // Nested product object from API
-  product?: Product
+  payment_status?: number
+  payment_status_display?: string
+  payment_summary?: any
+}
+
+interface PaymentMethodResponse {
+  id: number
+  value: string
+  display_name_en: string
+  display_name_ar?: string
+  name_en?: string
+  name_ar?: string
 }
 
 export default function OutstandingPaymentPage() {
@@ -120,41 +234,175 @@ export default function OutstandingPaymentPage() {
   const [dateRange, setDateRange] = useState<DateRange | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
-  const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [selectedTotal, setSelectedTotal] = useState(0)
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
   const [selectedItems, setSelectedItems] = useState<InvoiceItem[]>([])
-  const [isGenerateBillOpen, setIsGenerateBillOpen] = useState(false)
   const [isLoadingItems, setIsLoadingItems] = useState(false)
-  const [isConfirmBillOpen, setIsConfirmBillOpen] = useState(false)
   const [showOnlyUnpaid, setShowOnlyUnpaid] = useState(false)
 
-  const headers = {
+  // Individual operation loading states
+  const [isViewingInvoice, setIsViewingInvoice] = useState(false)
+  const [isCreatingBill, setIsCreatingBill] = useState(false)
+
+  // Consolidated dialog state - only one dialog can be open at a time
+  type DialogType = 'view' | 'generate' | 'confirm' | null
+  const [activeDialog, setActiveDialog] = useState<DialogType>(null)
+
+  // AbortController refs for request cancellation
+  const warehousesAbortControllerRef = useRef<AbortController | null>(null)
+  const invoicesAbortControllerRef = useRef<AbortController | null>(null)
+  const invoiceDetailsAbortControllerRef = useRef<AbortController | null>(null)
+  const billCreationAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoize headers to prevent recreation on every render
+  const headers = useMemo(() => ({
     "Content-Type": "application/json",
     Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+  }), [])
+
+  // Utility function for retry logic with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Check if request was aborted
+        if (options.signal?.aborted) {
+          throw new DOMException('The operation was aborted.', 'AbortError')
+        }
+        
+        const response = await fetch(url, options)
+        
+        // Don't retry on successful responses
+        if (response.ok) {
+          return response
+        }
+        
+        // Don't retry on 4xx client errors (except 429 rate limit)
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return response
+        }
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          throw lastError
+        }
+        
+        // Calculate delay with exponential backoff
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = (
+    error: unknown,
+    defaultMessage: string,
+    options?: {
+      title?: string
+      duration?: number
+      onError?: (error: Error) => void
+    }
+  ) => {
+    // Ignore abort errors silently
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return
+    }
+
+    // Log error in development
+    if (process.env.NODE_ENV !== 'production') {
+      console.error("Error:", error)
+    }
+
+    // Extract error message
+    let errorMessage = defaultMessage
+    if (error instanceof Error) {
+      errorMessage = error.message || defaultMessage
+    }
+
+    // Call custom error handler if provided
+    if (options?.onError && error instanceof Error) {
+      options.onError(error)
+    }
+
+    // Show toast notification
+    toast({
+      title: options?.title || "Error",
+      description: errorMessage,
+      variant: "destructive",
+      duration: options?.duration || 5000,
+    })
   }
 
   useEffect(() => {
     fetchWarehouses()
+    
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      warehousesAbortControllerRef.current?.abort()
+      invoicesAbortControllerRef.current?.abort()
+      invoiceDetailsAbortControllerRef.current?.abort()
+      billCreationAbortControllerRef.current?.abort()
+    }
   }, [])
 
+  // Debounce search query to reduce API calls if auto-search is enabled
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery)
+    }, 300) // 300ms delay
+
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
   const fetchWarehouses = async () => {
+    // Abort previous request if still pending
+    warehousesAbortControllerRef.current?.abort()
+    warehousesAbortControllerRef.current = new AbortController()
+    
     try {
-      const res = await fetch(`${API_URL}/inventory/warehouses/`, { headers })
+      const res = await fetchWithRetry(
+        `${API_URL}/inventory/warehouses/`,
+        {
+          headers,
+          signal: warehousesAbortControllerRef.current.signal
+        }
+      )
       const data = await res.json()
       setWarehouses(Array.isArray(data) ? data : data.results || [])
     } catch (error) {
-      console.error("Error fetching warehouses:", error)
-      toast({
-        title: "Error",
-        description: "Failed to fetch warehouses",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to fetch warehouses")
     }
   }
 
-  const fetchInvoices = async () => {
+  const fetchInvoices = async (searchOverride?: string) => {
+    // Abort previous request if still pending
+    invoicesAbortControllerRef.current?.abort()
+    invoicesAbortControllerRef.current = new AbortController()
+    
     setIsLoading(true)
     try {
       // Build query parameters
@@ -172,23 +420,28 @@ export default function OutstandingPaymentPage() {
         params.append('end_date', dateRange.to.toISOString().split('T')[0])
       }
       
-      if (searchQuery) {
-        params.append('search', searchQuery)
+      // Use searchOverride if provided (from button click), otherwise use debounced value (for auto-search)
+      const searchValue = searchOverride !== undefined ? searchOverride : debouncedSearchQuery
+      if (searchValue) {
+        params.append('search', searchValue)
       }
 
       // Use the new outstanding payments endpoint
       const url = `${API_URL}/sales/invoices/outstanding-payments/${params.toString() ? `?${params.toString()}` : ''}`
       
-      const response = await fetch(url, { headers })
+      const response = await fetchWithRetry(url, {
+        headers,
+        signal: invoicesAbortControllerRef.current.signal
+      })
       
       if (!response.ok) {
+        let errorMessage = `HTTP error! status: ${response.status}`
         if (response.status === 401) {
-          throw new Error('Authentication required. Please log in again.')
+          errorMessage = 'Authentication required. Please log in again.'
         } else if (response.status === 403) {
-          throw new Error('Access denied. You do not have permission to view this data.')
-        } else {
-          throw new Error(`HTTP error! status: ${response.status}`)
+          errorMessage = 'Access denied. You do not have permission to view this data.'
         }
+        throw new Error(errorMessage)
       }
       
       const data = await response.json()
@@ -203,21 +456,25 @@ export default function OutstandingPaymentPage() {
       } else if (data.data && Array.isArray(data.data)) {
         transformedInvoices = data.data
       } else {
-        console.warn('Unexpected API response structure:', data)
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('Unexpected API response structure:', data)
+        }
         transformedInvoices = []
       }
       
       // Transform the data to match our interface structure
-      const mappedInvoices = transformedInvoices.map((invoice: any) => {
+      const mappedInvoices = transformedInvoices.map((invoice: OutstandingPaymentInvoiceResponse) => {
         // Debug logging to see the actual structure
-        console.log('Invoice structure:', invoice)
-        console.log('Invoice customer:', invoice.customer)
-        console.log('Invoice warehouse:', invoice.warehouse)
-        console.log('Invoice invoice_type:', invoice.invoice_type)
-        console.log('Invoice payment_method:', invoice.payment_method)
-        console.log('Invoice items:', invoice.items)
-        console.log('Invoice invoice_items:', invoice.invoice_items)
-        console.log('Invoice composite_id:', invoice.composite_id)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('Invoice structure:', invoice)
+          console.log('Invoice customer:', invoice.customer)
+          console.log('Invoice warehouse:', invoice.warehouse)
+          console.log('Invoice invoice_type:', invoice.invoice_type)
+          console.log('Invoice payment_method:', invoice.payment_method)
+          console.log('Invoice items:', invoice.items)
+          console.log('Invoice invoice_items:', invoice.invoice_items)
+          console.log('Invoice composite_id:', invoice.composite_id)
+        }
         
         return {
           ...invoice,
@@ -254,25 +511,34 @@ export default function OutstandingPaymentPage() {
                               invoice.payment_method_name || 
                               'No Payment Method',
           // Ensure other properties are properly mapped
-          total_amount: invoice.total_amount || 0,
-          total_paid: invoice.total_paid || invoice.total_paid_amount || 0,
-          remaining_amount: invoice.remaining_amount || 
-                           (invoice.total_amount || 0) - (invoice.total_paid || invoice.total_paid_amount || 0),
+          total_amount: typeof invoice.total_amount === 'number' ? invoice.total_amount : parseFloat(String(invoice.total_amount || 0)),
+          total_paid: typeof invoice.total_paid === 'number' 
+            ? invoice.total_paid 
+            : typeof invoice.total_paid_amount === 'number'
+            ? invoice.total_paid_amount
+            : parseFloat(String(invoice.total_paid || invoice.total_paid_amount || 0)),
+          remaining_amount: typeof invoice.remaining_amount === 'number'
+            ? invoice.remaining_amount
+            : (typeof invoice.total_amount === 'number' ? invoice.total_amount : parseFloat(String(invoice.total_amount || 0))) - 
+              (typeof invoice.total_paid === 'number' ? invoice.total_paid : typeof invoice.total_paid_amount === 'number' ? invoice.total_paid_amount : parseFloat(String(invoice.total_paid || invoice.total_paid_amount || 0))),
           created_at: invoice.created_at || invoice.created_at_formatted || '',
           updated_at: invoice.updated_at || '',
           // Try multiple possible field names for items and map product names
-          items: (invoice.items || invoice.invoice_items || invoice.line_items || []).map((item: any) => ({
-            ...item,
-            // Map nested product object to flat product_name with multiple fallbacks
-            product_name: item.product?.name_en || 
-                         item.product?.title_en || 
-                         item.product?.title || 
-                         item.product?.name || 
-                         item.product_name || 
-                         'No Product Name',
-            // Keep the nested product object for reference
-            product: item.product
-          })),
+          items: (invoice.items || invoice.invoice_items || invoice.line_items || []).map((item: InvoiceItemResponse | InvoiceItem) => {
+            const product = typeof item.product === 'object' && item.product !== null ? item.product : null
+            return {
+              ...item,
+              // Map nested product object to flat product_name with multiple fallbacks
+              product_name: (product && 'name_en' in product ? product.name_en : null) ||
+                           (product && 'title_en' in product ? product.title_en : null) ||
+                           (product && 'title' in product ? product.title : null) ||
+                           (product && 'name' in product ? product.name : null) ||
+                           ('product_name' in item ? item.product_name : null) ||
+                           'No Product Name',
+              // Keep the nested product object for reference
+              product: item.product
+            }
+          }),
           selected: false
         }
       })
@@ -282,48 +548,59 @@ export default function OutstandingPaymentPage() {
       setInvoices(mappedInvoices)
       setHasSearched(true)
     } catch (error) {
-      console.error("Error fetching invoices:", error)
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch invoices"
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      handleError(error, "Failed to fetch invoices")
     } finally {
       setIsLoading(false)
     }
   }
 
   const handleViewInvoice = async (invoice: Invoice) => {
-    console.log('Viewing invoice:', invoice)
-    console.log('Invoice items:', invoice.items)
+    // Abort previous request if still pending
+    invoiceDetailsAbortControllerRef.current?.abort()
+    invoiceDetailsAbortControllerRef.current = new AbortController()
     
-    // Debug: Log the structure of each item
-    if (invoice.items && invoice.items.length > 0) {
-      console.log('First item structure:', invoice.items[0])
-      console.log('Item IDs:', invoice.items.map(item => ({ id: item.id, product_name: item.product_name })))
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('Viewing invoice:', invoice)
+      console.log('Invoice items:', invoice.items)
+      
+      // Debug: Log the structure of each item
+      if (invoice.items && invoice.items.length > 0) {
+        console.log('First item structure:', invoice.items[0])
+        console.log('Item IDs:', invoice.items.map(item => ({ id: item.id, product_name: item.product_name })))
+      }
     }
     
     // Always fetch the complete invoice details to ensure we have all the data
-      setIsLoadingItems(true)
-      try {
-      console.log('Fetching complete invoice details for:', invoice.id)
-      const response = await fetch(`${API_URL}/sales/invoices/${invoice.id}/summary/`, { headers })
+    setIsViewingInvoice(true)
+    setIsLoadingItems(true)
+    try {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Fetching complete invoice details for:', invoice.id)
+      }
+      const response = await fetchWithRetry(
+        `${API_URL}/sales/invoices/${invoice.id}/summary/`,
+        {
+          headers,
+          signal: invoiceDetailsAbortControllerRef.current.signal
+        }
+      )
         
         if (response.ok) {
-        const invoiceData = await response.json()
-        console.log('Fetched complete invoice:', invoiceData)
-        console.log('Invoice data structure:', {
-          customer_name: invoiceData.customer_name,
-          customer_contact: invoiceData.customer_contact,
-          customer: invoiceData.customer,
-          invoice_type_name: invoiceData.invoice_type_name,
-          invoice_type: invoiceData.invoice_type,
-          payment_method_name: invoiceData.payment_method_name,
-          payment_method: invoiceData.payment_method,
-          warehouse_name: invoiceData.warehouse_name,
-          warehouse: invoiceData.warehouse
-        })
+        const invoiceData: InvoiceSummaryResponse = await response.json()
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('Fetched complete invoice:', invoiceData)
+          console.log('Invoice data structure:', {
+            customer_name: invoiceData.customer_name,
+            customer_contact: invoiceData.customer_contact,
+            customer: invoiceData.customer,
+            invoice_type_name: invoiceData.invoice_type_name,
+            invoice_type: invoiceData.invoice_type,
+            payment_method_name: invoiceData.payment_method_name,
+            payment_method: invoiceData.payment_method,
+            warehouse_name: invoiceData.warehouse_name,
+            warehouse: invoiceData.warehouse
+          })
+        }
         
         // Map the complete invoice data with robust field mapping for summary API
         const mappedInvoice = {
@@ -363,7 +640,9 @@ export default function OutstandingPaymentPage() {
             // Check if this looks like a product type (common product types that might be confused)
             const productTypes = ['novel', 'book', 'magazine', 'journal', 'textbook', 'fiction', 'non-fiction']
             if (productTypes.includes(typeName.toLowerCase())) {
-              console.warn('Detected possible product type instead of invoice type:', typeName)
+              if (process.env.NODE_ENV !== 'production') {
+                console.warn('Detected possible product type instead of invoice type:', typeName)
+              }
               // Try to get the actual invoice type from the original invoice
               return invoice.invoice_type_name || 'No Type'
             }
@@ -384,7 +663,7 @@ export default function OutstandingPaymentPage() {
           created_at: invoiceData.created_at || invoiceData.created_at_formatted || '',
           updated_at: invoiceData.updated_at || '',
           // Map items from summary API (items are already in the correct format)
-          items: (invoiceData.items || []).map((item: any) => ({
+          items: (invoiceData.items || []).map((item) => ({
             ...item,
             // The summary API already provides product_name, so we use it directly
             product_name: item.product_name || 'No Product Name',
@@ -400,28 +679,44 @@ export default function OutstandingPaymentPage() {
         
         // Now fetch the detailed items to get payment status information
         try {
-          console.log('Fetching detailed items for invoice:', invoice.id)
-          const itemsResponse = await fetch(`${API_URL}/sales/invoices/${invoice.id}/items/`, { headers })
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('Fetching detailed items for invoice:', invoice.id)
+          }
+          const itemsResponse = await fetchWithRetry(
+            `${API_URL}/sales/invoices/${invoice.id}/items/`,
+            {
+              headers,
+              signal: invoiceDetailsAbortControllerRef.current.signal
+            }
+          )
           
           if (itemsResponse.ok) {
-            const itemsData = await itemsResponse.json()
-            console.log('Fetched detailed items:', itemsData)
+            const itemsData: { results?: InvoiceItemResponse[], items?: InvoiceItemResponse[] } | InvoiceItemResponse[] = await itemsResponse.json()
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('Fetched detailed items:', itemsData)
+            }
             
             // Merge the detailed items data with the summary data
-            const detailedItems = itemsData.results || itemsData.items || itemsData || []
-            console.log('Detailed items from API:', detailedItems)
+            const detailedItems: InvoiceItemResponse[] = Array.isArray(itemsData) 
+              ? itemsData 
+              : itemsData.results || itemsData.items || []
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('Detailed items from API:', detailedItems)
+            }
             
-            const mergedItems = mappedInvoice.items.map((summaryItem: any, index: number) => {
+            const mergedItems = mappedInvoice.items.map((summaryItem, index: number) => {
               // Try to match by ID first, then by index
-              const detailedItem = detailedItems.find((item: any) => item.id === summaryItem.id) || 
+              const detailedItem = detailedItems.find((item) => item.id === summaryItem.id) || 
                                   detailedItems.find((item: any) => item.product === summaryItem.product) ||
                                   detailedItems[index]
               
-              console.log(`Merging item ${index}:`, {
-                summaryItem,
-                detailedItem,
-                product: detailedItem?.product || summaryItem.product
-              })
+              if (process.env.NODE_ENV !== 'production') {
+                console.log(`Merging item ${index}:`, {
+                  summaryItem,
+                  detailedItem,
+                  product: detailedItem?.product || summaryItem.product
+                })
+              }
               
               return {
                 ...summaryItem,
@@ -440,35 +735,59 @@ export default function OutstandingPaymentPage() {
               }
             })
             
-            const finalInvoice = {
+            const finalInvoice: Invoice = {
               ...mappedInvoice,
-              items: mergedItems
+              items: mergedItems,
+              total_amount: typeof mappedInvoice.total_amount === 'number' ? mappedInvoice.total_amount : parseFloat(String(mappedInvoice.total_amount || 0)),
+              total_paid: typeof mappedInvoice.total_paid === 'number' ? mappedInvoice.total_paid : parseFloat(String(mappedInvoice.total_paid || 0)),
+              remaining_amount: typeof mappedInvoice.remaining_amount === 'number' ? mappedInvoice.remaining_amount : parseFloat(String(mappedInvoice.remaining_amount || 0))
             }
             
             setSelectedInvoice(finalInvoice)
         } else {
-            console.warn('Failed to fetch detailed items for invoice:', invoice.id)
-            setSelectedInvoice(mappedInvoice)
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn('Failed to fetch detailed items for invoice:', invoice.id)
+            }
+            const mappedInvoiceTyped: Invoice = {
+              ...mappedInvoice,
+              total_amount: typeof mappedInvoice.total_amount === 'number' ? mappedInvoice.total_amount : parseFloat(String(mappedInvoice.total_amount || 0)),
+              total_paid: typeof mappedInvoice.total_paid === 'number' ? mappedInvoice.total_paid : parseFloat(String(mappedInvoice.total_paid || 0)),
+              remaining_amount: typeof mappedInvoice.remaining_amount === 'number' ? mappedInvoice.remaining_amount : parseFloat(String(mappedInvoice.remaining_amount || 0))
+            }
+            setSelectedInvoice(mappedInvoiceTyped)
           }
         } catch (error) {
-          console.error('Error fetching detailed items:', error)
-          setSelectedInvoice(mappedInvoice)
+          // Non-critical error - detailed items fetch failed but we have summary data
+          // Log silently and use the summary data we already have
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Error fetching detailed items (using summary data):', error)
+          }
+          const mappedInvoiceTyped: Invoice = {
+            ...mappedInvoice,
+            total_amount: typeof mappedInvoice.total_amount === 'number' ? mappedInvoice.total_amount : parseFloat(String(mappedInvoice.total_amount || 0)),
+            total_paid: typeof mappedInvoice.total_paid === 'number' ? mappedInvoice.total_paid : parseFloat(String(mappedInvoice.total_paid || 0)),
+            remaining_amount: typeof mappedInvoice.remaining_amount === 'number' ? mappedInvoice.remaining_amount : parseFloat(String(mappedInvoice.remaining_amount || 0))
+          }
+          setSelectedInvoice(mappedInvoiceTyped)
         }
       } else {
-        console.warn('Failed to fetch complete invoice details for:', invoice.id)
-          setSelectedInvoice(invoice)
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('Failed to fetch complete invoice details for:', invoice.id)
         }
-      } catch (error) {
-      console.error('Error fetching complete invoice details:', error)
         setSelectedInvoice(invoice)
-      } finally {
-        setIsLoadingItems(false)
+      }
+    } catch (error) {
+      handleError(error, 'Failed to fetch complete invoice details')
+      setSelectedInvoice(invoice)
+    } finally {
+      setIsViewingInvoice(false)
+      setIsLoadingItems(false)
     }
     
     // Note: We now always fetch complete invoice details above, so this section is no longer needed
     
     setShowOnlyUnpaid(false) // Reset filter when opening new invoice
-    setIsViewInvoiceOpen(true)
+    setActiveDialog('view')
   }
 
   const handleResetFilters = () => {
@@ -487,20 +806,17 @@ export default function OutstandingPaymentPage() {
     ))
   }
 
-  const calculateSelectedTotal = () => {
-    const total = invoices
+  // Calculate selected total using useMemo for efficiency
+  const selectedTotal = useMemo(() => {
+    return invoices
       .filter(invoice => invoice.selected)
       .reduce((sum, invoice) => sum + (invoice.remaining_amount || 0), 0)
-    setSelectedTotal(total)
-  }
-
-  useEffect(() => {
-    calculateSelectedTotal()
   }, [invoices])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    fetchInvoices()
+    // Pass current searchQuery as override for immediate search on button click
+    fetchInvoices(searchQuery)
   }
 
   const handleItemSelect = (itemIndex: number) => {
@@ -533,12 +849,11 @@ export default function OutstandingPaymentPage() {
     }
 
     setSelectedItems(selectedItems)
-    setIsGenerateBillOpen(true)
+    setActiveDialog('generate')
   }
 
   const handleConfirmGenerateBill = () => {
-    setIsGenerateBillOpen(false)
-    setIsConfirmBillOpen(true)
+    setActiveDialog('confirm')
   }
 
   const generateComposedId = (originalInvoiceId: number, newBillId: number) => {
@@ -563,6 +878,86 @@ export default function OutstandingPaymentPage() {
     )
   }
 
+  // Rollback function for bill generation failures
+  const rollbackBillCreation = async (
+    invoiceId: number | undefined,
+    invoiceItemIds: number[],
+    paymentId: number | undefined,
+    headers: HeadersInit,
+    signal?: AbortSignal
+  ) => {
+    const rollbackErrors: string[] = []
+    
+    // Delete payment if created (best effort)
+    if (paymentId !== undefined) {
+      try {
+        const deletePaymentResponse = await fetchWithRetry(
+          `${API_URL}/sales/payments/${paymentId}/delete/`,
+          {
+            method: "DELETE",
+            headers,
+            signal,
+          }
+        )
+        if (!deletePaymentResponse.ok) {
+          rollbackErrors.push(`Failed to delete payment ${paymentId}`)
+        }
+      } catch (error) {
+        rollbackErrors.push(
+          `Error deleting payment ${paymentId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        )
+      }
+    }
+    
+    // Delete invoice items in reverse order (best effort)
+    for (const itemId of [...invoiceItemIds].reverse()) {
+      try {
+        const deleteResponse = await fetchWithRetry(
+          `${API_URL}/sales/invoice-items/${itemId}/delete/`,
+          {
+            method: "DELETE",
+            headers,
+            signal,
+          }
+        )
+        if (!deleteResponse.ok) {
+          rollbackErrors.push(`Failed to delete invoice item ${itemId}`)
+        }
+      } catch (error) {
+        rollbackErrors.push(
+          `Error deleting invoice item ${itemId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        )
+      }
+    }
+    
+    // Delete invoice (best effort)
+    if (invoiceId !== undefined) {
+      try {
+        const deleteInvoiceResponse = await fetchWithRetry(
+          `${API_URL}/sales/invoices/${invoiceId}/delete/`,
+          {
+            method: "DELETE",
+            headers,
+            signal,
+          }
+        )
+        if (!deleteInvoiceResponse.ok) {
+          rollbackErrors.push(`Failed to delete invoice ${invoiceId}`)
+        }
+      } catch (error) {
+        rollbackErrors.push(
+          `Error deleting invoice ${invoiceId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        )
+      }
+    }
+    
+    if (rollbackErrors.length > 0 && process.env.NODE_ENV !== 'production') {
+      console.error("Rollback errors:", rollbackErrors)
+    }
+    
+    return rollbackErrors
+  }
+
   const handleCreateNewBill = async () => {
     if (selectedItems.length === 0 || !selectedInvoice) {
       toast({
@@ -585,8 +980,17 @@ export default function OutstandingPaymentPage() {
       return
     }
 
+    // Track created entities for potential rollback
+    let invoiceId: number | undefined
+    let createdInvoiceItemIds: number[] = []
+    let createdPaymentId: number | undefined
+    
+    // Abort previous bill creation request if still pending
+    billCreationAbortControllerRef.current?.abort()
+    billCreationAbortControllerRef.current = new AbortController()
+    
     try {
-      setIsLoading(true)
+      setIsCreatingBill(true)
       const token = localStorage.getItem("accessToken")
       const headers = {
         "Content-Type": "application/json",
@@ -594,15 +998,23 @@ export default function OutstandingPaymentPage() {
       }
 
       const originalInvoiceId = selectedInvoice.id
-    const totalAmount = selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0)
+      const totalAmount = selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0)
 
-      console.log("Selected items for new bill:", selectedItems)
-      console.log("Original invoice data:", originalInvoice)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Selected items for new bill:", selectedItems)
+        console.log("Original invoice data:", originalInvoice)
+      }
 
       // Step 1: Get or create postpaid payment method (same as POS)
       let postpaidPaymentMethodId = null
       try {
-        const paymentMethodsResponse = await fetch(`${API_URL}/common/list-items/payment_method/`, { headers })
+        const paymentMethodsResponse = await fetchWithRetry(
+          `${API_URL}/common/list-items/payment_method/`,
+          {
+            headers,
+            signal: billCreationAbortControllerRef.current.signal
+          }
+        )
         if (paymentMethodsResponse.ok) {
           const paymentMethodsData = await paymentMethodsResponse.json()
           const paymentMethodsArray = Array.isArray(paymentMethodsData) ? paymentMethodsData : paymentMethodsData.results || []
@@ -616,15 +1028,19 @@ export default function OutstandingPaymentPage() {
             postpaidPaymentMethodId = postpaidMethod.id
           } else {
             // Create new postpaid payment method
-            const createPaymentMethodResponse = await fetch(`${API_URL}/common/list-items/payment_method/`, {
-              method: "POST",
-              headers,
-              body: JSON.stringify({
-                value: "postpaid",
-                display_name_en: "Postpaid",
-                display_name_ar: "مدفوع مسبقاً"
-              })
-            })
+            const createPaymentMethodResponse = await fetchWithRetry(
+              `${API_URL}/common/list-items/payment_method/`,
+              {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  value: "postpaid",
+                  display_name_en: "Postpaid",
+                  display_name_ar: "مدفوع مسبقاً"
+                }),
+                signal: billCreationAbortControllerRef.current.signal
+              }
+            )
             
             if (createPaymentMethodResponse.ok) {
               const newPaymentMethod = await createPaymentMethodResponse.json()
@@ -635,12 +1051,7 @@ export default function OutstandingPaymentPage() {
           }
         }
       } catch (error) {
-        console.error("Error handling payment method:", error)
-        toast({
-          title: "Error",
-          description: "Failed to setup payment method for new bill",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to setup payment method for new bill")
         return
       }
 
@@ -659,22 +1070,36 @@ export default function OutstandingPaymentPage() {
         } else {
           // If we still don't have it, try to fetch the original invoice details
           try {
-            console.log("Fetching original invoice details to get invoice type ID")
-            const originalInvoiceResponse = await fetch(`${API_URL}/sales/invoices/${selectedInvoice.id}/`, { headers })
+            if (process.env.NODE_ENV !== 'production') {
+              console.log("Fetching original invoice details to get invoice type ID")
+            }
+            const originalInvoiceResponse = await fetchWithRetry(
+              `${API_URL}/sales/invoices/${selectedInvoice.id}/`,
+              {
+                headers,
+                signal: billCreationAbortControllerRef.current.signal
+              }
+            )
             if (originalInvoiceResponse.ok) {
               const originalInvoiceData = await originalInvoiceResponse.json()
               if (originalInvoiceData.invoice_type?.id) {
                 originalInvoiceTypeId = originalInvoiceData.invoice_type.id
-                console.log("Found invoice type ID from API:", originalInvoiceTypeId)
+                if (process.env.NODE_ENV !== 'production') {
+                  console.log("Found invoice type ID from API:", originalInvoiceTypeId)
+                }
               }
             }
           } catch (error) {
-            console.warn("Failed to fetch original invoice details for type ID:", error)
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn("Failed to fetch original invoice details for type ID:", error)
+            }
           }
         }
       }
       
-      console.log("Using invoice type ID:", originalInvoiceTypeId, "for original invoice type:", originalInvoice.invoice_type_name)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Using invoice type ID:", originalInvoiceTypeId, "for original invoice type:", originalInvoice.invoice_type_name)
+      }
       
       const invoiceData = {
         customer_id: originalInvoice.customer.id,
@@ -689,63 +1114,45 @@ export default function OutstandingPaymentPage() {
       }
       
       // Debug: Log the exact data being sent
-      console.log("=== INVOICE CREATION DEBUG ===")
-      console.log("Original invoice ID:", originalInvoiceId)
-      console.log("Original invoice data:", originalInvoice)
-      console.log("Invoice data to send:", JSON.stringify(invoiceData, null, 2))
-      console.log("Expected main_invoice_id:", originalInvoiceId)
-      console.log("=== END DEBUG ===")
-      
-      console.log("Creating invoice with data:", invoiceData)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("=== INVOICE CREATION DEBUG ===")
+        console.log("Original invoice ID:", originalInvoiceId)
+        console.log("Original invoice data:", originalInvoice)
+        console.log("Invoice data to send:", JSON.stringify(invoiceData, null, 2))
+        console.log("Expected main_invoice_id:", originalInvoiceId)
+        console.log("=== END DEBUG ===")
+        console.log("Creating invoice with data:", invoiceData)
+      }
 
-      const invoiceResponse = await fetch(`${API_URL}/sales/invoices/`, {
+      const invoiceResponse = await fetchWithRetry(`${API_URL}/sales/invoices/`, {
         method: "POST",
         headers,
         body: JSON.stringify(invoiceData),
+        signal: billCreationAbortControllerRef.current.signal
       })
 
       if (!invoiceResponse.ok) {
         const errorData = await invoiceResponse.json()
-        console.error("Invoice creation error:", errorData)
+        if (process.env.NODE_ENV !== 'production') {
+          console.error("Invoice creation error:", errorData)
+        }
         throw new Error(errorData.message || errorData.detail || "Failed to create invoice")
       }
 
       const invoice = await invoiceResponse.json()
       const invoiceId = invoice.id
-      console.log("New invoice created:", invoice)
-      console.log("Invoice data sent to API:", invoiceData)
-      console.log("Expected main_invoice_id:", originalInvoiceId)
-      console.log("Expected composite_id format:", `${originalInvoiceId}_${invoiceId}`)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("New invoice created:", invoice)
+        console.log("Invoice data sent to API:", invoiceData)
+        console.log("Expected main_invoice_id:", originalInvoiceId)
+        console.log("Expected composite_id format:", `${originalInvoiceId}_${invoiceId}`)
+      }
 
-      // // Step 2.5: Update the invoice to ensure composite_id is set correctly
-      // const expectedCompositeId = `${originalInvoiceId}_${invoiceId}`
-      // console.log("Updating invoice to set composite_id:", expectedCompositeId)
+      // Step 3: Create invoice items in parallel (batched)
+      // createdInvoiceItemIds is already declared at function scope for rollback
       
-      // const updateInvoiceData = {
-      //   main_invoice_id: originalInvoiceId,
-      //   parent_invoice_id: originalInvoiceId, // Try alternative field name
-      //   composite_id: expectedCompositeId
-      // }
-      
-      // const updateInvoiceResponse = await fetch(`${API_URL}/sales/invoices/${invoiceId}/`, {
-      //   method: "PATCH",
-      //   headers,
-      //   body: JSON.stringify(updateInvoiceData),
-      // })
-      
-      // if (updateInvoiceResponse.ok) {
-      //   const updatedInvoice = await updateInvoiceResponse.json()
-      //   console.log("Invoice updated with composite_id:", updatedInvoice)
-      //   console.log("Updated invoice main_invoice_id:", updatedInvoice.main_invoice_id)
-      //   console.log("Updated invoice composite_id:", updatedInvoice.composite_id)
-      // } else {
-      //   const errorText = await updateInvoiceResponse.text()
-      //   console.warn("Failed to update invoice with composite_id:", errorText)
-      //   console.warn("Response status:", updateInvoiceResponse.status)
-      // }
-
-      // Step 3: Create invoice items (exactly like POS)
-      for (const item of selectedItems) {
+      // Prepare all item data and validate product IDs first
+      const itemDataPromises = selectedItems.map(async (item) => {
         const itemTotal = Number(item.total_price) || 0
         
         // Get the product ID - it should be available from the detailed items data
@@ -771,13 +1178,15 @@ export default function OutstandingPaymentPage() {
         }
         
         if (!productId) {
-          console.error("No product ID found for item:", item)
-          console.error("Item structure:", item)
-          console.error("Original invoice items:", invoices.find(inv => inv.id === selectedInvoice.id)?.items)
+          if (process.env.NODE_ENV !== 'production') {
+            console.error("No product ID found for item:", item)
+            console.error("Item structure:", item)
+            console.error("Original invoice items:", invoices.find(inv => inv.id === selectedInvoice.id)?.items)
+          }
           throw new Error(`No product ID found for item: ${item.product_name}`)
         }
         
-        const itemData = {
+        return {
           invoice: invoiceId,
           product: productId,
           quantity: Number(item.quantity) || 0,
@@ -788,22 +1197,76 @@ export default function OutstandingPaymentPage() {
           remaining_amount: 0, // No remaining amount since it's fully paid
           is_paid: true, // Mark as paid
         }
-
-        console.log("Creating item with data:", itemData)
-        const itemResponse = await fetch(`${API_URL}/sales/invoice-items/`, {
+      })
+      
+      // Wait for all item data to be prepared (validates all product IDs)
+      const allItemData = await Promise.all(itemDataPromises)
+      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Creating invoice items in parallel:", allItemData.length)
+      }
+      
+      // Create all invoice items in parallel using Promise.allSettled
+      const itemCreationPromises = allItemData.map(async (itemData) => {
+        const itemResponse = await fetchWithRetry(`${API_URL}/sales/invoice-items/`, {
           method: "POST",
           headers,
           body: JSON.stringify(itemData),
+          signal: billCreationAbortControllerRef.current?.signal,
         })
 
         if (!itemResponse.ok) {
           const errorData = await itemResponse.json()
-          console.error("Invoice item creation error:", errorData)
+          if (process.env.NODE_ENV !== 'production') {
+            console.error("Invoice item creation error:", errorData)
+          }
           throw new Error(errorData.message || errorData.detail || "Failed to create invoice item")
         }
 
         const createdItem = await itemResponse.json()
-        console.log("Created invoice item:", createdItem)
+        return createdItem
+      })
+      
+      // Wait for all items to be created
+      const itemResults = await Promise.allSettled(itemCreationPromises)
+      
+      // Check for failures
+      const failedItems: Array<{ item: typeof allItemData[0], error: Error }> = []
+      itemResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          createdInvoiceItemIds.push(result.value.id)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log("Created invoice item:", result.value)
+          }
+        } else {
+          failedItems.push({
+            item: allItemData[index],
+            error: result.reason instanceof Error ? result.reason : new Error(String(result.reason))
+          })
+        }
+      })
+      
+      // If any items failed to create, rollback and throw error with details
+      if (failedItems.length > 0) {
+        const errorMessages = failedItems.map(f => 
+          `Item ${f.item.product}: ${f.error.message}`
+        ).join('; ')
+        
+        // Rollback: Delete created invoice (items were not all created, so no need to delete them)
+        if (invoiceId !== undefined) {
+          try {
+            await rollbackBillCreation(invoiceId, [], undefined, headers, billCreationAbortControllerRef.current?.signal)
+          } catch (rollbackError) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.error("Rollback failed:", rollbackError)
+            }
+          }
+        }
+        
+        throw new Error(
+          `Failed to create ${failedItems.length} invoice item(s): ${errorMessages}. ` +
+          `The invoice has been rolled back. Please try again.`
+        )
       }
 
       // Step 4: Create payment record (exactly like POS)
@@ -814,42 +1277,122 @@ export default function OutstandingPaymentPage() {
         notes: `Payment for generated bill from invoice #${originalInvoice.composite_id || originalInvoiceId}`,
       }
 
-      const paymentResponse = await fetch(`${API_URL}/sales/payments/`, {
+      const paymentResponse = await fetchWithRetry(`${API_URL}/sales/payments/`, {
         method: "POST",
         headers,
         body: JSON.stringify(paymentData),
+        signal: billCreationAbortControllerRef.current?.signal,
       })
 
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json()
-        throw new Error(errorData.message || "Failed to create payment")
+        
+        // Rollback: Delete created invoice items and invoice (payment not created yet)
+        if (invoiceId !== undefined) {
+          try {
+            await rollbackBillCreation(
+              invoiceId,
+              createdInvoiceItemIds,
+              undefined,
+              headers,
+              billCreationAbortControllerRef.current?.signal
+            )
+          } catch (rollbackError) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.error("Rollback failed:", rollbackError)
+            }
+          }
+        }
+        
+        throw new Error(
+          `Failed to create payment: ${errorData.message || errorData.detail || "Unknown error"}. ` +
+          `The bill has been rolled back. Please try again.`
+        )
       }
 
-      console.log("Payment record created successfully")
+      const createdPayment = await paymentResponse.json()
+      createdPaymentId = createdPayment.id
+      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Payment record created successfully:", createdPayment)
+      }
 
-      // Step 5: Update original invoice items to mark them as paid
-      console.log("Updating original invoice items...")
-      for (const item of selectedItems) {
-        if (item.id) {
-          console.log(`Updating item ${item.id} in original invoice`)
-          const updateItemResponse = await fetch(`${API_URL}/sales/invoice-items/${item.id}/`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({
-              paid_amount: Number(item.total_price) || 0,
-              remaining_amount: 0,
-              is_paid: true,
-            }),
-          })
+      // Step 5: Update original invoice items to mark them as paid (in parallel)
+      // Filter items that have IDs (required for updates)
+      const itemsToUpdate = selectedItems.filter(item => item.id)
+      
+      if (itemsToUpdate.length === 0) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn("No items with IDs found to update in original invoice")
+        }
+      } else {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`Updating ${itemsToUpdate.length} original invoice items in parallel...`)
+        }
+        
+        // Prepare all update requests
+        const updatePromises = itemsToUpdate.map(async (item) => {
+          const updateData = {
+            paid_amount: Number(item.total_price) || 0,
+            remaining_amount: 0,
+            is_paid: true,
+          }
+          
+          const updateItemResponse = await fetchWithRetry(
+            `${API_URL}/sales/invoice-items/${item.id}/`,
+            {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify(updateData),
+              signal: billCreationAbortControllerRef.current?.signal,
+            }
+          )
 
           if (!updateItemResponse.ok) {
             const errorData = await updateItemResponse.json()
-            console.warn(`Failed to update item ${item.id} in original invoice:`, errorData)
-          } else {
-            console.log(`Successfully updated item ${item.id}`)
+            throw new Error(
+              `Failed to update item ${item.id}: ${errorData.message || errorData.detail || "Unknown error"}`
+            )
           }
-        } else {
-          console.warn("Item has no ID, cannot update:", item)
+
+          return { itemId: item.id, success: true }
+        })
+        
+        // Execute all updates in parallel
+        const updateResults = await Promise.allSettled(updatePromises)
+        
+        // Check for failures
+        const failedUpdates: Array<{ itemId: number | undefined, error: Error }> = []
+        updateResults.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`Successfully updated item ${itemsToUpdate[index].id}`)
+            }
+          } else {
+            failedUpdates.push({
+              itemId: itemsToUpdate[index].id,
+              error: result.reason instanceof Error ? result.reason : new Error(String(result.reason))
+            })
+          }
+        })
+        
+        // Log warnings for failed updates (non-blocking, as items are already in child bill)
+        if (failedUpdates.length > 0) {
+          const errorMessages = failedUpdates.map(f => 
+            `Item ${f.itemId}: ${f.error.message}`
+          ).join('; ')
+          
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`Failed to update ${failedUpdates.length} item(s) in original invoice:`, errorMessages)
+          }
+          
+          // Show warning toast but don't fail the entire operation
+          toast({
+            title: "Warning",
+            description: `Failed to update ${failedUpdates.length} item(s) in original invoice. The child bill was created successfully, but you may need to manually update the original invoice items.`,
+            variant: "default",
+            duration: 8000,
+          })
         }
       }
 
@@ -864,7 +1407,14 @@ export default function OutstandingPaymentPage() {
       // Generate composed ID after we have the new bill ID
       const composedId = generateComposedId(originalInvoiceId, invoiceId)
 
-      const updateOriginalInvoiceData: any = {
+      const updateOriginalInvoiceData: {
+        total_amount: number
+        total_paid: number
+        remaining_amount: number
+        notes: string
+        is_fully_paid?: boolean
+        status?: string
+      } = {
         total_amount: newTotalAmount,
         total_paid: newTotalPaid,
         remaining_amount: newRemainingAmount,
@@ -876,21 +1426,53 @@ export default function OutstandingPaymentPage() {
         updateOriginalInvoiceData.status = "paid"
       }
 
-      console.log("Updating original invoice with data:", updateOriginalInvoiceData)
-      const updateOriginalInvoiceResponse = await fetch(`${API_URL}/sales/invoices/${selectedInvoice.id}/`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify(updateOriginalInvoiceData),
-      })
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Updating original invoice with data:", updateOriginalInvoiceData)
+      }
+      const updateOriginalInvoiceResponse = await fetchWithRetry(
+        `${API_URL}/sales/invoices/${selectedInvoice.id}/`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(updateOriginalInvoiceData),
+          signal: billCreationAbortControllerRef.current.signal
+        }
+      )
 
       if (!updateOriginalInvoiceResponse.ok) {
         const errorData = await updateOriginalInvoiceResponse.json()
-        console.error("Failed to update original invoice:", errorData)
-        throw new Error(errorData.message || errorData.detail || "Failed to update original invoice")
+        if (process.env.NODE_ENV !== 'production') {
+          console.error("Failed to update original invoice:", errorData)
+        }
+        
+        // Rollback: Delete created payment, invoice items, and invoice
+        // The original invoice update is critical for data consistency
+        if (invoiceId !== undefined) {
+          try {
+            await rollbackBillCreation(
+              invoiceId,
+              createdInvoiceItemIds,
+              createdPaymentId,
+              headers,
+              billCreationAbortControllerRef.current?.signal
+            )
+          } catch (rollbackError) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.error("Rollback failed:", rollbackError)
+            }
+          }
+        }
+        
+        throw new Error(
+          `Failed to update original invoice: ${errorData.message || errorData.detail || "Unknown error"}. ` +
+          `The bill has been rolled back to maintain data consistency. Please try again.`
+        )
       }
 
       const updatedInvoice = await updateOriginalInvoiceResponse.json()
-      console.log("Updated original invoice:", updatedInvoice)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Updated original invoice:", updatedInvoice)
+      }
 
       // Success messages
 
@@ -916,9 +1498,7 @@ export default function OutstandingPaymentPage() {
       })
 
       // Close dialogs and refresh data
-    setIsGenerateBillOpen(false)
-      setIsConfirmBillOpen(false)
-    setIsViewInvoiceOpen(false)
+    setActiveDialog(null)
     setSelectedItems([])
     setSelectedInvoice(null)
 
@@ -927,38 +1507,87 @@ export default function OutstandingPaymentPage() {
 
       // Verify the new bill was created
       try {
-        const verifyResponse = await fetch(`${API_URL}/sales/invoices/${invoiceId}/`, { headers })
+        const verifyResponse = await fetchWithRetry(
+          `${API_URL}/sales/invoices/${invoiceId}/summary/`,
+          {
+            headers,
+            signal: billCreationAbortControllerRef.current.signal
+          }
+        )
         if (verifyResponse.ok) {
           const verifiedInvoice = await verifyResponse.json()
-          console.log("Verified new bill exists:", verifiedInvoice)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log("Verified new bill exists:", verifiedInvoice)
+          }
         } else {
-          console.warn("Could not verify new bill creation")
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn("Could not verify new bill creation")
+          }
         }
       } catch (error) {
-        console.warn("Error verifying new bill:", error)
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn("Error verifying new bill:", error)
+        }
       }
 
     } catch (error) {
-      console.error("Error creating new bill:", error)
+      if (process.env.NODE_ENV !== 'production') {
+        console.error("Error creating new bill:", error)
+      }
+      
       let errorMessage = "Failed to create new bill. Please try again."
+      let needsManualReconciliation = false
       
       if (error instanceof Error) {
         if (error.message.includes("composite_id")) {
           errorMessage = "Backend error: Invoice creation failed due to composite_id constraint. Please contact support."
         } else if (error.message.includes("Duplicate entry")) {
           errorMessage = "Backend error: Duplicate invoice entry. Please try again."
-        } else {
+        } else if (error.message.includes("rolled back")) {
+          // Rollback was already attempted
           errorMessage = error.message
+        } else if (error.message.includes("No product ID found") || error.message.includes("Failed to setup payment method")) {
+          // These errors occur before invoice creation, so no rollback needed
+          errorMessage = error.message
+        } else {
+          // For other errors that might occur after invoice creation, attempt rollback
+          // Check if we have invoiceId (means invoice was created)
+          if (invoiceId !== undefined && headers) {
+            try {
+              await rollbackBillCreation(
+                invoiceId,
+                createdInvoiceItemIds,
+                createdPaymentId,
+                headers,
+                billCreationAbortControllerRef.current?.signal
+              )
+              errorMessage = `${error.message} The bill has been rolled back. Please try again.`
+            } catch (rollbackError) {
+              // Rollback failed - need manual reconciliation
+              needsManualReconciliation = true
+              errorMessage = `${error.message} Rollback failed. Invoice ID: ${invoiceId}. Please contact support for manual reconciliation.`
+              if (process.env.NODE_ENV !== 'production') {
+                console.error("Rollback failed:", rollbackError)
+              }
+            }
+          } else {
+            errorMessage = error.message
+          }
         }
       }
       
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      // Create a new Error with the constructed message to ensure handleError uses it
+      const customError = new Error(errorMessage)
+      handleError(
+        customError,
+        errorMessage,
+        {
+          title: needsManualReconciliation ? "Error - Manual Reconciliation Required" : "Error",
+          duration: needsManualReconciliation ? 10000 : 5000,
+        }
+      )
     } finally {
-      setIsLoading(false)
+      setIsCreatingBill(false)
     }
   }
 
@@ -1143,10 +1772,19 @@ export default function OutstandingPaymentPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleViewInvoice(invoice)}
-                                disabled={isLoadingItems}
+                                disabled={isViewingInvoice}
                               >
-                                <FileText className="h-4 w-4 mr-2" />
-                                {isLoadingItems ? "Loading..." : "View"}
+                                {isViewingInvoice ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    Loading...
+                                  </>
+                                ) : (
+                                  <>
+                                    <FileText className="h-4 w-4 mr-2" />
+                                    View
+                                  </>
+                                )}
                               </Button>
                             </td>
                           </tr>
@@ -1162,7 +1800,7 @@ export default function OutstandingPaymentPage() {
       </SidebarInset>
 
       {/* View Invoice Dialog */}
-      <Dialog open={isViewInvoiceOpen} onOpenChange={setIsViewInvoiceOpen}>
+      <Dialog open={activeDialog === 'view'} onOpenChange={(open) => setActiveDialog(open ? 'view' : null)}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Outstanding Invoice Details</DialogTitle>
@@ -1244,10 +1882,19 @@ export default function OutstandingPaymentPage() {
                     </Button>
                   <Button
                     onClick={handleGenerateNewBill}
-                      disabled={!selectedInvoice.items?.some(item => item.selected && !item.is_paid) || isLoading}
+                      disabled={!selectedInvoice.items?.some(item => item.selected && !item.is_paid) || isCreatingBill}
                   >
-                    <Plus className="h-4 w-4 mr-2" />
-                      {isLoading ? "Processing..." : "Generate Child Bill"}
+                    {isCreatingBill ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Generate Child Bill
+                      </>
+                    )}
                   </Button>
                   </div>
                 </div>
@@ -1315,7 +1962,7 @@ export default function OutstandingPaymentPage() {
                                     {isPaid && <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">PAID</span>}
                                   </p>
                                   <p className={`text-sm ${isPaid ? 'text-green-600' : 'text-muted-foreground'}`}>
-                                    {item.product?.name_ar || item.product?.title_ar || 'No Arabic Title'}
+                                    {(typeof item.product === 'object' && item.product !== null ? (item.product.name_ar || item.product.title_ar) : null) || 'No Arabic Title'}
                                   </p>
                               </div>
                             </td>
@@ -1352,7 +1999,7 @@ export default function OutstandingPaymentPage() {
       </Dialog>
 
       {/* Generate New Bill Dialog */}
-      <Dialog open={isGenerateBillOpen} onOpenChange={setIsGenerateBillOpen}>
+      <Dialog open={activeDialog === 'generate'} onOpenChange={(open) => setActiveDialog(open ? 'generate' : null)}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Generate Child Bill</DialogTitle>
@@ -1423,7 +2070,7 @@ export default function OutstandingPaymentPage() {
                           <td className="p-2">
                             <div>
                               <p className="font-medium">{item.product_name || 'No Title'}</p>
-                              <p className="text-sm text-muted-foreground">{item.product?.name_ar || item.product?.title_ar || 'No Arabic Title'}</p>
+                              <p className="text-sm text-muted-foreground">{(typeof item.product === 'object' && item.product !== null ? (item.product.name_ar || item.product.title_ar) : null) || 'No Arabic Title'}</p>
                             </div>
                           </td>
                           <td className="p-2 text-right">{Number(item.quantity) || 0}</td>
@@ -1449,10 +2096,10 @@ export default function OutstandingPaymentPage() {
               </div>
 
               <div className="flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setIsGenerateBillOpen(false)} disabled={isLoading}>
+                <Button variant="outline" onClick={() => setActiveDialog(null)} disabled={isCreatingBill}>
                   Cancel
                 </Button>
-                <Button onClick={handleConfirmGenerateBill} disabled={isLoading}>
+                <Button onClick={handleConfirmGenerateBill} disabled={isCreatingBill}>
                   <Plus className="h-4 w-4 mr-2" />
                   Review & Create Child Bill
                 </Button>
@@ -1463,7 +2110,7 @@ export default function OutstandingPaymentPage() {
       </Dialog>
 
       {/* Confirmation Dialog */}
-      <Dialog open={isConfirmBillOpen} onOpenChange={setIsConfirmBillOpen}>
+      <Dialog open={activeDialog === 'confirm'} onOpenChange={(open) => setActiveDialog(open ? 'confirm' : null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Confirm Child Bill Creation</DialogTitle>
@@ -1487,12 +2134,21 @@ export default function OutstandingPaymentPage() {
             </div>
 
             <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setIsConfirmBillOpen(false)} disabled={isLoading}>
+              <Button variant="outline" onClick={() => setActiveDialog(null)} disabled={isCreatingBill}>
                 Cancel
               </Button>
-              <Button onClick={handleCreateNewBill} disabled={isLoading}>
-                <Plus className="h-4 w-4 mr-2" />
-                {isLoading ? "Creating..." : "Create Child Bill"}
+              <Button onClick={handleCreateNewBill} disabled={isCreatingBill}>
+                {isCreatingBill ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Child Bill
+                  </>
+                )}
               </Button>
             </div>
           </div>

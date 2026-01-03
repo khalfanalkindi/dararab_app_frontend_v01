@@ -60,7 +60,9 @@ export default function AccountPage() {
             role: parsedData.role || defaultData.role,
           }
         } catch (error) {
-          console.error("Error parsing user data:", error)
+          if (process.env.NODE_ENV !== 'production') {
+            console.error("Error parsing user data:", error)
+          }
         }
       }
     }
@@ -84,16 +86,19 @@ export default function AccountPage() {
   })
 
   // Alert state
-  const [actionAlert, setActionAlert] = useState({
+  type AlertType = "success" | "error" | "warning" | "info" | null;
+  
+  const [actionAlert, setActionAlert] = useState<{
+    type: AlertType;
+    message: string;
+  }>({
     type: null,
     message: "",
   })
 
   // Show alert message
-  type AlertType = "success" | "error" | "info";
-
-
-  const showAlert = (type: AlertType, message: string) => {
+  const showAlert = (type: Exclude<AlertType, null>, message: string) => {
+    setActionAlert({ type, message })
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
       setActionAlert({ type: null, message: "" })
@@ -220,7 +225,14 @@ export default function AccountPage() {
 
       localStorage.setItem("userData", JSON.stringify(updatedData))
     } catch (error) {
-      console.error("Error saving user data to localStorage:", error)
+      if (process.env.NODE_ENV !== 'production') {
+        console.error("Error saving user data to localStorage:", error)
+      }
+      toast({
+        title: "Error",
+        description: "Failed to save user data",
+        variant: "destructive",
+      })
     }
   }
 

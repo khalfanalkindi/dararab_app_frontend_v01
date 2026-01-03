@@ -1,8 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
+import { API_URL } from "@/lib/config"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -33,8 +34,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
-
 export default function ListManagementPage() {
   const [listTypes, setListTypes] = useState<any[]>([])
   const [listItems, setListItems] = useState<any[]>([])
@@ -58,6 +57,96 @@ export default function ListManagementPage() {
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
 
+  // AbortController refs for request cancellation
+  const fetchListTypesAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchListItemsAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchGenreOptionsAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchStatusOptionsAbortControllerRef = useRef<AbortController | null>(null)
+  const addListTypeAbortControllerRef = useRef<AbortController | null>(null)
+  const updateListTypeAbortControllerRef = useRef<AbortController | null>(null)
+  const deleteListTypeAbortControllerRef = useRef<AbortController | null>(null)
+  const addListItemAbortControllerRef = useRef<AbortController | null>(null)
+  const updateListItemAbortControllerRef = useRef<AbortController | null>(null)
+  const deleteListItemAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers object
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
+  }, [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+
+    toast({
+      title: "Error",
+      description: errorMessage,
+      variant: "destructive",
+    })
+  }, [])
+
   // Show alert message
   const showAlert = (type: "success" | "error" | "warning", message: string) => {
     setActionAlert({ type, message })
@@ -71,25 +160,48 @@ export default function ListManagementPage() {
     fetchListTypes()
     fetchGenreOptions()
     fetchStatusOptions()
-  }, [])
+
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      if (fetchListTypesAbortControllerRef.current) {
+        fetchListTypesAbortControllerRef.current.abort()
+      }
+      if (fetchListItemsAbortControllerRef.current) {
+        fetchListItemsAbortControllerRef.current.abort()
+      }
+      if (fetchGenreOptionsAbortControllerRef.current) {
+        fetchGenreOptionsAbortControllerRef.current.abort()
+      }
+      if (fetchStatusOptionsAbortControllerRef.current) {
+        fetchStatusOptionsAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWithRetry, handleError, headers])
 
   useEffect(() => {
     if (selectedType?.code) fetchListItems(selectedType.code)
   }, [selectedType])
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-  }
-
   const fetchListTypes = async () => {
+    // Cancel previous request if any
+    if (fetchListTypesAbortControllerRef.current) {
+      fetchListTypesAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    fetchListTypesAbortControllerRef.current = controller
+    
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_URL}/common/list-types/`, { headers })
+      const res = await fetchWithRetry(`${API_URL}/common/list-types/`, {
+        headers,
+        signal: controller.signal,
+      })
       const data = await res.json()
-      setListTypes(data)
-    } catch {
-      toast({ title: "Error", description: "Failed to load list types", variant: "destructive" })
+      // Handle both array and paginated response formats
+      setListTypes(Array.isArray(data) ? data : data.results || [])
+    } catch (error) {
+      handleError(error, "Failed to load list types")
       showAlert("error", "Failed to load list types. Please try again later.")
     } finally {
       setIsLoading(false)
@@ -97,82 +209,150 @@ export default function ListManagementPage() {
   }
 
   const fetchListItems = async (code: string) => {
+    // Cancel previous request if any
+    if (fetchListItemsAbortControllerRef.current) {
+      fetchListItemsAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    fetchListItemsAbortControllerRef.current = controller
+    
     try {
-      const res = await fetch(`${API_URL}/common/list-items/${code}/`, { headers })
+      const res = await fetchWithRetry(`${API_URL}/common/list-items/${code}/`, {
+        headers,
+        signal: controller.signal,
+      })
       const data = await res.json()
-      setListItems(data)
-    } catch {
-      toast({ title: "Error", description: "Failed to load list items", variant: "destructive" })
+      // Handle both array and paginated response formats
+      setListItems(Array.isArray(data) ? data : data.results || [])
+    } catch (error) {
+      handleError(error, "Failed to load list items")
       showAlert("error", "Failed to load list items. Please try again later.")
     }
   }
 
   const fetchGenreOptions = async () => {
+    // Cancel previous request if any
+    if (fetchGenreOptionsAbortControllerRef.current) {
+      fetchGenreOptionsAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    fetchGenreOptionsAbortControllerRef.current = controller
+    
     try {
-      const res = await fetch(`${API_URL}/common/list-items/genre/`, { headers })
+      const res = await fetchWithRetry(`${API_URL}/common/list-items/genre/`, {
+        headers,
+        signal: controller.signal,
+      })
       if (!res.ok) throw new Error("Failed to fetch genre options")
       const data = await res.json()
-      setGenreOptions(data)
+      // Handle both array and paginated response formats
+      setGenreOptions(Array.isArray(data) ? data : data.results || [])
     } catch (error) {
-      console.error("Error fetching genre options:", error)
+      handleError(error, "Failed to load genre options")
       showAlert("error", "Failed to load genre options")
     }
   }
 
   const fetchStatusOptions = async () => {
+    // Cancel previous request if any
+    if (fetchStatusOptionsAbortControllerRef.current) {
+      fetchStatusOptionsAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    fetchStatusOptionsAbortControllerRef.current = controller
+    
     try {
-      const res = await fetch(`${API_URL}/common/list-items/product_status/`, { headers })
+      const res = await fetchWithRetry(`${API_URL}/common/list-items/product_status/`, {
+        headers,
+        signal: controller.signal,
+      })
       if (!res.ok) throw new Error("Failed to fetch status options")
       const data = await res.json()
-      setStatusOptions(data)
+      // Handle both array and paginated response formats
+      setStatusOptions(Array.isArray(data) ? data : data.results || [])
     } catch (error) {
-      console.error("Error fetching status options:", error)
+      handleError(error, "Failed to load status options")
       showAlert("error", "Failed to load status options")
     }
   }
 
   const addListType = async () => {
+    // Cancel previous request if any
+    if (addListTypeAbortControllerRef.current) {
+      addListTypeAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    addListTypeAbortControllerRef.current = controller
+    
     try {
-      const res = await fetch(`${API_URL}/common/list-types/`, {
+      const res = await fetchWithRetry(`${API_URL}/common/list-types/`, {
         method: "POST",
         headers,
         body: JSON.stringify(newType),
+        signal: controller.signal,
       })
       const data = await res.json()
       setListTypes([...listTypes, data])
       setNewType({ name_en: "", name_ar: "", code: "" })
       toast({ title: "Type Added" })
       showAlert("success", `New list type "${data.name_en}" has been successfully added.`)
-    } catch {
-      toast({ title: "Error", description: "Failed to add type", variant: "destructive" })
+    } catch (error) {
+      handleError(error, "Failed to add type")
       showAlert("error", "Failed to add list type. Please try again.")
     }
   }
 
   const updateListType = async () => {
     if (!editType) return
+
+    // Cancel previous request if any
+    if (updateListTypeAbortControllerRef.current) {
+      updateListTypeAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    updateListTypeAbortControllerRef.current = controller
+
     try {
-      const res = await fetch(`${API_URL}/common/list-types/${editType.id}/`, {
+      const res = await fetchWithRetry(`${API_URL}/common/list-types/${editType.id}/`, {
         method: "PUT",
         headers,
         body: JSON.stringify(editType),
+        signal: controller.signal,
       })
       const data = await res.json()
       setListTypes(listTypes.map((t) => (t.id === data.id ? data : t)))
       setEditType(null)
       toast({ title: "Type Updated" })
       showAlert("success", `List type "${data.name_en}" has been successfully updated.`)
-    } catch {
-      toast({ title: "Error", description: "Failed to update type", variant: "destructive" })
+    } catch (error) {
+      handleError(error, "Failed to update type")
       showAlert("error", "Failed to update list type. Please try again.")
     }
   }
 
   const deleteListType = async () => {
     if (!deleteTypeId) return
+
+    // Cancel previous request if any
+    if (deleteListTypeAbortControllerRef.current) {
+      deleteListTypeAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    deleteListTypeAbortControllerRef.current = controller
+
     try {
       const typeToDelete = listTypes.find((t) => t.id === deleteTypeId)
-      await fetch(`${API_URL}/common/list-types/${deleteTypeId}/delete/`, { method: "DELETE", headers })
+      await fetchWithRetry(`${API_URL}/common/list-types/${deleteTypeId}/delete/`, {
+        method: "DELETE",
+        headers,
+        signal: controller.signal,
+      })
       setListTypes(listTypes.filter((t) => t.id !== deleteTypeId))
       if (selectedType?.id === deleteTypeId) {
         setSelectedType(null)
@@ -181,61 +361,94 @@ export default function ListManagementPage() {
       setDeleteTypeId(null)
       toast({ title: "Type Deleted" })
       showAlert("warning", `List type "${typeToDelete?.name_en}" has been permanently deleted.`)
-    } catch {
-      toast({ title: "Error", description: "Failed to delete type", variant: "destructive" })
+    } catch (error) {
+      handleError(error, "Failed to delete type")
       showAlert("error", "Failed to delete list type. Please try again.")
     }
   }
 
   const addListItem = async () => {
     if (!selectedType) return
+
+    // Cancel previous request if any
+    if (addListItemAbortControllerRef.current) {
+      addListItemAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    addListItemAbortControllerRef.current = controller
+    
     try {
-      const res = await fetch(`${API_URL}/common/list-items/`, {
+      const res = await fetchWithRetry(`${API_URL}/common/list-items/`, {
         method: "POST",
         headers,
         body: JSON.stringify({ ...newItem, list_type: selectedType.id }),
+        signal: controller.signal,
       })
       const data = await res.json()
       setListItems([...listItems, data])
       setNewItem({ value: "", display_name_en: "", display_name_ar: "" })
       toast({ title: "Item Added" })
       showAlert("success", `New list item "${data.display_name_en}" has been successfully added.`)
-    } catch {
-      toast({ title: "Error", description: "Failed to add item", variant: "destructive" })
+    } catch (error) {
+      handleError(error, "Failed to add item")
       showAlert("error", "Failed to add list item. Please try again.")
     }
   }
 
   const updateListItem = async () => {
     if (!editItem) return
+
+    // Cancel previous request if any
+    if (updateListItemAbortControllerRef.current) {
+      updateListItemAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    updateListItemAbortControllerRef.current = controller
+
     try {
-      const res = await fetch(`${API_URL}/common/list-items/${editItem.id}/`, {
+      const res = await fetchWithRetry(`${API_URL}/common/list-items/${editItem.id}/`, {
         method: "PUT",
         headers,
         body: JSON.stringify(editItem),
+        signal: controller.signal,
       })
       const data = await res.json()
       setListItems(listItems.map((i) => (i.id === data.id ? data : i)))
       setEditItem(null)
       toast({ title: "Item Updated" })
       showAlert("success", `List item "${data.display_name_en}" has been successfully updated.`)
-    } catch {
-      toast({ title: "Error", description: "Failed to update item", variant: "destructive" })
+    } catch (error) {
+      handleError(error, "Failed to update item")
       showAlert("error", "Failed to update list item. Please try again.")
     }
   }
 
   const deleteListItem = async () => {
     if (!deleteItemId) return
+
+    // Cancel previous request if any
+    if (deleteListItemAbortControllerRef.current) {
+      deleteListItemAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    deleteListItemAbortControllerRef.current = controller
+
     try {
       const itemToDelete = listItems.find((i) => i.id === deleteItemId)
-      await fetch(`${API_URL}/common/list-items/${deleteItemId}/delete/`, { method: "DELETE", headers })
+      await fetchWithRetry(`${API_URL}/common/list-items/${deleteItemId}/delete/`, {
+        method: "DELETE",
+        headers,
+        signal: controller.signal,
+      })
       setListItems(listItems.filter((i) => i.id !== deleteItemId))
       setDeleteItemId(null)
       toast({ title: "Item Deleted" })
       showAlert("warning", `List item "${itemToDelete?.display_name_en}" has been permanently deleted.`)
-    } catch {
-      toast({ title: "Error", description: "Failed to delete item", variant: "destructive" })
+    } catch (error) {
+      handleError(error, "Failed to delete item")
       showAlert("error", "Failed to delete list item. Please try again.")
     }
   }

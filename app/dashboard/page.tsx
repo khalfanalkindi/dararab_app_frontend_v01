@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../components/app-sidebar"
+import { API_URL } from "@/lib/config"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -15,8 +16,6 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FileText, CheckCircle2, AlertCircle, Clock, Users, DollarSign, Receipt, TrendingUp, BookOpen } from "lucide-react"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ResponsiveContainer } from "recharts"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
 
 interface DashboardStats {
   totalProjects: number
@@ -70,6 +69,81 @@ export default function Dashboard() {
   })
   const [isLoading, setIsLoading] = useState(true)
 
+  // AbortController refs for request cancellation
+  const fetchStatsAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers object
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
+  }, [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+  }, [])
+
   // Mock sales data
   const salesData: SalesData[] = [
     { month: 'Jan', sales: 45, revenue: 4500 },
@@ -103,58 +177,116 @@ export default function Dashboard() {
   ]
 
   useEffect(() => {
-    // Log the access token for debugging
+    // Log the access token for debugging (kept for testing purposes)
     const accessToken = localStorage.getItem("accessToken")
     console.log("Access Token:", accessToken)
     
+    // Cancel previous request if any
+    if (fetchStatsAbortControllerRef.current) {
+      fetchStatsAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    fetchStatsAbortControllerRef.current = controller
+    
     const fetchStats = async () => {
       try {
-        const headers = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
+        // Fetch all data in parallel
+        const [projectsRes, authorsRes, translatorsRes, rightsOwnersRes, reviewersRes] = await Promise.allSettled([
+          fetchWithRetry(`${API_URL}/inventory/projects/`, {
+            headers,
+            signal: controller.signal,
+          }),
+          fetchWithRetry(`${API_URL}/inventory/authors/`, {
+            headers,
+            signal: controller.signal,
+          }),
+          fetchWithRetry(`${API_URL}/inventory/translators/`, {
+            headers,
+            signal: controller.signal,
+          }),
+          fetchWithRetry(`${API_URL}/inventory/rights-owners/`, {
+            headers,
+            signal: controller.signal,
+          }),
+          fetchWithRetry(`${API_URL}/inventory/reviewers/`, {
+            headers,
+            signal: controller.signal,
+          }),
+        ])
+
+        // Process projects
+        let projects: any[] = []
+        if (projectsRes.status === 'fulfilled' && projectsRes.value.ok) {
+          const projectsData = await projectsRes.value.json()
+          projects = Array.isArray(projectsData) ? projectsData : projectsData.results || []
+        } else if (projectsRes.status === 'rejected') {
+          throw new Error(`Projects API error: ${projectsRes.reason}`)
+        } else if (projectsRes.status === 'fulfilled' && !projectsRes.value.ok) {
+          throw new Error(`Projects API error: ${projectsRes.value.status}`)
         }
 
-        // Fetch projects
-        const projectsRes = await fetch(`${API_URL}/inventory/projects/`, { headers })
-        if (!projectsRes.ok) {
-          throw new Error(`Projects API error: ${projectsRes.status}`)
+        // Process authors
+        let authors: any[] = []
+        if (authorsRes.status === 'fulfilled' && authorsRes.value.ok) {
+          const authorsData = await authorsRes.value.json()
+          authors = Array.isArray(authorsData) ? authorsData : authorsData.results || []
+        } else if (authorsRes.status === 'rejected') {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Authors API error:', authorsRes.reason)
+          }
+        } else if (authorsRes.status === 'fulfilled' && !authorsRes.value.ok) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`Authors API error: ${authorsRes.value.status}`)
+          }
         }
-        const projectsData = await projectsRes.json()
-        // Handle both array and object responses
-        const projects = Array.isArray(projectsData) ? projectsData : projectsData.results || []
+
+        // Process translators
+        let translators: any[] = []
+        if (translatorsRes.status === 'fulfilled' && translatorsRes.value.ok) {
+          const translatorsData = await translatorsRes.value.json()
+          translators = Array.isArray(translatorsData) ? translatorsData : translatorsData.results || []
+        } else if (translatorsRes.status === 'rejected') {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Translators API error:', translatorsRes.reason)
+          }
+        } else if (translatorsRes.status === 'fulfilled' && !translatorsRes.value.ok) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`Translators API error: ${translatorsRes.value.status}`)
+          }
+        }
+
+        // Process rights owners
+        let rightsOwners: any[] = []
+        if (rightsOwnersRes.status === 'fulfilled' && rightsOwnersRes.value.ok) {
+          const rightsOwnersData = await rightsOwnersRes.value.json()
+          rightsOwners = Array.isArray(rightsOwnersData) ? rightsOwnersData : rightsOwnersData.results || []
+        } else if (rightsOwnersRes.status === 'rejected') {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Rights Owners API error:', rightsOwnersRes.reason)
+          }
+        } else if (rightsOwnersRes.status === 'fulfilled' && !rightsOwnersRes.value.ok) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`Rights Owners API error: ${rightsOwnersRes.value.status}`)
+          }
+        }
+
+        // Process reviewers
+        let reviewers: any[] = []
+        if (reviewersRes.status === 'fulfilled' && reviewersRes.value.ok) {
+          const reviewersData = await reviewersRes.value.json()
+          reviewers = Array.isArray(reviewersData) ? reviewersData : reviewersData.results || []
+        } else if (reviewersRes.status === 'rejected') {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Reviewers API error:', reviewersRes.reason)
+          }
+        } else if (reviewersRes.status === 'fulfilled' && !reviewersRes.value.ok) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`Reviewers API error: ${reviewersRes.value.status}`)
+          }
+        }
+
         const approvedProjects = projects.filter((p: any) => p.approval_status === true).length
-
-        // Fetch authors
-        const authorsRes = await fetch(`${API_URL}/inventory/authors/`, { headers })
-        if (!authorsRes.ok) {
-          throw new Error(`Authors API error: ${authorsRes.status}`)
-        }
-        const authorsData = await authorsRes.json()
-        const authors = Array.isArray(authorsData) ? authorsData : authorsData.results || []
-
-        // Fetch translators
-        const translatorsRes = await fetch(`${API_URL}/inventory/translators/`, { headers })
-        if (!translatorsRes.ok) {
-          throw new Error(`Translators API error: ${translatorsRes.status}`)
-        }
-        const translatorsData = await translatorsRes.json()
-        const translators = Array.isArray(translatorsData) ? translatorsData : translatorsData.results || []
-
-        // Fetch rights owners
-        const rightsOwnersRes = await fetch(`${API_URL}/inventory/rights-owners/`, { headers })
-        if (!rightsOwnersRes.ok) {
-          throw new Error(`Rights Owners API error: ${rightsOwnersRes.status}`)
-        }
-        const rightsOwnersData = await rightsOwnersRes.json()
-        const rightsOwners = Array.isArray(rightsOwnersData) ? rightsOwnersData : rightsOwnersData.results || []
-
-        // Fetch reviewers
-        const reviewersRes = await fetch(`${API_URL}/inventory/reviewers/`, { headers })
-        if (!reviewersRes.ok) {
-          throw new Error(`Reviewers API error: ${reviewersRes.status}`)
-        }
-        const reviewersData = await reviewersRes.json()
-        const reviewers = Array.isArray(reviewersData) ? reviewersData : reviewersData.results || []
 
         // Calculate percentages safely
         const totalProjects = projects.length
@@ -177,14 +309,16 @@ export default function Dashboard() {
           booksSold: 180 // Mock data
         })
 
-        // Log the data for debugging
-        console.log('Projects:', projects)
-        console.log('Authors:', authors)
-        console.log('Translators:', translators)
-        console.log('Rights Owners:', rightsOwners)
-        console.log('Reviewers:', reviewers)
+        // Log the data for debugging (only in development)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('Projects:', projects)
+          console.log('Authors:', authors)
+          console.log('Translators:', translators)
+          console.log('Rights Owners:', rightsOwners)
+          console.log('Reviewers:', reviewers)
+        }
       } catch (error) {
-        console.error("Error fetching dashboard stats:", error)
+        handleError(error, "Error fetching dashboard stats")
         // Set default values in case of error
         setStats({
           totalProjects: 0,
@@ -207,7 +341,14 @@ export default function Dashboard() {
     }
 
     fetchStats()
-  }, [])
+
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      if (fetchStatsAbortControllerRef.current) {
+        fetchStatsAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWithRetry, handleError, headers])
 
   return (
     <SidebarProvider>

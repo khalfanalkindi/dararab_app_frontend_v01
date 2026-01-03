@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -19,8 +19,8 @@ import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { addDays } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { API_URL } from "@/lib/config"
+import { toast } from "@/hooks/use-toast"
 
 interface WarehouseStats {
   totalIncome: number
@@ -51,40 +51,182 @@ export default function WarehouseStats() {
   // Colors for charts
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8']
 
-  // Fetch warehouses on mount
-  useEffect(() => {
-    const fetchWarehouses = async () => {
-      try {
-        const token = localStorage.getItem("accessToken");
-        const headers = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        };
-        const res = await fetch(`${API_URL}/inventory/warehouses/`, { headers })
-        const data = await res.json()
-        setWarehouses(Array.isArray(data) ? data : data.results || [])
-      } catch (e) {
-        setWarehouses([])
+  // AbortController refs for request cancellation
+  const warehousesAbortControllerRef = useRef<AbortController | null>(null)
+  const statsAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers to avoid recreating on every render
+  const headers = useMemo(() => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+  }), [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
       }
+      return
     }
-    fetchWarehouses()
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
   }, [])
 
+  // Retry utility function with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Check if request was aborted
+        if (options.signal?.aborted) {
+          throw new DOMException('The operation was aborted.', 'AbortError')
+        }
+        
+        const response = await fetch(url, options)
+        
+        // Don't retry on successful responses
+        if (response.ok) {
+          return response
+        }
+        
+        // Don't retry on 4xx client errors (except 429 Too Many Requests)
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return response // Return the error response without retrying
+        }
+        
+        // For 5xx server errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`)
+        }
+        
+        // For other errors, return the response
+        return response
+      } catch (error) {
+        lastError = error as Error
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry if this was the last attempt
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Calculate exponential backoff delay: baseDelay * 2^attempt
+        const delay = baseDelay * Math.pow(2, attempt)
+        
+        // Wait before retrying (respect abort signal)
+        await new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(resolve, delay)
+          
+          // If aborted during wait, clear timeout and reject
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              clearTimeout(timeoutId)
+              reject(new DOMException('The operation was aborted.', 'AbortError'))
+            }, { once: true })
+          }
+        })
+      }
+    }
+    
+    // If we get here, all retries failed
+    throw lastError || new Error('Request failed after retries')
+  }, [])
+
+  // Fetch warehouses on mount
+  const fetchWarehouses = useCallback(async () => {
+    // Cancel previous request if still pending
+    if (warehousesAbortControllerRef.current) {
+      warehousesAbortControllerRef.current.abort()
+    }
+    
+    // Create new AbortController for this request
+    const abortController = new AbortController()
+    warehousesAbortControllerRef.current = abortController
+    
+    try {
+      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/`, { 
+        headers,
+        signal: abortController.signal
+      })
+      
+      if (!res.ok) {
+        throw new Error(`Failed to fetch warehouses: ${res.status} ${res.statusText}`)
+      }
+      
+      const data = await res.json()
+      setWarehouses(Array.isArray(data) ? data : data.results || [])
+    } catch (error) {
+      // Handle AbortError silently
+      if (error instanceof Error && error.name === 'AbortError') {
+        return // Request was cancelled, ignore
+      }
+      
+      handleError(error, "Failed to fetch warehouses")
+      setWarehouses([])
+      toast({
+        title: "Error",
+        description: "Failed to load warehouses. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }, [headers, fetchWithRetry, handleError])
+
+  useEffect(() => {
+    fetchWarehouses()
+    
+    // Cleanup: abort request when component unmounts
+    return () => {
+      if (warehousesAbortControllerRef.current) {
+        warehousesAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWarehouses])
+
   // Fetch stats only after user clicks button
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     if (!selectedWarehouse || !dateRange?.from || !dateRange?.to) return
+    
+    // Cancel previous request if still pending
+    if (statsAbortControllerRef.current) {
+      statsAbortControllerRef.current.abort()
+    }
+    
+    // Create new AbortController for this request
+    const abortController = new AbortController()
+    statsAbortControllerRef.current = abortController
+    
     setIsLoading(true)
     setHasSearched(true)
     try {
       const params = new URLSearchParams({ warehouse_id: selectedWarehouse })
       if (dateRange.from) params.set('start_date', dateRange.from.toISOString().slice(0, 10))
       if (dateRange.to) params.set('end_date', dateRange.to.toISOString().slice(0, 10))
-      const token = localStorage.getItem("accessToken");
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      };
-      const res = await fetch(`${API_URL}/sales/warehouse-dashboard/?${params}`, { headers })
+      
+      const res = await fetchWithRetry(`${API_URL}/sales/warehouse-dashboard/?${params}`, { 
+        headers,
+        signal: abortController.signal
+      })
+      
+      if (!res.ok) {
+        throw new Error(`Failed to fetch warehouse statistics: ${res.status} ${res.statusText}`)
+      }
+      
       const data = await res.json()
       setStats({
         totalIncome: data.total_income,
@@ -103,12 +245,35 @@ export default function WarehouseStats() {
         })),
         dailySales: data.daily_sales,
       })
-    } catch (e) {
+    } catch (error) {
+      // Handle AbortError silently
+      if (error instanceof Error && error.name === 'AbortError') {
+        return // Request was cancelled, ignore
+      }
+      
+      handleError(error, "Failed to fetch warehouse statistics")
       setStats(null)
+      toast({
+        title: "Error",
+        description: "Failed to load warehouse statistics. Please try again.",
+        variant: "destructive",
+      })
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [selectedWarehouse, dateRange, headers, fetchWithRetry, handleError])
+
+  // Cleanup: Cancel all pending requests on component unmount
+  useEffect(() => {
+    return () => {
+      if (warehousesAbortControllerRef.current) {
+        warehousesAbortControllerRef.current.abort()
+      }
+      if (statsAbortControllerRef.current) {
+        statsAbortControllerRef.current.abort()
+      }
+    }
+  }, [])
 
   return (
     <SidebarProvider>

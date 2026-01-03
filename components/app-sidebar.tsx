@@ -111,6 +111,10 @@ const data = {
           title: "Customers",
           url: "/definitions/customers",
         },
+        {
+          title: "Rights Owners",
+          url: "/definitions/rights_owner",
+        },
       ]
     },
     {

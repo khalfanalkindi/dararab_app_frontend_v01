@@ -68,15 +68,14 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import jsPDF from "jspdf"
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { ReceiptContent } from "@/components/receipt/ReceiptContent"
+import { API_URL } from "@/lib/config"
 
 interface Product {
   id: number;
@@ -92,6 +91,9 @@ interface Product {
   editions_count: number;
   stock: number | null;
   latest_price: string | null;
+  latest_price_omr: string | null;
+  price: string | null;
+  price_omr: string | null;
   latest_cost: string | null;
   cover_design_url: string | null;
   warehouse_stock?: number;
@@ -103,7 +105,7 @@ interface Customer {
   contact_person: string
   phone: string
   email: string
-  type?: number
+  customer_type?: number | null
 }
 
 interface CartItem {
@@ -124,6 +126,7 @@ interface Warehouse {
   id: number
   name_en: string
   name_ar: string
+  location: string
 }
 
 interface PaymentMethod {
@@ -146,9 +149,174 @@ interface SummaryData {
   };
 }
 
+// Custom hook for cart calculations - consolidates all payment-related calculations
+const useCartCalculations = (
+  cart: CartItem[],
+  discountPercentage: number,
+  taxPercentage: number,
+  calculateItemTotal: (item: CartItem) => number,
+  calculateItemSubtotal: (item: CartItem) => number,
+  selectedCustomer: Customer | null,
+  customerTypes: any[]
+) => {
+  // Calculate subtotal from all cart items (BEFORE global discount)
+  const subtotal = useMemo(() => {
+    return cart.reduce((sum, item) => sum + calculateItemSubtotal(item), 0);
+  }, [cart, calculateItemSubtotal]);
+
+  // Create a stable signature of cart items that affect grand total
+  const cartTotalSignature = useMemo(() => {
+    if (cart.length === 0) return '';
+    return cart.map(item => {
+      const price = item.product.price || item.product.latest_price;
+      const priceValue = price ? parseFloat(price) : 0;
+      return `${item.product.id}:${item.quantity}:${item.discount_percent}:${priceValue}`;
+    }).join('|');
+  }, [cart]);
+
+  // Safe discount percentage (clamped to 0-100)
+  const safeDiscountPercentage = useMemo(() => {
+    return Math.max(0, Math.min(100, discountPercentage || 0));
+  }, [discountPercentage]);
+
+  // Global discount amount (total discount amount)
+  const globalDiscountAmount = useMemo(() => {
+    return (subtotal * safeDiscountPercentage) / 100;
+  }, [subtotal, safeDiscountPercentage]);
+
+  // Check if customer is individual type (using value instead of ID)
+  const isIndividual = useMemo(() => {
+    if (!selectedCustomer?.customer_type) return false;
+    const customerType = customerTypes.find(ct => ct.id === selectedCustomer.customer_type);
+    return customerType?.value === 'individual';
+  }, [selectedCustomer, customerTypes]);
+
+  // Subtotal after global discount
+  // For "individual" customers: apply global discount at invoice level (subtotal - discount)
+  // For "store" customers: sum of item totals (which already include divided discount)
+  const discountedSubtotal = useMemo(() => {
+    if (isIndividual) {
+      // For individual: apply discount at invoice level, not at item level
+      return Math.max(0, subtotal - globalDiscountAmount);
+    } else {
+      // For store: items already have discount divided, so sum them
+      return cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
+    }
+  }, [cart, calculateItemTotal, isIndividual, subtotal, globalDiscountAmount]);
+
+  // Safe tax percentage (clamped to 0-100)
+  const safeTaxPercentage = useMemo(() => {
+    return Math.max(0, Math.min(100, taxPercentage || 0));
+  }, [taxPercentage]);
+
+  // Tax amount
+  const tax = useMemo(() => {
+    return discountedSubtotal * (safeTaxPercentage / 100);
+  }, [discountedSubtotal, safeTaxPercentage]);
+
+  // Grand total
+  const total = useMemo(() => {
+    return discountedSubtotal + tax;
+  }, [discountedSubtotal, tax]);
+
+  // Total paid amount from all items
+  const totalPaidAmount = useMemo(() => {
+    const sum = cart.reduce((sum, item) => {
+      const paidAmount = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
+      return sum + paidAmount;
+    }, 0);
+    return Number(sum.toFixed(3));
+  }, [cart]);
+
+  // Total unpaid amount
+  const totalUnpaidAmount = useMemo(() => {
+    const unpaid = Math.max(0, total - totalPaidAmount);
+    return Number(unpaid.toFixed(3));
+  }, [total, totalPaidAmount]);
+
+  // Filtered items
+  const paidItems = useMemo(() => {
+    return cart.filter(item => item.is_paid);
+  }, [cart]);
+
+  const unpaidItems = useMemo(() => {
+    return cart.filter(item => !item.is_paid);
+  }, [cart]);
+
+  // Check if any items have partial payments
+  // Uses tolerance check to handle floating point precision issues
+  const hasPartialPayment = useMemo(() => {
+    return cart.some(item => {
+      const itemTotal = calculateItemTotal(item);
+      const paidAmount = item.paid_amount;
+      const difference = Math.abs(paidAmount - itemTotal);
+      // Item is partial if paid_amount > 0 and not fully paid (within tolerance)
+      return paidAmount > 0.001 && difference >= 0.001 && paidAmount < itemTotal;
+    });
+  }, [cart, calculateItemTotal]);
+
+  return {
+    subtotal,
+    cartTotalSignature,
+    safeDiscountPercentage,
+    globalDiscountAmount,
+    discountedSubtotal,
+    safeTaxPercentage,
+    tax,
+    total,
+    totalPaidAmount,
+    totalUnpaidAmount,
+    paidItems,
+    unpaidItems,
+    hasPartialPayment,
+  };
+};
+
+// Constants
+const FETCH_TIMEOUT = 30000; // 30 seconds timeout for fetch requests
+
+// Standardized error handling utility
+const handleError = (
+  error: unknown,
+  defaultMessage: string,
+  options?: {
+    title?: string;
+    duration?: number;
+    onError?: (error: Error) => void;
+  }
+) => {
+  // Ignore abort errors silently
+  if (error instanceof Error && error.name === 'AbortError') {
+    return;
+  }
+
+  // Log error in development
+  if (process.env.NODE_ENV !== 'production') {
+    console.error("Error:", error);
+  }
+
+  // Extract error message
+  let errorMessage = defaultMessage;
+  if (error instanceof Error) {
+    errorMessage = error.message || defaultMessage;
+  }
+
+  // Call custom error handler if provided
+  if (options?.onError && error instanceof Error) {
+    options.onError(error);
+  }
+
+  // Show toast notification
+  toast({
+    title: options?.title || "Error",
+    description: errorMessage,
+    variant: "destructive",
+    duration: options?.duration || 5000,
+  });
+};
+
 export default function POSPage() {
   const [products, setProducts] = useState<Product[]>([])
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [genres, setGenres] = useState<Genre[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -160,30 +328,43 @@ export default function POSPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [selectedWarehouse, setSelectedWarehouse] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<number | null>(null)
+  
+  // Ref to prevent infinite loops when allocating payments
+  const isAllocatingRef = useRef(false)
+  // Ref to store the latest allocatePayInFull function
+  const allocatePayInFullRef = useRef<(() => void) | undefined>(undefined)
   const [selectedInvoiceType, setSelectedInvoiceType] = useState<number | null>(null)
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false)
   const [customerSearchQuery, setCustomerSearchQuery] = useState("")
+  const [debouncedCustomerSearchQuery, setDebouncedCustomerSearchQuery] = useState("")
   const [newCustomer, setNewCustomer] = useState<Omit<Customer, "id">>({
+    customer_type: null,
     institution_name: "",
     contact_person: "",
     phone: "",
     email: "",
   })
-  const [isNewCustomerDialogOpen, setIsNewCustomerDialogOpen] = useState(false)
-  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false)
+  const [customerTypes, setCustomerTypes] = useState<any[]>([])
+  // Consolidated dialog state - only one dialog can be open at a time
+  type DialogType = 'newCustomer' | 'print' | 'confirm' | null
+  const [activeDialog, setActiveDialog] = useState<DialogType>(null)
   const [selectedGenre, setSelectedGenre] = useState<Genre | null>(null)
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isAddingCustomer, setIsAddingCustomer] = useState(false)
+  const [processingItems, setProcessingItems] = useState<Set<number>>(new Set())
   const [discountPercentage, setDiscountPercentage] = useState<number>(30)
   const [taxPercentage, setTaxPercentage] = useState<number>(0)
   const [invoiceNotes, setInvoiceNotes] = useState("")
   const [todaySales, setTodaySales] = useState(0)
   const [totalCustomers, setTotalCustomers] = useState(0)
   const [popularProduct, setPopularProduct] = useState("")
-  const printRef = useRef<HTMLDivElement>(null)
   const [showMetrics, setShowMetrics] = useState(false)
   const [isCartOpen, setIsCartOpen] = useState(false)
+  // AbortController refs for request cancellation
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const salesMetricsAbortControllerRef = useRef<AbortController | null>(null)
   // Track last fetch parameters to prevent unnecessary refetches
   const lastFetchParamsRef = useRef<{
     warehouseId: number | null;
@@ -196,7 +377,6 @@ export default function POSPage() {
     genreId: null,
     page: 1,
   })
-  const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<any>(null)
   const [isWarehouseDropdownOpen, setIsWarehouseDropdownOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
@@ -210,8 +390,87 @@ export default function POSPage() {
     target.src = "/placeholder.svg";
   };
 
+  // Exponential backoff retry utility
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Check if request was aborted
+        if (options.signal?.aborted) {
+          throw new DOMException('The operation was aborted.', 'AbortError')
+        }
+        
+        const response = await fetch(url, options)
+        
+        // Don't retry on successful responses
+        if (response.ok) {
+          return response
+        }
+        
+        // Don't retry on 4xx client errors (except 429 Too Many Requests)
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return response // Return the error response without retrying
+        }
+        
+        // For 5xx server errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`)
+        }
+        
+        // For other errors, return the response
+        return response
+      } catch (error) {
+        lastError = error as Error
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry if this was the last attempt
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Calculate exponential backoff delay: baseDelay * 2^attempt
+        const delay = baseDelay * Math.pow(2, attempt)
+        
+        // Wait before retrying (respect abort signal)
+        await new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(resolve, delay)
+          
+          // If aborted during wait, clear timeout and reject
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              clearTimeout(timeoutId)
+              reject(new DOMException('The operation was aborted.', 'AbortError'))
+            })
+          }
+        })
+      }
+    }
+    
+    // If we get here, all retries failed
+    throw lastError || new Error('Request failed after retries')
+  }, [])
+
   // Update the fetchData function - only fetch basic data, not products
   const fetchData = async () => {
+    // Abort previous request if still pending
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    
+    // Create new AbortController for this request
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
       const token = localStorage.getItem("accessToken");
       const headers = {
@@ -225,13 +484,15 @@ export default function POSPage() {
         genresRes,
         warehousesRes,
         paymentMethodsRes,
-        invoiceTypesRes
+        invoiceTypesRes,
+        customerTypesRes
       ] = await Promise.all([
-        fetch(`${API_URL}/sales/customers/`, { headers }),
-        fetch(`${API_URL}/common/list-items/genre/`, { headers }),
-        fetch(`${API_URL}/inventory/warehouses/`, { headers }),
-        fetch(`${API_URL}/common/list-items/payment_method/`, { headers }),
-        fetch(`${API_URL}/common/list-items/invoice_type/`, { headers })
+        fetchWithRetry(`${API_URL}/sales/customers/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/common/list-items/genre/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/inventory/warehouses/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/common/list-items/payment_method/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/common/list-items/invoice_type/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/common/list-items/customer_type/`, { headers, signal: controller.signal })
       ]);
 
       if (!customersRes.ok) throw new Error("Failed to fetch customers");
@@ -239,12 +500,14 @@ export default function POSPage() {
       if (!warehousesRes.ok) throw new Error("Failed to fetch warehouses");
       if (!paymentMethodsRes.ok) throw new Error("Failed to fetch payment methods");
       if (!invoiceTypesRes.ok) throw new Error("Failed to fetch invoice types");
+      if (!customerTypesRes.ok) throw new Error("Failed to fetch customer types");
 
       const customersData = await customersRes.json();
       const genresData = await genresRes.json();
       const warehousesData = await warehousesRes.json();
       const paymentMethodsData = await paymentMethodsRes.json();
       const invoiceTypesData = await invoiceTypesRes.json();
+      const customerTypesData = await customerTypesRes.json();
 
       // Process other data
       const customersArray = Array.isArray(customersData) ? customersData : customersData.results || [];
@@ -252,6 +515,7 @@ export default function POSPage() {
       const warehousesArray = Array.isArray(warehousesData) ? warehousesData : warehousesData.results || [];
       const paymentMethodsArray = Array.isArray(paymentMethodsData) ? paymentMethodsData : paymentMethodsData.results || [];
       const invoiceTypesArray = Array.isArray(invoiceTypesData) ? invoiceTypesData : invoiceTypesData.results || [];
+      const customerTypesArray = Array.isArray(customerTypesData) ? customerTypesData : customerTypesData.results || [];
 
       // Set state with fetched data
       setCustomers(customersArray);
@@ -259,6 +523,7 @@ export default function POSPage() {
       setWarehouses(warehousesArray);
       setPaymentMethods(paymentMethodsArray);
       setInvoiceTypes(invoiceTypesArray);
+      setCustomerTypes(customerTypesArray);
 
       // Set default values if available
       if (paymentMethodsArray.length > 0) {
@@ -273,12 +538,7 @@ export default function POSPage() {
       setPopularProduct("N/A");
 
     } catch (error) {
-      console.error("Error fetching data:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load data. Please try again.",
-        variant: "destructive",
-      });
+      handleError(error, "Failed to load data. Please try again.");
     }
   };
 
@@ -286,6 +546,16 @@ export default function POSPage() {
   useEffect(() => {
     fetchData()
     fetchSalesMetrics()
+    
+    // Cleanup: abort all pending requests on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      if (salesMetricsAbortControllerRef.current) {
+        salesMetricsAbortControllerRef.current.abort()
+      }
+    }
   }, [])
 
   // Debounce search input to reduce filter operations while typing
@@ -296,6 +566,15 @@ export default function POSPage() {
 
     return () => clearTimeout(timer);
   }, [searchInput]);
+
+  // Debounce customer search query to reduce filter operations while typing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCustomerSearchQuery(customerSearchQuery);
+    }, 300); // 300ms delay
+
+    return () => clearTimeout(timer);
+  }, [customerSearchQuery]);
 
   // Server-side filtering: refetch products when search, genre, or warehouse changes
   useEffect(() => {
@@ -328,15 +607,16 @@ export default function POSPage() {
   }, [currentPage, pageSize]); // Only trigger on page/pageSize changes, use current filter values from closure
 
   // Filter customers based on search query - memoized to prevent recalculation on every render
+  // Uses debounced query to reduce filtering operations while typing
   const filteredCustomers = useMemo(() => {
     return customers.filter(
       (customer) =>
-        customer.institution_name.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
-        customer.contact_person?.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
-        customer.phone?.includes(customerSearchQuery) ||
-        customer.email?.toLowerCase().includes(customerSearchQuery.toLowerCase()),
+        customer.institution_name.toLowerCase().includes(debouncedCustomerSearchQuery.toLowerCase()) ||
+        customer.contact_person?.toLowerCase().includes(debouncedCustomerSearchQuery.toLowerCase()) ||
+        customer.phone?.includes(debouncedCustomerSearchQuery) ||
+        customer.email?.toLowerCase().includes(debouncedCustomerSearchQuery.toLowerCase()),
     );
-  }, [customers, customerSearchQuery]);
+  }, [customers, debouncedCustomerSearchQuery]);
 
   // Cart functions
   const addToCart = (product: Product) => {
@@ -344,31 +624,31 @@ export default function POSPage() {
       const existingItem = prevCart.find((item) => item.product.id === product.id);
       if (existingItem) {
         // increment quantity FIRST, then allocate later
-        const updated = prevCart.map((item) =>
+        // Use updateCartItem pattern for consistency
+        return prevCart.map((item) =>
           item.product.id === product.id
             ? { ...item, quantity: item.quantity + 1 }
             : item
         );
-
-        return updated;
       }
 
-      // New line item starts unpaid; allocation is handled centrally
-      return [
-        ...prevCart,
-        {
-          product,
-          quantity: 1,
-          discount_percent: 0,
-          is_paid: false,
-          paid_amount: 0,
-        },
-      ];
+      // New line item: for Individual customers, mark as paid immediately
+      // Otherwise, starts unpaid; allocation is handled centrally
+      const newItem = {
+        product,
+        quantity: 1,
+        discount_percent: 0,
+        is_paid: isIndividualCustomer, // Auto-paid for Individual customers
+        paid_amount: 0, // Will be calculated by the Individual customer effect
+      };
+      return [...prevCart, newItem];
     });
 
     // If current payment method is cash-like, auto-allocate to GRAND TOTAL
     // (slight timeout lets React commit state before we read totals)
+    // Skip for Individual customers (handled by separate effect)
     setTimeout(() => {
+      if (isIndividualCustomer) return; // Skip for Individual customers
       const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
       const isCash = pm.includes("cash"); // adjust if you have other immediate-pay methods
       if (isCash) allocatePayInFull();
@@ -384,180 +664,332 @@ export default function POSPage() {
       removeFromCart(productId)
       return
     }
-    setCart((prevCart) =>
-      prevCart.map((item) => {
-        if (item.product.id === productId) {
-          const newItemTotal = (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * newQuantity * (1 - item.discount_percent / 100);
-          return { 
-            ...item, 
-            quantity: newQuantity,
-            // If item was fully paid, update paid amount to new total
-            // If item was partially paid or unpaid, keep the same paid amount
-            paid_amount: item.is_paid && Math.abs(item.paid_amount - (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * item.quantity * (1 - item.discount_percent / 100)) < 0.001
-              ? newItemTotal 
-              : item.paid_amount
-          };
-        }
-        return item;
-      }),
-    )
+    updateCartItem(productId, (item) => {
+      const updatedItem = { ...item, quantity: newQuantity };
+      const itemTotal = calculateItemTotal(updatedItem);
+      
+      // Check if cash payment is selected
+      const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
+      const isCash = pm.includes("cash");
+      
+      // For cash payments, always update paid_amount to match new total (no partial payments allowed)
+      // For other payment methods, only update if item was already fully paid
+      const wasFullyPaid = isItemFullyPaid(item);
+      const shouldUpdatePaidAmount = isCash || wasFullyPaid;
+      
+      return {
+        ...updatedItem,
+        is_paid: shouldUpdatePaidAmount ? true : updatedItem.is_paid,
+        paid_amount: shouldUpdatePaidAmount ? itemTotal : item.paid_amount
+      };
+    });
   }
 
   const updateItemDiscount = (productId: number, discountPercent: number) => {
-    setCart((prevCart) =>
-      prevCart.map((item) => {
-        if (item.product.id === productId) {
-          const newItemTotal = (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * item.quantity * (1 - discountPercent / 100);
-          return { 
-            ...item, 
-            discount_percent: discountPercent,
-            // If item was fully paid, update paid amount to new total
-            // If item was partially paid or unpaid, keep the same paid amount
-            paid_amount: item.is_paid && Math.abs(item.paid_amount - (item.product.latest_price ? parseFloat(item.product.latest_price) : 0) * item.quantity * (1 - item.discount_percent / 100)) < 0.001
-              ? newItemTotal 
-              : item.paid_amount
-          };
-        }
-        return item;
-      }),
-    )
+    updateCartItem(productId, (item) => {
+      const updatedItem = { ...item, discount_percent: discountPercent };
+      const itemTotal = calculateItemTotal(updatedItem);
+      
+      // Check if cash payment is selected
+      const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
+      const isCash = pm.includes("cash");
+      
+      // For cash payments, always update paid_amount to match new total (no partial payments allowed)
+      // For other payment methods, only update if item was already fully paid
+      const wasFullyPaid = isItemFullyPaid(item);
+      const shouldUpdatePaidAmount = isCash || wasFullyPaid;
+      
+      return {
+        ...updatedItem,
+        is_paid: shouldUpdatePaidAmount ? true : updatedItem.is_paid,
+        paid_amount: shouldUpdatePaidAmount ? itemTotal : item.paid_amount
+      };
+    });
   }
 
   const updateItemPaymentStatus = (productId: number, isPaid: boolean) => {
-    setCart((prevCart) =>
-      prevCart.map((item) => {
-        if (item.product.id === productId) {
-          const itemTotal = calculateItemTotal(item);
-          return { 
-            ...item, 
-            is_paid: isPaid, 
-            paid_amount: isPaid ? itemTotal : 0 
-          };
-        }
-        return item;
-      }),
-    )
+    updateCartItem(productId, (item) => {
+      const itemTotal = calculateItemTotal(item);
+      return { 
+        ...item, 
+        is_paid: isPaid, 
+        paid_amount: isPaid ? itemTotal : 0 
+      };
+    });
   }
 
   const updateItemPaidAmount = (productId: number, paidAmount: number) => {
-    setCart((prevCart) =>
-      prevCart.map((item) => {
-        if (item.product.id === productId) {
-          const itemTotal = calculateItemTotal(item);
-          const validPaidAmount = Math.min(Math.max(0, paidAmount), itemTotal);
-          return { 
-            ...item, 
-            paid_amount: validPaidAmount,
-            is_paid: validPaidAmount > 0
-          };
-        }
-        return item;
-      }),
-    )
+    updateCartItem(productId, (item) => {
+      const itemTotal = calculateItemTotal(item);
+      const validPaidAmount = Math.min(Math.max(0, paidAmount), itemTotal);
+      return { 
+        ...item, 
+        paid_amount: validPaidAmount,
+        is_paid: validPaidAmount > 0
+      };
+    });
   }
 
   // Update the calculateItemTotal function to handle the new price format
   // Memoized with useCallback to prevent recreation on every render
-  const calculateItemTotal = useCallback((item: CartItem) => {
-    const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
+  // Calculate item total before global discount (with item-level discount only)
+  const calculateItemSubtotal = useCallback((item: CartItem) => {
+    const price = item.product.price || item.product.latest_price;
+    const priceValue = price ? parseFloat(price) : 0;
     const quantity = item.quantity;
     const discount = Math.max(0, Math.min(100, item.discount_percent)) / 100; // Ensure discount is between 0-100%
-    const total = price * quantity * (1 - discount);
+    const total = priceValue * quantity * (1 - discount);
     return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
   }, []);
 
-  // Allocate payments for cash transactions - items should be fully paid at their individual totals
-  const allocatePayInFull = useCallback(() => {
-    if (cart.length === 0) return;
+  // Calculate item total with global discount handling
+  // IMPORTANT: 
+  // - For "individual" customer type (value='individual'): global discount is NOT applied to items (only at invoice level)
+  // - For "store" customer type (value='store'): global discount is divided equally among all items
+  // IMPORTANT: All return values are rounded to 3 decimal places to match paid_amount rounding
+  const calculateItemTotal = useCallback((item: CartItem) => {
+    const itemSubtotal = calculateItemSubtotal(item);
+    
+    // If no global discount or no items in cart, return item subtotal (rounded)
+    if (!discountPercentage || cart.length === 0) {
+      return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
+    }
+    
+    // Check customer type using value field (not ID)
+    const customerTypeValue = selectedCustomer?.customer_type 
+      ? customerTypes.find(ct => ct.id === selectedCustomer.customer_type)?.value
+      : null;
+    
+    const isIndividual = customerTypeValue === 'individual';
+    const isStore = customerTypeValue === 'store';
+    
+    // For individual customers: DO NOT apply global discount to items
+    // Global discount is only applied at the invoice/total level, not distributed to items
+    if (isIndividual) {
+      // Return item subtotal without any global discount applied
+      return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
+    }
+    
+    // For store customers ONLY: divide global discount equally among all items
+    // For any other customer type, also return item subtotal without global discount
+    if (!isStore) {
+      // Not a store customer, return item subtotal without global discount
+      return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
+    }
+    // Calculate total of all items before global discount
+    const totalSubtotal = cart.reduce((sum, cartItem) => sum + calculateItemSubtotal(cartItem), 0);
+    
+    // Calculate total global discount amount
+    const totalGlobalDiscount = (totalSubtotal * discountPercentage) / 100;
+    
+    // Divide global discount equally among all items
+    const globalDiscountPerItem = totalGlobalDiscount / cart.length;
+    
+    // Apply global discount to this item
+    const itemTotal = itemSubtotal - globalDiscountPerItem;
+    
+    // Round to 3 decimal places to match paid_amount rounding and prevent precision issues
+    return isNaN(itemTotal) ? 0 : Math.max(0, Number(itemTotal.toFixed(3)));
+  }, [cart, discountPercentage, calculateItemSubtotal, selectedCustomer, customerTypes]);
 
-    // For cash payments, mark all items as fully paid at their individual totals
-    // Global discount is handled at the transaction level, not at item level
-    const nextCart = cart.map((it) => {
-      const itTotal = calculateItemTotal(it);
-      return {
-        ...it,
-        is_paid: true,
-        paid_amount: Number(itTotal.toFixed(3)),
-      };
-    });
+  // Use the custom hook for all cart calculations
+  const {
+    subtotal,
+    cartTotalSignature,
+    globalDiscountAmount,
+    discountedSubtotal,
+    tax,
+    total,
+    totalPaidAmount,
+    totalUnpaidAmount,
+    paidItems,
+    unpaidItems,
+    hasPartialPayment,
+  } = useCartCalculations(cart, discountPercentage, taxPercentage, calculateItemTotal, calculateItemSubtotal, selectedCustomer, customerTypes);
 
-    // Only update state if something actually changed (prevents loops)
-    const changed = nextCart.some((n, i) => 
-      Math.abs(n.paid_amount - cart[i].paid_amount) > 0.001 || n.is_paid !== cart[i].is_paid
+
+  // Helper function to update a cart item, reducing repetition
+  const updateCartItem = useCallback((productId: number, updater: (item: CartItem) => CartItem) => {
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.product.id === productId) {
+          return updater(item);
+        }
+        return item;
+      })
     );
-    if (changed) setCart(nextCart);
-  }, [cart, calculateItemTotal]);
+  }, []);
 
-  // Memoize cart calculations to prevent recalculation on every render
-  const subtotal = useMemo(() => {
-    return cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
-  }, [cart, calculateItemTotal]);
+  // Check if selected warehouse is in Muscat (for OMR price display)
+  const isMuscatWarehouse = useMemo(() => {
+    if (!selectedWarehouse) return false;
+    const warehouse = warehouses.find(w => w.id === selectedWarehouse);
+    return warehouse?.location === 'Muscat';
+  }, [selectedWarehouse, warehouses]);
 
-  // Create a stable signature of cart items that affect grand total
-  // This only changes when item quantities, prices, or discounts change
-  // Not when cart length changes without affecting totals
-  const cartTotalSignature = useMemo(() => {
-    if (cart.length === 0) return '';
-    // Create a signature based on items' contribution to total
-    return cart.map(item => {
-      const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
-      return `${item.product.id}:${item.quantity}:${item.discount_percent}:${price}`;
-    }).join('|');
-  }, [cart]);
+  // Helper function to get display price (OMR for Muscat, $ otherwise)
+  const getDisplayPrice = useCallback((product: Product | { price?: string | null; price_omr?: string | null; latest_price?: string | null; latest_price_omr?: string | null }): string | null => {
+    if (isMuscatWarehouse) {
+      return product.price_omr || product.latest_price_omr || null;
+    }
+    return product.price || product.latest_price || null;
+  }, [isMuscatWarehouse]);
 
-  const safeDiscountPercentage = useMemo(() => {
-    return Math.max(0, Math.min(100, discountPercentage || 0));
-  }, [discountPercentage]);
+  // Helper function to get currency symbol/label
+  const getCurrencyLabel = useCallback((): string => {
+    return isMuscatWarehouse ? 'OMR' : '$';
+  }, [isMuscatWarehouse]);
 
-  const globalDiscountAmount = useMemo(() => {
-    return (subtotal * safeDiscountPercentage) / 100;
-  }, [subtotal, safeDiscountPercentage]);
+  // Allocate payments for cash transactions - items should be fully paid at their individual totals
+  // Check if selected customer is Individual type (using value "individual" instead of ID)
+  const isIndividualCustomer = useMemo(() => {
+    if (!selectedCustomer?.customer_type) return false;
+    const customerType = customerTypes.find(ct => ct.id === selectedCustomer.customer_type);
+    return customerType?.value === 'individual';
+  }, [selectedCustomer, customerTypes]);
 
-  const discountedSubtotal = useMemo(() => {
-    return Math.max(0, subtotal - globalDiscountAmount);
-  }, [subtotal, globalDiscountAmount]);
+  // Auto-set Cash payment method for Individual customers
+  useEffect(() => {
+    if (isIndividualCustomer && paymentMethods.length > 0) {
+      const cashMethod = paymentMethods.find(m => 
+        m.display_name_en.toLowerCase().includes('cash')
+      );
+      if (cashMethod && selectedPaymentMethod !== cashMethod.id) {
+        setSelectedPaymentMethod(cashMethod.id);
+      }
+    }
+  }, [isIndividualCustomer, paymentMethods, selectedPaymentMethod]);
 
-  const safeTaxPercentage = useMemo(() => {
-    return Math.max(0, Math.min(100, taxPercentage || 0));
-  }, [taxPercentage]);
+  // Auto-apply payment to all items for Individual customers
+  useEffect(() => {
+    // Prevent re-entrancy to avoid infinite loops
+    if (isAllocatingRef.current) return;
+    
+    if (isIndividualCustomer && cart.length > 0 && selectedPaymentMethod) {
+      const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
+      if (paymentMethod && !paymentMethod.display_name_en.toLowerCase().includes('outstanding')) {
+        isAllocatingRef.current = true;
+        
+        try {
+          // Auto-mark all items as paid for Individual customers with Cash payment
+          // Only update if items are not already fully paid to prevent loops
+          // Use functional update and calculateItemTotal inside to avoid dependency on it
+          setCart(prevCart => {
+            const updatedCart = prevCart.map(item => {
+              // Calculate item total inside the functional update to avoid dependency issues
+              const itemTotal = calculateItemTotal(item);
+              // Only update if not already fully paid
+              if (item.is_paid && Math.abs(item.paid_amount - itemTotal) < 0.001) {
+                return item; // No change needed (already fully paid)
+              }
+              return {
+                ...item,
+                is_paid: true,
+                paid_amount: Number(itemTotal.toFixed(3))
+              };
+            });
+            // Only update state if something changed
+            const hasChanges = updatedCart.some((item, index) => {
+              const prevItem = prevCart[index];
+              return !prevItem || 
+                item.is_paid !== prevItem.is_paid || 
+                Math.abs(item.paid_amount - prevItem.paid_amount) >= 0.001;
+            });
+            return hasChanges ? updatedCart : prevCart;
+          });
+        } finally {
+          // Reset the flag after a short delay to allow state updates to complete
+          setTimeout(() => {
+            isAllocatingRef.current = false;
+          }, 0);
+        }
+      }
+    }
+    // Note: calculateItemTotal is NOT in dependencies - we use it inside the functional update
+    // This prevents infinite loops when cart changes
+  }, [isIndividualCustomer, selectedPaymentMethod, cart.length]); // Trigger when customer, payment method, or cart size changes
 
-  const tax = useMemo(() => {
-    return discountedSubtotal * (safeTaxPercentage / 100);
-  }, [discountedSubtotal, safeTaxPercentage]);
+  const allocatePayInFull = useCallback(() => {
+    // Prevent re-entrancy to avoid infinite loops
+    if (isAllocatingRef.current) return;
+    isAllocatingRef.current = true;
+    
+    try {
+      // Use functional update to avoid depending on cart in dependencies
+      setCart((prevCart) => {
+        if (prevCart.length === 0) return prevCart;
 
-  const total = useMemo(() => {
-    return discountedSubtotal + tax;
-  }, [discountedSubtotal, tax]);
+      // Check if customer is individual type (using value instead of ID)
+      const isIndividual = selectedCustomer?.customer_type 
+        ? customerTypes.find(ct => ct.id === selectedCustomer.customer_type)?.value === 'individual'
+        : false;
 
-  // Payment calculations - memoized
-  // Total paid amount should match grand total when items are fully paid
-  const totalPaidAmount = useMemo(() => {
-    const sum = cart.reduce((sum, item) => {
-      const paidAmount = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
-      return sum + paidAmount;
-    }, 0);
-    // Round to 3 decimal places to avoid floating point precision issues
-    return Number(sum.toFixed(3));
-  }, [cart]);
-  
-  // Calculate unpaid amount as difference between grand total and sum of item payments
-  // When fully paid, this should be 0 (or very close to 0 due to rounding)
-  const totalUnpaidAmount = useMemo(() => {
-    const unpaid = Math.max(0, total - totalPaidAmount);
-    return Number(unpaid.toFixed(3)); // Round to avoid floating point issues
-  }, [total, totalPaidAmount]);
+      // For individual customers: items don't have discount, but total does
+      // We need to proportionally reduce paid amounts to match discounted total
+      if (isIndividual && discountPercentage > 0) {
+        // Calculate total of all items (without global discount)
+        const totalItemsSubtotal = prevCart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
+        // Calculate discounted total (subtotal - global discount)
+        const globalDiscountAmount = (totalItemsSubtotal * discountPercentage) / 100;
+        const discountedTotal = totalItemsSubtotal - globalDiscountAmount;
+        
+        // Proportionally distribute the discounted total across items
+        const discountRatio = totalItemsSubtotal > 0 ? discountedTotal / totalItemsSubtotal : 1;
+        
+        const nextCart = prevCart.map((it) => {
+          const itTotal = calculateItemTotal(it);
+          // Apply the discount ratio to each item's paid amount
+          const exactPaidAmount = Number((itTotal * discountRatio).toFixed(3));
+          return {
+            ...it,
+            is_paid: true,
+            paid_amount: exactPaidAmount,
+          };
+        });
 
-  const paidItems = useMemo(() => {
-    return cart.filter(item => item.is_paid);
-  }, [cart]);
+        // Only update state if something actually changed (prevents loops)
+        const changed = nextCart.some((n, i) => {
+          const prevItem = prevCart[i];
+          if (!prevItem) return true;
+          const paidAmountChanged = Math.abs(n.paid_amount - prevItem.paid_amount) > 0.001;
+          const paidStatusChanged = n.is_paid !== prevItem.is_paid;
+          return paidAmountChanged || paidStatusChanged;
+        });
+        return changed ? nextCart : prevCart;
+      }
 
-  const unpaidItems = useMemo(() => {
-    return cart.filter(item => !item.is_paid);
-  }, [cart]);
+      // For store customers or no discount: mark all items as fully paid at their individual totals
+      // Global discount is already divided equally among items for store customers
+      const nextCart = prevCart.map((it) => {
+        const itTotal = calculateItemTotal(it);
+        // Ensure paid_amount exactly matches the item total (no partial payments for cash)
+        const exactPaidAmount = Number(itTotal.toFixed(3));
+        return {
+          ...it,
+          is_paid: true,
+          paid_amount: exactPaidAmount,
+        };
+      });
 
-  const hasPartialPayment = useMemo(() => {
-    return cart.some(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item));
-  }, [cart, calculateItemTotal]);
+      // Only update state if something actually changed (prevents loops)
+      const changed = nextCart.some((n, i) => {
+        const prevItem = prevCart[i];
+        if (!prevItem) return true;
+        // Check if paid_amount or is_paid status changed
+        const paidAmountChanged = Math.abs(n.paid_amount - prevItem.paid_amount) > 0.001;
+        const paidStatusChanged = n.is_paid !== prevItem.is_paid;
+        return paidAmountChanged || paidStatusChanged;
+      });
+      return changed ? nextCart : prevCart;
+      });
+    } finally {
+      // Reset the flag after a short delay to allow state updates to complete
+      setTimeout(() => {
+        isAllocatingRef.current = false;
+      }, 0);
+    }
+  }, [calculateItemTotal, selectedCustomer, customerTypes, discountPercentage]);
+
   
   // Note: Items are added to cart as paid by default
   
@@ -573,10 +1005,13 @@ export default function POSPage() {
   }
 
   // Helper function to get payment status badge
+  // Uses tolerance check to handle floating point precision issues
   const getPaymentStatusBadge = (item: CartItem) => {
     const itemTotal = calculateItemTotal(item);
-    const isFullyPaid = item.paid_amount >= itemTotal;
-    const isPartiallyPaid = item.paid_amount > 0 && item.paid_amount < itemTotal;
+    const paidAmount = item.paid_amount;
+    const difference = Math.abs(paidAmount - itemTotal);
+    const isFullyPaid = difference < 0.001 || paidAmount >= itemTotal;
+    const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
     
     if (isFullyPaid) {
       return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">Paid</span>;
@@ -615,18 +1050,22 @@ export default function POSPage() {
 
   // Handle adding a new customer
   const handleAddCustomer = async () => {
+    // Create AbortController for this request
+    const controller = new AbortController()
+    
     try {
-      setIsSubmitting(true)
+      setIsAddingCustomer(true)
       const token = localStorage.getItem("accessToken")
       const headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       }
 
-      const response = await fetch(`${API_URL}/sales/customers/`, {
+      const response = await fetchWithRetry(`${API_URL}/sales/customers/`, {
         method: "POST",
         headers,
         body: JSON.stringify(newCustomer),
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -638,26 +1077,68 @@ export default function POSPage() {
       setCustomers([...customers, customer])
       setSelectedCustomer(customer)
       setNewCustomer({
+        customer_type: null,
         institution_name: "",
         contact_person: "",
         phone: "",
         email: "",
       })
-      setIsNewCustomerDialogOpen(false)
+      setActiveDialog(null)
       toast({
         title: "Success",
         description: "Customer added successfully",
       })
     } catch (error) {
-      console.error("Error adding customer:", error)
-      toast({
-        title: "Error",
-        description: "Failed to add customer. Please try again.",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to add customer. Please try again.");
     } finally {
-      setIsSubmitting(false)
+      setIsAddingCustomer(false)
     }
+  }
+
+  // Rollback helper function to delete created invoice items and invoice on error
+  const rollbackSaleCreation = async (
+    invoiceId: number,
+    invoiceItemIds: number[],
+    headers: HeadersInit,
+    signal?: AbortSignal
+  ) => {
+    const rollbackErrors: string[] = []
+    
+    // Delete invoice items in reverse order (best effort)
+    for (const itemId of [...invoiceItemIds].reverse()) {
+      try {
+        const deleteResponse = await fetch(`${API_URL}/sales/invoice-items/${itemId}/delete/`, {
+          method: "DELETE",
+          headers,
+          signal,
+        })
+        if (!deleteResponse.ok) {
+          rollbackErrors.push(`Failed to delete invoice item ${itemId}`)
+        }
+      } catch (error) {
+        rollbackErrors.push(`Error deleting invoice item ${itemId}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+    }
+    
+    // Delete invoice (best effort)
+    try {
+      const deleteInvoiceResponse = await fetch(`${API_URL}/sales/invoices/${invoiceId}/delete/`, {
+        method: "DELETE",
+        headers,
+        signal,
+      })
+      if (!deleteInvoiceResponse.ok) {
+        rollbackErrors.push(`Failed to delete invoice ${invoiceId}`)
+      }
+    } catch (error) {
+      rollbackErrors.push(`Error deleting invoice ${invoiceId}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+    
+    if (rollbackErrors.length > 0 && process.env.NODE_ENV !== 'production') {
+      console.error("Rollback errors:", rollbackErrors)
+    }
+    
+    return rollbackErrors
   }
 
   // Update the handleCompleteSale function to use the new field names
@@ -669,44 +1150,44 @@ export default function POSPage() {
       !selectedInvoiceType ||
       cart.length === 0
     ) {
-      toast({
-        title: "Missing Information",
-        description: "Please select customer, warehouse, payment method, and invoice type before completing the sale.",
-        variant: "destructive",
-      })
+      handleError(
+        new Error("Missing required information"),
+        "Please select customer, warehouse, payment method, and invoice type before completing the sale.",
+        { title: "Missing Information" }
+      );
       return
     }
 
     if (!validatePaymentAmounts()) {
-      toast({
-        title: "Invalid Payment Amounts",
-        description: "One or more items have payment amounts exceeding their total cost.",
-        variant: "destructive",
-      })
+      handleError(
+        new Error("Invalid payment amounts"),
+        "One or more items have payment amounts exceeding their total cost.",
+        { title: "Invalid Payment Amounts" }
+      );
       return
     }
+
+    // Create AbortController for this sale operation
+    const controller = new AbortController()
+
+    // Declare variables at function scope for error handling
+    let invoiceId: number | undefined
+    let createdInvoiceItemIds: number[] = []
+    let createdPaymentId: number | null = null
+    let headers: HeadersInit | undefined
 
     try {
       setIsSubmitting(true)
       const token = localStorage.getItem("accessToken")
-      const headers = {
+      headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       }
 
-      // Calculate the total paid amount from individual items
-      const ledgerPaidAmount = cart.reduce((sum, item) => {
-        const v = isNaN(item.paid_amount) ? 0 : Math.max(0, item.paid_amount);
-        return sum + v;
-      }, 0);
-      
       // Round to 3 decimal places to match display
-      const roundedPaidAmount = Number(ledgerPaidAmount.toFixed(3));
       const roundedTotal = Number(total.toFixed(3));
-      
-      // Ensure paid amount matches total (use total as source of truth to avoid mismatch for cashiers)
-      // When items are fully paid, total_paid should equal total_amount
-      const finalPaidAmount = roundedTotal; // Use total as the source of truth
+      // Use memoized totalPaidAmount (already calculated and rounded)
+      const finalPaidAmount = Number(totalPaidAmount.toFixed(3));
 
       // 1. Create the invoice with updated field names
       const invoiceData = {
@@ -719,33 +1200,45 @@ export default function POSPage() {
         global_discount_percent: discountPercentage,
         tax_percent: taxPercentage,
         total_amount: roundedTotal, // Grand total after global discount and tax
-        total_paid: finalPaidAmount, // Use total as source of truth to match total_amount
+        total_paid: finalPaidAmount, // Sum of individual item paid amounts (from memoized totalPaidAmount)
         remaining_amount: 0, // When fully paid, remaining is 0
       }
 
-      const invoiceResponse = await fetch(`${API_URL}/sales/invoices/`, {
+      const invoiceResponse = await fetchWithRetry(`${API_URL}/sales/invoices/`, {
         method: "POST",
         headers,
         body: JSON.stringify(invoiceData),
+        signal: controller.signal,
       })
 
       if (!invoiceResponse.ok) {
         const errorData = await invoiceResponse.json()
-        console.error("Invoice creation error:", errorData)
+        if (process.env.NODE_ENV !== 'production') {
+          console.error("Invoice creation error:", errorData)
+        }
         throw new Error(errorData.message || errorData.detail || "Failed to create invoice")
       }
 
       const invoice = await invoiceResponse.json()
-      const invoiceId = invoice.id
+      invoiceId = invoice.id
 
-      // 2. Create invoice items with payment status
+      // 2. Create invoice items with payment status (sequentially to ensure order)
+      // Track created items with IDs for potential rollback
+      createdInvoiceItemIds = []
+      
+      // Track processing items for UI feedback
+      setProcessingItems(new Set(cart.map(item => item.product.id)))
+      
       for (const item of cart) {
         const itemTotal = calculateItemTotal(item);
         const itemData = {
           invoice: invoiceId,
           product: item.product.id,
           quantity: item.quantity,
-          unit_price: item.product.latest_price ? parseFloat(item.product.latest_price) : 0,
+          unit_price: (() => {
+            const price = item.product.price || item.product.latest_price;
+            return price ? parseFloat(price) : 0;
+          })(),
           discount_percent: item.discount_percent,
           total_price: itemTotal, // This should be the item total after item-level discount
           paid_amount: item.paid_amount,
@@ -753,54 +1246,137 @@ export default function POSPage() {
           is_paid: item.is_paid,
         }
 
-        const itemResponse = await fetch(`${API_URL}/sales/invoice-items/`, {
+        const itemResponse = await fetchWithRetry(`${API_URL}/sales/invoice-items/`, {
           method: "POST",
           headers,
           body: JSON.stringify(itemData),
+          signal: controller.signal,
         })
 
         if (!itemResponse.ok) {
           const errorData = await itemResponse.json()
-          console.error("Invoice item creation error:", errorData)
+          if (process.env.NODE_ENV !== 'production') {
+            console.error("Invoice item creation error:", errorData)
+          }
           throw new Error(errorData.message || errorData.detail || "Failed to create invoice item")
         }
 
-        // Update inventory stock after creating invoice item
-        const inventoryResponse = await fetch(`${API_URL}/inventory/inventory/?product_id=${item.product.id}&warehouse_id=${selectedWarehouse}`, { headers });
-        if (!inventoryResponse.ok) {
-          throw new Error("Failed to fetch inventory data");
-        }
-        const inventoryData = await inventoryResponse.json();
-        const inventory = inventoryData.results?.[0];
+        const createdItem = await itemResponse.json()
+        createdInvoiceItemIds.push(createdItem.id)
+        
+        // Update processing state: remove this item from processing set
+        setProcessingItems(prev => {
+          const next = new Set(prev)
+          next.delete(item.product.id)
+          return next
+        })
+      }
 
-        if (inventory) {
-          // Update existing inventory
-          const newQuantity = inventory.quantity - item.quantity;
+      // 3. Batch fetch all inventory records in parallel
+      // Update processing state to show inventory fetching
+      setProcessingItems(new Set(cart.map(item => item.product.id)))
+      const inventoryFetchPromises = cart.map(item =>
+        fetchWithRetry(`${API_URL}/inventory/inventory/?product_id=${item.product.id}&warehouse_id=${selectedWarehouse}`, { 
+          headers,
+          signal: controller.signal,
+        })
+          .then(res => {
+            if (!res.ok) {
+              throw new Error(`Failed to fetch inventory for product ${item.product.id}`)
+            }
+            return res.json()
+          })
+          .then(data => ({
+            productId: item.product.id,
+            productName: item.product.title_en,
+            quantity: item.quantity,
+            inventory: data.results?.[0] || null
+          }))
+      )
+
+      const inventoryResults = await Promise.allSettled(inventoryFetchPromises)
+      
+      // Check for any fetch failures
+      const fetchErrors = inventoryResults
+        .map((result, index) => ({ result, index }))
+        .filter(({ result }) => result.status === 'rejected')
+      
+      if (fetchErrors.length > 0) {
+        const errorMessages = fetchErrors.map(({ result, index }) => {
+          const productName = cart[index]?.product?.title_en || `Product ${cart[index]?.product?.id}`
+          const reason = result.status === 'rejected' ? result.reason : null
+          return `${productName}: ${reason instanceof Error ? reason.message : 'Failed to fetch inventory'}`
+        }).join('; ')
+        throw new Error(`Failed to fetch inventory data: ${errorMessages}`)
+      }
+
+      // Extract inventory data and validate quantities
+      const inventoryUpdates = []
+      const validationErrors = []
+
+      for (const result of inventoryResults) {
+        if (result.status === 'fulfilled') {
+          const { productId, productName, quantity, inventory } = result.value
+          
+          if (!inventory) {
+            validationErrors.push(`No inventory found for product ${productName} in selected warehouse`)
+            continue
+          }
+
+          const newQuantity = inventory.quantity - quantity
           if (newQuantity < 0) {
-            throw new Error(`Insufficient stock for product ${item.product.title_en}`);
+            validationErrors.push(`Insufficient stock for product ${productName}. Available: ${inventory.quantity}, Requested: ${quantity}`)
+            continue
           }
 
-          const updateInventoryResponse = await fetch(`${API_URL}/inventory/inventory/product/${item.product.id}/update/`, {
-            method: "PUT",
-            headers,
-            body: JSON.stringify({
-              product_id: item.product.id,
-              warehouse_id: selectedWarehouse,
-              quantity: newQuantity,
-              notes: inventory.notes || ''
-            }),
-          });
-
-          if (!updateInventoryResponse.ok) {
-            const errorData = await updateInventoryResponse.json();
-            throw new Error(errorData.detail || "Failed to update inventory");
-          }
-        } else {
-          throw new Error(`No inventory found for product ${item.product.title_en} in selected warehouse`);
+          inventoryUpdates.push({
+            id: inventory.id,
+            product_id: productId,
+            warehouse_id: selectedWarehouse,
+            quantity: newQuantity,
+            notes: inventory.notes || ''
+          })
         }
       }
 
-      // 3. Create payment record for all sales (both cash and outstanding)
+      // If any validation errors, throw before making any updates
+      if (validationErrors.length > 0) {
+        throw new Error(`Inventory validation failed:\n${validationErrors.join('\n')}`)
+      }
+
+      // 4. Batch update all inventory using bulk API
+      if (inventoryUpdates.length > 0) {
+        // Keep processing state for inventory update
+        setProcessingItems(new Set(cart.map(item => item.product.id)))
+        
+        const bulkUpdateResponse = await fetchWithRetry(`${API_URL}/inventory/inventory/bulk/`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(inventoryUpdates),
+          signal: controller.signal,
+        })
+
+        if (!bulkUpdateResponse.ok) {
+          const errorData = await bulkUpdateResponse.json()
+          if (process.env.NODE_ENV !== 'production') {
+            console.error("Bulk inventory update error:", errorData)
+          }
+          
+          // Rollback: Delete created invoice items and invoice
+          if (invoiceId !== undefined) {
+            await rollbackSaleCreation(invoiceId, createdInvoiceItemIds, headers, controller.signal)
+          }
+          
+          throw new Error(
+            `Failed to update inventory: ${errorData.detail || errorData.message || "Unknown error"}. ` +
+            `The sale has been rolled back. Please try again.`
+          )
+        }
+      }
+
+      // 5. Create payment record for all sales (both cash and outstanding)
+      // Clear processing items as inventory update is complete
+      setProcessingItems(new Set())
       
       const paymentData = {
         invoice: invoiceId,
@@ -808,33 +1384,49 @@ export default function POSPage() {
         payment_date: format(new Date(), "yyyy-MM-dd"),
       };
 
-      const paymentResponse = await fetch(`${API_URL}/sales/payments/`, {
+      const paymentResponse = await fetchWithRetry(`${API_URL}/sales/payments/`, {
         method: "POST",
         headers,
         body: JSON.stringify(paymentData),
+        signal: controller.signal,
       })
 
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json()
-        throw new Error(errorData.message || "Failed to create payment")
+        
+        // Rollback: Delete created invoice items and invoice (payment not created yet, so no need to delete it)
+        if (invoiceId !== undefined) {
+          await rollbackSaleCreation(invoiceId, createdInvoiceItemIds, headers, controller.signal)
+        }
+        
+        throw new Error(
+          `Failed to create payment: ${errorData.message || "Unknown error"}. ` +
+          `The sale has been rolled back. Please try again.`
+        )
       }
+
+      const payment = await paymentResponse.json()
+      createdPaymentId = payment.id
 
       const remainingAmount = roundedTotal - finalPaidAmount;
       toast({
         title: "Success",
         description: Math.abs(remainingAmount) < 0.001
           ? "Sale completed successfully - Fully Paid" 
-          : `Sale completed successfully - ${remainingAmount.toFixed(3)} OMR remaining`,
+          : `Sale completed successfully - ${remainingAmount.toFixed(3)} ${getCurrencyLabel()} remaining`,
       })
 
       // Fetch invoice summary for receipt
-      const summaryRes = await fetch(`${API_URL}/sales/invoices/${invoiceId}/summary/`, { headers })
+      const summaryRes = await fetchWithRetry(`${API_URL}/sales/invoices/${invoiceId}/summary/`, { 
+        headers,
+        signal: controller.signal,
+      })
       if (!summaryRes.ok) {
         throw new Error("Failed to fetch invoice summary for receipt")
       }
       const summary = await summaryRes.json()
       setReceiptData(summary)
-      setIsPrintDialogOpen(true)
+      setActiveDialog('print')
 
       // Update sales summary locally - use the total amount (which matches paid amount when fully paid)
       setTodaySales(prev => prev + roundedTotal)
@@ -860,147 +1452,60 @@ export default function POSPage() {
       setIsCartOpen(false)
       // Do NOT clear cart/customer here; do it after receipt is closed
     } catch (error) {
-      console.error("Sale completion error:", error)
+      // Ignore abort errors
+      if (error instanceof Error && error.name === 'AbortError') {
+        return
+      }
+      
       let errorMessage = "Failed to complete sale. Please try again."
+      let needsManualReconciliation = false
       
       if (error instanceof Error) {
         if (error.message.includes("composite_id")) {
           errorMessage = "Backend error: Invoice creation failed due to composite_id constraint. Please contact support."
         } else if (error.message.includes("Duplicate entry")) {
           errorMessage = "Backend error: Duplicate invoice entry. Please try again."
-        } else {
+        } else if (error.message.includes("rolled back")) {
+          // Rollback was already attempted
           errorMessage = error.message
+        } else if (error.message.includes("Failed to fetch inventory") || error.message.includes("Inventory validation failed")) {
+          // These errors occur before inventory update, so no rollback needed
+          errorMessage = error.message
+        } else {
+          // For other errors that might occur after invoice creation, attempt rollback
+          // Check if we have invoiceId (means invoice was created)
+          if (invoiceId !== undefined && headers) {
+            try {
+              await rollbackSaleCreation(invoiceId, createdInvoiceItemIds || [], headers, controller.signal)
+              errorMessage = `${error.message} The sale has been rolled back. Please try again.`
+            } catch (rollbackError) {
+              // Rollback failed - need manual reconciliation
+              needsManualReconciliation = true
+              errorMessage = `${error.message} Rollback failed. Invoice ID: ${invoiceId}. Please contact support for manual reconciliation.`
+              if (process.env.NODE_ENV !== 'production') {
+                console.error("Rollback failed:", rollbackError)
+              }
+            }
+          } else {
+            errorMessage = error.message
+          }
         }
       }
       
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      handleError(
+        error,
+        errorMessage,
+        {
+          title: needsManualReconciliation ? "Error - Manual Reconciliation Required" : "Error",
+          duration: needsManualReconciliation ? 10000 : 5000,
+        }
+      )
     } finally {
       setIsSubmitting(false)
+      setProcessingItems(new Set()) // Clear processing items on completion or error
     }
   }
 
-  // Update the handlePrint function to properly display receipt data
-  const handlePrint = () => {
-    if (printRef.current) {
-      try {
-        const printWindow = window.open("", "_blank")
-        if (printWindow) {
-          printWindow.document.write("<html><head><title>Receipt</title>")
-          printWindow.document.write(`
-            <style>
-              @media print {
-                @page { 
-                  size: auto; 
-                  margin: 0; 
-                }
-                body { 
-                  font-family: monospace; 
-                  font-size: 12px; 
-                  line-height: 1.3; 
-                  margin: 0; 
-                  padding: 15px; 
-                  width: 100%; 
-                }
-                .receipt-container { 
-                  width: 100% !important; 
-                  max-width: 100% !important; 
-                  margin: 0 !important; 
-                  padding: 0 !important; 
-                }
-              }
-              body { 
-                font-family: monospace; 
-                font-size: 12px; 
-                line-height: 1.3; 
-                margin: 0; 
-                padding: 15px; 
-                width: 100%; 
-              }
-            </style>
-          `)
-          printWindow.document.write("</head><body>")
-          printWindow.document.write(printRef.current.innerHTML)
-          printWindow.document.write("</body></html>")
-          printWindow.document.close()
-          printWindow.print()
-        }
-      } catch (error) {
-        console.error("Error printing:", error)
-      }
-    }
-  }
-
-  const handleDownloadPDF = () => {
-    if (printRef.current) {
-      import('html2canvas').then((html2canvas) => {
-        // Wait for content to render
-        setTimeout(() => {
-          // First generate the image
-          html2canvas.default(printRef.current!, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            allowTaint: true,
-            logging: true,
-            width: printRef.current?.scrollWidth,
-            height: printRef.current?.scrollHeight
-          }).then(canvas => {
-            // Get image dimensions
-            const imgWidth = canvas.width;
-            const imgHeight = canvas.height;
-            
-            // Create PDF with image dimensions
-            const doc = new jsPDF({
-              unit: 'px',
-              format: [imgWidth, imgHeight],
-              orientation: imgHeight > imgWidth ? 'portrait' : 'landscape'
-            });
-            
-            // Convert canvas to image data
-            const imgData = canvas.toDataURL('image/png');
-            
-            // Add image to PDF
-            doc.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-            
-            // Save PDF
-            doc.save('receipt.pdf');
-          }).catch(error => {
-            console.error('Error generating PDF:', error)
-          });
-        }, 500)
-      });
-    }
-  }
-
-  const handleDownloadImage = () => {
-    if (printRef.current) {
-      import('html2canvas').then((html2canvas) => {
-        // Wait for content to render
-        setTimeout(() => {
-          html2canvas.default(printRef.current!, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            allowTaint: true,
-            logging: true,
-            width: printRef.current?.scrollWidth,
-            height: printRef.current?.scrollHeight
-          }).then(canvas => {
-            const link = document.createElement('a')
-            link.download = 'receipt.png'
-            link.href = canvas.toDataURL()
-            link.click()
-          }).catch(error => {
-            console.error('Error generating image:', error)
-          })
-        }, 500)
-      })
-    }
-  }
 
 
 
@@ -1052,7 +1557,7 @@ export default function POSPage() {
       
       // Add timeout to prevent hanging
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
       
       const productsRes = await fetch(`${API_URL}/inventory/pos-product-summary/?${queryParams.toString()}`, { 
         headers,
@@ -1078,7 +1583,6 @@ export default function POSPage() {
         }
         
         setProducts(availableProducts);
-        setFilteredProducts(availableProducts); // No client-side pagination needed
         setTotalCount(totalItems);
         
         // Calculate total pages from server count
@@ -1093,11 +1597,14 @@ export default function POSPage() {
           page,
         };
       } else {
-        console.error('Failed to fetch products:', productsRes.status, productsRes.statusText);
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Failed to fetch products:', productsRes.status, productsRes.statusText);
+        }
         const errorText = await productsRes.text();
-        console.error('Error response:', errorText);
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Error response:', errorText);
+        }
         setProducts([]);
-        setFilteredProducts([]);
         setTotalCount(0);
         setTotalPages(1);
         // Reset last fetch params on error
@@ -1107,14 +1614,15 @@ export default function POSPage() {
           genreId: null,
           page: 1,
         };
-        toast({
-          title: "Error",
-          description: `Failed to load products for warehouse. Status: ${productsRes.status}`,
-          variant: "destructive",
-        });
+        handleError(
+          new Error(`Failed to load products for warehouse. Status: ${productsRes.status}`),
+          "Failed to load products for warehouse. Please try again."
+        );
       }
           } catch (error) {
-        console.error('Error fetching products:', error);
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Error fetching products:', error);
+        }
         
         // Retry logic for network errors
         if (retryCount < 2 && (error instanceof Error && error.name === 'AbortError' || error instanceof TypeError)) {
@@ -1125,19 +1633,10 @@ export default function POSPage() {
         }
         
         setProducts([]);
-        setFilteredProducts([]);
         if (error instanceof Error && error.name === 'AbortError') {
-          toast({
-            title: "Timeout",
-            description: "Request timed out. Please try again.",
-            variant: "destructive",
-          });
+          handleError(error, "Request timed out. Please try again.", { title: "Timeout" });
         } else {
-          toast({
-            title: "Error",
-            description: "Failed to load products. Please try again.",
-            variant: "destructive",
-          });
+          handleError(error, "Failed to load products. Please try again.");
         }
       } finally {
         setIsLoading(false);
@@ -1163,7 +1662,6 @@ export default function POSPage() {
     } else {
       // Clear products when no warehouse is selected
       setProducts([]);
-      setFilteredProducts([]);
       setIsLoading(false);
       // Reset fetch params
       lastFetchParamsRef.current = {
@@ -1176,6 +1674,9 @@ export default function POSPage() {
   }, [selectedWarehouse]);
 
   // Auto-reallocate when anything affecting the grand total changes
+  // CRITICAL: For cash payments, ensure ALL items are fully paid regardless of discounts
+  // This effect ensures that when global discount, item discount, quantity, or price changes,
+  // all items are marked as fully paid with paid_amount matching their calculated total
   // Uses cartTotalSignature instead of cart.length to only trigger when
   // actual item values (quantity, price, discount) change, not just cart length
   useEffect(() => {
@@ -1183,53 +1684,23 @@ export default function POSPage() {
     const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
     const isCash = pm.includes("cash");
     if (!isCash) return;
+    // Check cart length inside the effect to avoid dependency
     if (cart.length === 0) return;
 
-    // Re-allocate to match current GRAND TOTAL
-    allocatePayInFull();
+    // Re-allocate to match current item totals (ensures no partial payments for cash)
+    // This handles global discount, item-level discount, quantity changes, customer type changes, etc.
+    // Use ref to avoid dependency on allocatePayInFull which changes when calculateItemTotal changes
+    if (allocatePayInFullRef.current) {
+      allocatePayInFullRef.current();
+    }
   }, [
     selectedPaymentMethod,
-    discountPercentage,
+    discountPercentage, // Global discount changes must trigger reallocation
     taxPercentage,
-    cartTotalSignature, // Only changes when item quantities, prices, or discounts change
-    allocatePayInFull,  // Include the memoized function
+    cartTotalSignature, // Only changes when item quantities, prices, or item-level discounts change
+    selectedCustomer?.customer_type, // Customer type changes must trigger reallocation for individual vs store logic
+    // Note: allocatePayInFull is NOT in dependencies to prevent loops - we use a ref instead
   ]);
-
-  // Commented out to prevent infinite loop - payment method logic is now handled in addToCart
-  // useEffect(() => {
-  //   if (selectedPaymentMethod && cart.length > 0) {
-  //     const paymentMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
-  //     if (paymentMethod) {
-  //       const isOutstanding = paymentMethod.display_name_en.toLowerCase().includes('outstanding');
-  //       
-  //       // Only update items that haven't been manually configured yet
-  //       setCart(prevCart => prevCart.map(item => {
-  //         // Calculate item total inline to avoid dependency issues
-  //         const price = item.product.latest_price ? parseFloat(item.product.latest_price) : 0;
-  //         const quantity = item.quantity;
-  //         const discount = item.discount_percent / 100;
-  //         const itemTotal = price * quantity * (1 - discount);
-  //         
-  //         // Only update if this looks like a newly added item (paid amount matches total exactly)
-  //         // and the user hasn't manually changed the payment status
-  //         const isNewlyAdded = Math.abs(item.paid_amount - itemTotal) < 0.001;
-  //         const shouldUpdate = isNewlyAdded && (
-  //           (isOutstanding && item.is_paid) || (!isOutstanding && !item.is_paid)
-  //         );
-  //         
-  //         if (shouldUpdate) {
-  //           return {
-  //             ...item,
-  //             is_paid: !isOutstanding,
-  //             paid_amount: !isOutstanding ? itemTotal : 0
-  //           };
-  //         }
-  //         // Don't change items that user has manually configured
-  //         return item;
-  //       }));
-  //     }
-  //   }
-  // }, [selectedPaymentMethod, paymentMethods]);
 
   // Add PaginationControls to the products section
   const PaginationControls = () => {
@@ -1307,7 +1778,6 @@ export default function POSPage() {
     setSelectedCustomer(null)
     setSelectedWarehouse(null)
     setProducts([])
-    setFilteredProducts([])
     setInvoiceNotes("")
     setDiscountPercentage(30)
     setTaxPercentage(0)
@@ -1317,6 +1787,15 @@ export default function POSPage() {
   }
 
   const fetchSalesMetrics = async () => {
+    // Abort previous request if still pending
+    if (salesMetricsAbortControllerRef.current) {
+      salesMetricsAbortControllerRef.current.abort()
+    }
+    
+    // Create new AbortController for this request
+    const controller = new AbortController()
+    salesMetricsAbortControllerRef.current = controller
+
     try {
       const token = localStorage.getItem("accessToken")
       const headers = {
@@ -1330,7 +1809,10 @@ export default function POSPage() {
       const today = omanDate.toISOString().split('T')[0] // This will give YYYY-MM-DD in Oman timezone
       
       // Fetch today's sales using created_at field
-      const salesResponse = await fetch(`${API_URL}/sales/invoices/?created_at=${today}`, { headers })
+      const salesResponse = await fetchWithRetry(`${API_URL}/sales/invoices/?created_at=${today}`, { 
+        headers,
+        signal: controller.signal,
+      })
       const salesData = await salesResponse.json()
 
       // Calculate today's total sales
@@ -1344,12 +1826,7 @@ export default function POSPage() {
 
       // Total customers is already set from the customers fetch in fetchData
     } catch (error) {
-      console.error("Error fetching sales metrics:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load sales metrics. Please try again.",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to load sales metrics. Please try again.");
     }
   }
 
@@ -1446,7 +1923,7 @@ export default function POSPage() {
                           </Command>
                         </PopoverContent>
                       </Popover>
-                      <Dialog open={isNewCustomerDialogOpen} onOpenChange={setIsNewCustomerDialogOpen}>
+                      <Dialog open={activeDialog === 'newCustomer'} onOpenChange={(open) => setActiveDialog(open ? 'newCustomer' : null)}>
                         <DialogTrigger asChild>
                           <Button variant="outline" size="icon">
                             <UserPlus className="h-4 w-4" />
@@ -1460,6 +1937,24 @@ export default function POSPage() {
                             </DialogDescription>
                           </DialogHeader>
                           <div className="grid gap-4 py-4">
+                            <div className="grid gap-2">
+                              <Label htmlFor="customer_type">Customer Type</Label>
+                              <Select
+                                value={newCustomer.customer_type?.toString() || ""}
+                                onValueChange={(value) => setNewCustomer({ ...newCustomer, customer_type: value ? Number(value) : null })}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select customer type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {customerTypes.map((type) => (
+                                    <SelectItem key={type.id} value={type.id.toString()}>
+                                      {type.display_name_en || type.name_en}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
                             <div className="grid gap-2">
                               <Label htmlFor="institution_name">Institution Name</Label>
                               <Input
@@ -1497,11 +1992,11 @@ export default function POSPage() {
                             </div>
                           </div>
                           <DialogFooter>
-                            <Button variant="outline" onClick={() => setIsNewCustomerDialogOpen(false)}>
+                            <Button variant="outline" onClick={() => setActiveDialog(null)}>
                               Cancel
                             </Button>
-                            <Button onClick={handleAddCustomer} disabled={isSubmitting}>
-                              {isSubmitting ? (
+                            <Button onClick={handleAddCustomer} disabled={isAddingCustomer}>
+                              {isAddingCustomer ? (
                                 <>
                                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                                   Adding...
@@ -1538,8 +2033,9 @@ export default function POSPage() {
                       <Select
                         value={selectedPaymentMethod?.toString() || ""}
                         onValueChange={(value) => setSelectedPaymentMethod(Number(value))}
+                        disabled={isIndividualCustomer}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger className={isIndividualCustomer ? "bg-muted cursor-not-allowed" : ""}>
                           <SelectValue placeholder="Select payment method" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1557,15 +2053,23 @@ export default function POSPage() {
 
                   <div className="space-y-2">
                     <Label>Items</Label>
-                    {selectedPaymentMethod && (
+                    {(selectedPaymentMethod || isIndividualCustomer) && (
                       <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
                         <div className="flex items-center justify-between">
                           <div>
-                            <strong>Payment Method:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en}
-                            {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase().includes('outstanding') 
-                              ? ' - Items will be marked as unpaid by default'
-                              : ' - Items will be marked as paid by default'
-                            }
+                            {isIndividualCustomer ? (
+                              <>
+                                <strong>Payment Method:</strong> Cash - Items will be marked as paid by default
+                              </>
+                            ) : (
+                              <>
+                                <strong>Payment Method:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en}
+                                {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase().includes('outstanding') 
+                                  ? ' - Items will be marked as unpaid by default'
+                                  : ' - Items will be marked as paid by default'
+                                }
+                              </>
+                            )}
                           </div>
                           {cart.length > 0 && (
                             <Button
@@ -1586,21 +2090,30 @@ export default function POSPage() {
                       ) : (
                         cart.map((item) => {
                           const itemTotal = calculateItemTotal(item);
-                          const remainingAmount = itemTotal - item.paid_amount;
-                          const isFullyPaid = item.paid_amount >= itemTotal;
-                          const isPartiallyPaid = item.paid_amount > 0 && item.paid_amount < itemTotal;
+                          const remainingAmount = Math.max(0, itemTotal - item.paid_amount);
+                          const paidAmount = item.paid_amount;
+                          const difference = Math.abs(paidAmount - itemTotal);
+                          // Use tolerance check to handle floating point precision
+                          const isFullyPaid = difference < 0.001 || paidAmount >= itemTotal;
+                          const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
                           
                           return (
-                            <div key={item.product.id} className={`space-y-2 p-3 rounded-lg border ${
+                            <div key={item.product.id} className={`space-y-2 p-3 rounded-lg border relative ${
                               isFullyPaid ? 'bg-green-50 border-green-200' : 
                               isPartiallyPaid ? 'bg-orange-50 border-orange-200' : 
                               'bg-white border-gray-200'
-                            }`}>
+                            } ${processingItems.has(item.product.id) ? 'opacity-60' : ''}`}>
+                              {processingItems.has(item.product.id) && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-lg z-10">
+                                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                </div>
+                              )}
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 flex-1">
                                   <Checkbox
                                     checked={item.is_paid}
                                     onChange={(e) => updateItemPaymentStatus(item.product.id, e.target.checked)}
+                                    disabled={isIndividualCustomer}
                                     className="shrink-0"
                                   />
                                   <div className="flex-1">
@@ -1609,7 +2122,10 @@ export default function POSPage() {
                                       {getPaymentStatusBadge(item)}
                                     </div>
                                     <p className="text-sm text-muted-foreground">
-                                      {(item.product.latest_price ? parseFloat(item.product.latest_price).toFixed(3) : "N/A")} OMR
+                                      {(() => {
+                                        const displayPrice = getDisplayPrice(item.product);
+                                        return displayPrice ? `${parseFloat(displayPrice).toFixed(3)} ${getCurrencyLabel()}` : "N/A";
+                                      })()}
                                     </p>
                                   </div>
                                 </div>
@@ -1662,7 +2178,7 @@ export default function POSPage() {
                                   </SelectContent>
                                 </Select>
                                 <span className="text-xs ml-auto">
-                                  Total: {itemTotal.toFixed(3)} OMR
+                                  Total: {itemTotal.toFixed(3)} {getCurrencyLabel()}
                                 </span>
                               </div>
 
@@ -1680,7 +2196,7 @@ export default function POSPage() {
                                     placeholder="0.000"
                                   />
                                   <span className="text-xs text-muted-foreground">
-                                    {remainingAmount > 0 ? `Remaining: ${remainingAmount.toFixed(3)} OMR` : "Fully Paid"}
+                                    {remainingAmount > 0 ? `Remaining: ${remainingAmount.toFixed(3)} ${getCurrencyLabel()}` : "Fully Paid"}
                                   </span>
                                 </div>
                               )}
@@ -1703,7 +2219,7 @@ export default function POSPage() {
                   <div className="space-y-2 bg-muted p-4 rounded-lg">
                     <div className="flex justify-between">
                       <span>Subtotal</span>
-                      <span>{subtotal.toFixed(3)} OMR</span>
+                      <span>{subtotal.toFixed(3)} {getCurrencyLabel()}</span>
                     </div>
 
                     <div className="flex justify-between items-center">
@@ -1734,7 +2250,7 @@ export default function POSPage() {
                           </SelectContent>
                         </Select>
                         <span className="min-w-[60px] text-right">
-                          {globalDiscountAmount > 0 ? `-${globalDiscountAmount.toFixed(3)}` : "0.000"} OMR
+                          {globalDiscountAmount > 0 ? `-${globalDiscountAmount.toFixed(3)}` : "0.000"} {getCurrencyLabel()}
                         </span>
                       </div>
                     </div>
@@ -1757,14 +2273,14 @@ export default function POSPage() {
                             <SelectItem value="15">15%</SelectItem>
                           </SelectContent>
                         </Select>
-                        <span className="min-w-[60px] text-right">{tax.toFixed(3)} OMR</span>
+                        <span className="min-w-[60px] text-right">{tax.toFixed(3)} {getCurrencyLabel()}</span>
                       </div>
                     </div>
 
                     <Separator />
                     <div className="flex justify-between font-bold text-lg">
                       <span>Total</span>
-                      <span>{total.toFixed(3)} OMR</span>
+                      <span>{total.toFixed(3)} {getCurrencyLabel()}</span>
                     </div>
 
                     {/* Payment Summary Section */}
@@ -1783,7 +2299,7 @@ export default function POSPage() {
                                 Paid Items ({paidItems.length})
                               </span>
                               <span className="text-green-600 font-medium">
-                                {total.toFixed(3)} OMR
+                                {total.toFixed(3)} {getCurrencyLabel()}
                               </span>
                             </div>
                           )}
@@ -1795,7 +2311,7 @@ export default function POSPage() {
                                 Unpaid Items ({unpaidItems.length})
                               </span>
                               <span className="text-red-600 font-medium">
-                                {totalUnpaidAmount.toFixed(3)} OMR
+                                {totalUnpaidAmount.toFixed(3)} {getCurrencyLabel()}
                               </span>
                             </div>
                           )}
@@ -1807,7 +2323,13 @@ export default function POSPage() {
                                 Partial Payments
                               </span>
                               <span className="text-orange-600 font-medium">
-                                {cart.filter(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item)).length} items
+                                {cart.filter(item => {
+                                  const itemTotal = calculateItemTotal(item);
+                                  const paidAmount = item.paid_amount;
+                                  const difference = Math.abs(paidAmount - itemTotal);
+                                  // Item is partial if paid_amount > 0 and not fully paid (within tolerance)
+                                  return paidAmount > 0.001 && difference >= 0.001 && paidAmount < itemTotal;
+                                }).length} items
                               </span>
                             </div>
                           )}
@@ -1819,7 +2341,7 @@ export default function POSPage() {
                     <div className="flex justify-between font-bold text-lg">
                       <span>Amount Due</span>
                       <span className={totalUnpaidAmount > 0 ? "text-red-600" : "text-green-600"}>
-                        {totalUnpaidAmount.toFixed(3)} OMR
+                        {totalUnpaidAmount.toFixed(3)} {getCurrencyLabel()}
                       </span>
                     </div>
                   </div>
@@ -1839,7 +2361,7 @@ export default function POSPage() {
                       <div className="flex items-center justify-between w-full">
                         <span>Complete Sale</span>
                         <span className="text-sm">
-                          {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} OMR` : "Fully Paid"}
+                          {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} ${getCurrencyLabel()}` : "Fully Paid"}
                         </span>
                       </div>
                     )}
@@ -1880,7 +2402,7 @@ export default function POSPage() {
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-sm text-muted-foreground">Today's Sales</p>
-                      <h3 className="text-2xl font-bold">{todaySales.toFixed(3)} OMR</h3>
+                      <h3 className="text-2xl font-bold">{todaySales.toFixed(3)} {getCurrencyLabel()}</h3>
                     </div>
                     <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                       <DollarSign className="h-6 w-6 text-primary" />
@@ -2050,7 +2572,6 @@ export default function POSPage() {
                             onClick={() => {
                               setSelectedWarehouse(null);
                               setProducts([]);
-                              setFilteredProducts([]);
                             }}
                           >
                             <X className="h-3 w-3" />
@@ -2076,7 +2597,7 @@ export default function POSPage() {
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
                       <span className="ml-2">Loading products for {warehouses.find(w => w.id === selectedWarehouse)?.name_en}...</span>
                     </div>
-                  ) : filteredProducts.length === 0 ? (
+                  ) : products.length === 0 ? (
                     <div className="text-center py-12">
                       <div className="flex flex-col items-center gap-4">
                         <p className="text-muted-foreground">No products found in this warehouse</p>
@@ -2094,7 +2615,7 @@ export default function POSPage() {
                   ) : (
                     <>
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {filteredProducts.map((product) => (
+                        {products.map((product) => (
                           <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
                             <CardContent className="p-2">
                               <div className="relative aspect-square rounded-md overflow-hidden mb-2">
@@ -2116,7 +2637,12 @@ export default function POSPage() {
                                 <h3 className="font-medium text-sm line-clamp-1">{product.title_en}</h3>
                                 <div className="flex justify-between items-center">
                                   <div>
-                                    <p className="font-bold text-sm">{(product.latest_price ? parseFloat(product.latest_price).toFixed(3) : "N/A")} OMR</p>
+                                    <p className="font-bold text-sm">
+                                      {(() => {
+                                        const displayPrice = getDisplayPrice(product);
+                                        return displayPrice ? `${parseFloat(displayPrice).toFixed(3)} ${getCurrencyLabel()}` : "N/A";
+                                      })()}
+                                    </p>
                                     <TooltipProvider>
                                       <Tooltip>
                                         <TooltipTrigger asChild>
@@ -2164,7 +2690,7 @@ export default function POSPage() {
             <Button
               size="lg"
               className="rounded-full h-14 w-14 shadow-lg"
-              onClick={() => setIsConfirmDialogOpen(true)}
+              onClick={() => setActiveDialog('confirm')}
             >
               <CheckCircle2 className="h-6 w-6" />
             </Button>
@@ -2172,7 +2698,7 @@ export default function POSPage() {
         )}
 
         {/* Confirm Sale Dialog */}
-        <Dialog open={isConfirmDialogOpen} onOpenChange={setIsConfirmDialogOpen}>
+        <Dialog open={activeDialog === 'confirm'} onOpenChange={(open) => setActiveDialog(open ? 'confirm' : null)}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Confirm Sale</DialogTitle>
@@ -2194,24 +2720,24 @@ export default function POSPage() {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Subtotal</span>
-                  <span className="font-medium">{subtotal.toFixed(3)} OMR</span>
+                  <span className="font-medium">{subtotal.toFixed(3)} {getCurrencyLabel()}</span>
                 </div>
                 {discountPercentage > 0 && (
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-muted-foreground">Discount</span>
                     <span className="font-medium text-green-600">
-                      -{globalDiscountAmount.toFixed(3)} OMR
+                      -{globalDiscountAmount.toFixed(3)} {getCurrencyLabel()}
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Tax</span>
-                  <span className="font-medium">{tax.toFixed(3)} OMR</span>
+                  <span className="font-medium">{tax.toFixed(3)} {getCurrencyLabel()}</span>
                 </div>
                 <Separator />
                 <div className="flex justify-between items-center">
                   <span className="font-semibold">Total</span>
-                  <span className="font-bold text-lg">{total.toFixed(3)} OMR</span>
+                  <span className="font-bold text-lg">{total.toFixed(3)} {getCurrencyLabel()}</span>
                 </div>
                 
                 {/* Payment Summary */}
@@ -2221,11 +2747,11 @@ export default function POSPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-muted-foreground">Amount Paid</span>
-                        <span className="font-medium text-green-600">{total.toFixed(3)} OMR</span>
+                        <span className="font-medium text-green-600">{total.toFixed(3)} {getCurrencyLabel()}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-muted-foreground">Amount Due</span>
-                        <span className="font-medium text-red-600">{totalUnpaidAmount.toFixed(3)} OMR</span>
+                        <span className="font-medium text-red-600">{totalUnpaidAmount.toFixed(3)} {getCurrencyLabel()}</span>
                       </div>
                     </div>
                   </>
@@ -2235,7 +2761,7 @@ export default function POSPage() {
             <DialogFooter>
               <Button
                 variant="outline"
-                onClick={() => setIsConfirmDialogOpen(false)}
+                onClick={() => setActiveDialog(null)}
               >
                 Cancel
               </Button>
@@ -2252,7 +2778,7 @@ export default function POSPage() {
                   <div className="flex items-center justify-between w-full">
                     <span>Confirm Sale</span>
                     <span className="text-sm">
-                      {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} OMR` : "Fully Paid"}
+                      {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} ${getCurrencyLabel()}` : "Fully Paid"}
                     </span>
                   </div>
                 )}
@@ -2262,8 +2788,8 @@ export default function POSPage() {
         </Dialog>
 
       {/* Print Receipt Dialog */}
-      <Dialog open={isPrintDialogOpen} onOpenChange={(open) => {
-        setIsPrintDialogOpen(open);
+      <Dialog open={activeDialog === 'print'} onOpenChange={(open) => {
+        setActiveDialog(open ? 'print' : null);
         if (!open) {
           // Clear all cart and sale-related state when closing receipt (same as New Sale)
           handleNewSale();
@@ -2279,183 +2805,80 @@ export default function POSPage() {
         <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
           <div className="shrink-0">
             <DialogHeader>
-            <DialogTitle>Receipt</DialogTitle>
-            <DialogDescription>View, print, or download your receipt.</DialogDescription>
-          </DialogHeader>
-        </div>
-        <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-          <div className="receipt-container" style={{
-            width: '280px',
-            maxWidth: '280px',
-            margin: '0 auto',
-            padding: '8px',
-            fontFamily: 'monospace',
-            fontSize: '10px',
-            lineHeight: '1.1',
-            backgroundColor: 'white',
-            minHeight: '100%'
-          }}>
-            <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
-              <div style={{ marginBottom: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                <img 
-                  src="/dararab-logo-1.png" 
-                  alt="DarArab Logo" 
-                  style={{ 
-                    maxWidth: '60px', 
-                    maxHeight: '40px', 
-                    objectFit: 'contain',
-                    filter: 'grayscale(100%) contrast(200%)', // Make it print-friendly
-                    display: 'block'
-                  }}
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.style.display = 'none';
-                  }}
-                />
-              </div>
-              <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>DarArab for Publishing & Translation</h2>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Seeb, Muscat, Sultanate of Oman</p>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +96871523542</p>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Email: info@dararab.co.uk | Web: dararab.co.uk</p>
-                <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{receiptData?.id}</p>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>{receiptData?.created_at_formatted || format(new Date(), "PPP")}</p>
-              </div>
-              
-              <div className="mb-2" style={{ fontSize: '9px' }}>
-                <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {receiptData?.customer_name || "Walk-in Customer"}</p>
-                {receiptData?.customer_contact && (
-                  <p style={{ margin: '2px 0', fontSize: '8px' }}>{receiptData.customer_contact}</p>
-                )}
-                <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en || "N/A"}</p>
-                <p style={{ margin: '2px 0' }}><strong>Type:</strong> {invoiceTypes.find(t => t.id === selectedInvoiceType)?.display_name_en || "N/A"}</p>
-                <p style={{ margin: '2px 0' }}><strong>Warehouse:</strong> {warehouses.find(w => w.id === selectedWarehouse)?.name_en || "N/A"}</p>
-              </div>
-              
-              <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
-                  <span>Item</span>
-                  <span>Qty</span>
-                  <span>Price</span>
-                  <span>Total</span>
-                  <span>Status</span>
-                </div>
-                
-                {cart.map((cartItem, idx) => {
-                  const itemTotal = calculateItemTotal(cartItem);
-                  const isPaid = cartItem.is_paid;
-                  const paidAmount = cartItem.paid_amount;
-                  
-                  return (
-                    <div key={idx} style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'flex-start',
-                      fontSize: '8px',
-                      marginBottom: '2px',
-                      paddingBottom: '2px',
-                      borderBottom: '1px dotted #ccc'
-                    }}>
-                      <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
-                        {cartItem.product.title_en}
-                      </div>
-                      <div style={{ flex: '0.3', textAlign: 'center' }}>{cartItem.quantity}</div>
-                      <div style={{ flex: '0.5', textAlign: 'right' }}>{(cartItem.product.latest_price ? parseFloat(cartItem.product.latest_price) : 0).toFixed(3)}</div>
-                      <div style={{ flex: '0.5', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                      <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
-                        {isPaid ? (
-                          <span style={{ color: '#16a34a' }}>
-                            {paidAmount >= itemTotal ? "Paid" : "Partial"}
-                          </span>
-                        ) : (
-                          <span style={{ color: '#dc2626' }}>Outstanding</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              
-              <div style={{ marginTop: '6px', fontSize: '9px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Subtotal:</span>
-                  <span>{subtotal.toFixed(3)} OMR</span>
-                </div>
-                {discountPercentage > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                    <span>Discount ({discountPercentage}%):</span>
-                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} OMR</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Tax ({taxPercentage}%):</span>
-                  <span>{tax.toFixed(3)} OMR</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
-                  <span>TOTAL:</span>
-                  <span>{subtotal.toFixed(3)} OMR</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Total Paid:</span>
-                  <span style={{ color: '#16a34a' }}>{total.toFixed(3)} OMR</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
-                  <span>Amount Due:</span>
-                  <span style={{ color: '#16a34a' }}>0.000 OMR</span>
-                </div>
-                {hasPartialPayment && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '8px' }}>
-                    <span style={{ color: '#ea580c' }}>Partial Payments:</span>
-                    <span style={{ color: '#ea580c' }}>{cart.filter(item => item.paid_amount > 0 && item.paid_amount < calculateItemTotal(item)).length} items</span>
-                  </div>
-                )}
-              </div>
-              
-              {receiptData?.notes && (
-                <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
-                  <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
-                  <p style={{ margin: '2px 0 0 0' }}>{receiptData.notes}</p>
-                </div>
-              )}
-              
-              <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
-                <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
-                <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
-              </div>
-            </div>
+              <DialogTitle>Receipt</DialogTitle>
+              <DialogDescription>View, print, or download your receipt.</DialogDescription>
+            </DialogHeader>
           </div>
-          <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:justify-end pt-2 border-t bg-white">
-            <Button variant="outline" onClick={handlePrint} aria-label="Print" title="Print">
-              <Printer className="h-5 w-5" />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" aria-label="Download" title="Download">
-                  <Download className="h-5 w-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleDownloadPDF}>
-                  <FileText className="h-4 w-4 mr-2" />
-                  Download as PDF
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleDownloadImage}>
-                  <Image className="h-4 w-4 mr-2" />
-                  Download as Image
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button onClick={() => {
-              handleNewSale();
-              // Reset payment method and invoice type to defaults
-              if (paymentMethods.length > 0) {
-                setSelectedPaymentMethod(paymentMethods[0].id);
-              }
-              if (invoiceTypes.length > 0) {
-                setSelectedInvoiceType(invoiceTypes[0].id);
-              }
-              setIsPrintDialogOpen(false);
-            }}>Close</Button>
-          </div>
+          {receiptData && (
+            <ReceiptContent
+              receiptData={{
+                id: receiptData.id,
+                composite_id: receiptData.composite_id,
+                customer_name: receiptData.customer_name || selectedCustomer?.institution_name || "Walk-in Customer",
+                customer_contact: receiptData.customer_contact || selectedCustomer?.contact_person || "",
+                warehouse_name: receiptData.warehouse_name || warehouses.find(w => w.id === selectedWarehouse)?.name_en || "N/A",
+                warehouse_location: warehouses.find(w => w.id === selectedWarehouse)?.location || "",
+                invoice_type_name: receiptData.invoice_type_name || invoiceTypes.find(t => t.id === selectedInvoiceType)?.display_name_en || "N/A",
+                payment_method_name: receiptData.payment_method_name || paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en || "N/A",
+                items: cart.map((item, idx) => ({
+                  id: idx,
+                  product_name: item.product.title_en,
+                  product: {
+                    id: item.product.id,
+                    title_en: item.product.title_en,
+                    price: item.product.price,
+                    price_omr: item.product.price_omr,
+                    latest_price: item.product.latest_price,
+                    latest_price_omr: item.product.latest_price_omr,
+                  },
+                  quantity: item.quantity,
+                  unit_price: (() => {
+                    const price = item.product.price || item.product.latest_price;
+                    return price ? parseFloat(price) : 0;
+                  })(),
+                  discount_percent: item.discount_percent,
+                  total_price: calculateItemTotal(item),
+                  paid_amount: item.paid_amount,
+                  is_paid: item.is_paid,
+                })),
+                total_amount: total,
+                // For individual customers with discount: show discounted total as paid amount on receipt
+                // (items have full price paid_amount, but customer actually pays the discounted total)
+                total_paid: isIndividualCustomer && discountPercentage > 0 ? total : totalPaidAmount,
+                remaining_amount: totalUnpaidAmount,
+                notes: receiptData.notes || invoiceNotes,
+                created_at_formatted: receiptData.created_at_formatted || format(new Date(), "PPP"),
+                global_discount_percent: discountPercentage,
+                tax_percent: taxPercentage,
+                // Pass POS-specific calculated values
+                subtotal,
+                globalDiscountAmount,
+                tax,
+                total,
+                totalUnpaidAmount,
+                hasPartialPayment,
+              }}
+              currencyLabel={getCurrencyLabel()}
+              getDisplayPrice={(item) => {
+                // For receipt items, check if product exists
+                if (item.product) {
+                  return getDisplayPrice(item.product);
+                }
+                // Fallback to unit_price if no product data
+                return item.unit_price ? item.unit_price.toString() : null;
+              }}
+              onClose={() => {
+                handleNewSale();
+                if (paymentMethods.length > 0) {
+                  setSelectedPaymentMethod(paymentMethods[0].id);
+                }
+                if (invoiceTypes.length > 0) {
+                  setSelectedInvoiceType(invoiceTypes[0].id);
+                }
+                setActiveDialog(null);
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
       </SidebarInset>

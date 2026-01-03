@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -48,8 +48,7 @@ import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { API_URL } from "@/lib/config"
 
 interface Author {
   id: number
@@ -94,32 +93,144 @@ export default function AuthorManagement() {
     }, 5000)
   }
 
-  useEffect(() => {
-    fetchAuthors()
+  // AbortController refs for request cancellation
+  const fetchAuthorsAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers to prevent recreation on every render
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
   }, [])
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-  }
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((
+    error: unknown,
+    defaultMessage: string,
+    options?: {
+      title?: string
+      duration?: number
+    }
+  ) => {
+    // Ignore abort errors silently
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return
+    }
+
+    // Log error in development
+    if (process.env.NODE_ENV !== 'production') {
+      console.error("Error:", error)
+    }
+
+    // Extract error message
+    let errorMessage = defaultMessage
+    if (error instanceof Error) {
+      errorMessage = error.message || defaultMessage
+    }
+
+    // Show toast notification
+    toast({
+      title: options?.title || "Error",
+      description: errorMessage,
+      variant: "destructive",
+      duration: options?.duration || 5000,
+    })
+  }, [])
+
+  useEffect(() => {
+    fetchAuthors()
+    
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      fetchAuthorsAbortControllerRef.current?.abort()
+    }
+  }, [])
 
   const fetchAuthors = async () => {
+    // Abort previous request if still pending
+    fetchAuthorsAbortControllerRef.current?.abort()
+    fetchAuthorsAbortControllerRef.current = new AbortController()
+
     try {
-      const res = await fetch(`${API_URL}/inventory/authors/?page_size=1000`, { headers })
+      const res = await fetchWithRetry(
+        `${API_URL}/inventory/authors/?page_size=1000`,
+        {
+          headers,
+          signal: fetchAuthorsAbortControllerRef.current.signal
+        }
+      )
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      
       const data = await res.json()
-      console.log('API Response:', data) // Debug log
+      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('API Response:', data)
+      }
       
       // Handle the response structure with results array
       const authorsData = data.results || []
       
-      console.log('Processed Authors:', authorsData) // Debug log
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Processed Authors:', authorsData)
+      }
+      
       setAuthors(authorsData)
       setTotalItems(data.count || authorsData.length)
     } catch (error) {
-      console.error("Error fetching authors:", error)
+      handleError(error, "Failed to fetch authors")
       setAuthors([])
       setTotalItems(0)
-      throw error
     } finally {
       setIsLoading(false)
     }
@@ -145,13 +256,16 @@ export default function AuthorManagement() {
   // Handle adding a new author
   const handleAddAuthor = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/authors/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/authors/`, {
         method: "POST",
         headers,
         body: JSON.stringify(newAuthor),
       })
 
-      if (!res.ok) throw new Error("Failed to add author")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to add author")
+      }
 
       const data = await res.json()
       setAuthors([...authors, data])
@@ -175,11 +289,10 @@ export default function AuthorManagement() {
       // Show alert message
       showAlert("success", `New author "${data.name}" has been successfully added to the system.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add author",
-        variant: "destructive",
-      })
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to add author")
       showAlert("error", "Failed to add author. Please try again.")
     }
   }
@@ -189,17 +302,18 @@ export default function AuthorManagement() {
     if (!editAuthor) return
 
     try {
-      const res = await fetch(`${API_URL}/inventory/authors/${editAuthor.id}/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/authors/${editAuthor.id}/`, {
         method: "PUT",
         headers,
         body: JSON.stringify(editAuthor),
       })
 
-      const responseData = await res.json()
-
       if (!res.ok) {
-        throw new Error(JSON.stringify(responseData))
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to update author")
       }
+
+      const responseData = await res.json()
 
       setAuthors(authors.map((a) => (a.id === responseData.id ? responseData : a)))
       setEditAuthor(null)
@@ -215,13 +329,11 @@ export default function AuthorManagement() {
       // Show alert message
       showAlert("success", `Author "${responseData.name}" has been successfully updated.`)
     } catch (error) {
-      console.error("Update error:", error)
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to update author")
       const errorMessage = error instanceof Error ? error.message : "Failed to update author"
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
       showAlert("error", `Failed to update author: ${errorMessage}`)
     }
   }
@@ -234,12 +346,15 @@ export default function AuthorManagement() {
       const authorToDelete = authors.find((a) => a.id === deleteAuthorId)
       if (!authorToDelete) return
 
-      const res = await fetch(`${API_URL}/inventory/authors/${deleteAuthorId}/delete/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/authors/${deleteAuthorId}/delete/`, {
         method: "DELETE",
         headers,
       })
 
-      if (!res.ok) throw new Error("Failed to delete author")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to delete author")
+      }
 
       setAuthors(authors.filter((a) => a.id !== deleteAuthorId))
       setTotalItems(totalItems - 1)
@@ -257,12 +372,10 @@ export default function AuthorManagement() {
       // Show alert message
       showAlert("warning", `Author "${authorToDelete.name}" has been permanently deleted from the system.`)
     } catch (error) {
-      console.error("Delete error:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete author",
-        variant: "destructive",
-      })
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to delete author")
       showAlert("error", "Failed to delete author. Please try again.")
     }
   }

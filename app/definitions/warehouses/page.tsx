@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -54,8 +54,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { API_URL } from "@/lib/config"
 
 interface ListItem {
   id: number
@@ -105,40 +104,163 @@ export default function WarehouseManagement() {
     }, 5000)
   }
 
+  // AbortController refs for request cancellation
+  const fetchWarehousesAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchWarehouseTypesAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers to prevent recreation on every render
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
+  }, [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((
+    error: unknown,
+    defaultMessage: string,
+    options?: {
+      title?: string
+      duration?: number
+    }
+  ) => {
+    // Ignore abort errors silently
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return
+    }
+
+    // Log error in development
+    if (process.env.NODE_ENV !== 'production') {
+      console.error("Error:", error)
+    }
+
+    // Extract error message
+    let errorMessage = defaultMessage
+    if (error instanceof Error) {
+      errorMessage = error.message || defaultMessage
+    }
+
+    // Show toast notification
+    toast({
+      title: options?.title || "Error",
+      description: errorMessage,
+      variant: "destructive",
+      duration: options?.duration || 5000,
+    })
+  }, [])
+
   useEffect(() => {
     fetchWarehouses()
     fetchWarehouseTypes()
+    
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      fetchWarehousesAbortControllerRef.current?.abort()
+      fetchWarehouseTypesAbortControllerRef.current?.abort()
+    }
   }, [])
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-  }
-
   const fetchWarehouseTypes = async () => {
+    // Abort previous request if still pending
+    fetchWarehouseTypesAbortControllerRef.current?.abort()
+    fetchWarehouseTypesAbortControllerRef.current = new AbortController()
+
     try {
-      const res = await fetch(`${API_URL}/common/list-items/warehouse_type`, { headers })
+      const res = await fetchWithRetry(
+        `${API_URL}/common/list-items/warehouse_type`,
+        {
+          headers,
+          signal: fetchWarehouseTypesAbortControllerRef.current.signal
+        }
+      )
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      
       const data = await res.json()
       const typesData = Array.isArray(data) ? data : data.results || []
       setWarehouseTypes(typesData)
     } catch (error) {
-      console.error("Error fetching warehouse types:", error)
+      handleError(error, "Failed to fetch warehouse types")
       setWarehouseTypes([])
     }
   }
 
   const fetchWarehouses = async () => {
+    // Abort previous request if still pending
+    fetchWarehousesAbortControllerRef.current?.abort()
+    fetchWarehousesAbortControllerRef.current = new AbortController()
+
     try {
-      const res = await fetch(`${API_URL}/inventory/warehouses/`, { headers })
+      const res = await fetchWithRetry(
+        `${API_URL}/inventory/warehouses/`,
+        {
+          headers,
+          signal: fetchWarehousesAbortControllerRef.current.signal
+        }
+      )
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      
       const data = await res.json()
       // Ensure data is an array
       const warehousesData = Array.isArray(data) ? data : data.results || []
       setWarehouses(warehousesData)
     } catch (error) {
-      console.error("Error fetching warehouses:", error)
+      handleError(error, "Failed to fetch warehouses")
       // Set empty array on error
       setWarehouses([])
-      throw error
     } finally {
       setIsLoading(false)
     }
@@ -147,13 +269,16 @@ export default function WarehouseManagement() {
   // Handle adding a new warehouse
   const handleAddWarehouse = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/warehouses/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/`, {
         method: "POST",
         headers,
         body: JSON.stringify(newWarehouse),
       })
 
-      if (!res.ok) throw new Error("Failed to add warehouse")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to add warehouse")
+      }
 
       const data = await res.json()
       setWarehouses([...warehouses, data])
@@ -178,11 +303,10 @@ export default function WarehouseManagement() {
       // Show alert message
       showAlert("success", `New warehouse "${data.name_ar} / ${data.name_en}" has been successfully added to the system.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add warehouse",
-        variant: "destructive",
-      })
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to add warehouse")
       showAlert("error", "Failed to add warehouse. Please try again.")
     }
   }
@@ -192,17 +316,18 @@ export default function WarehouseManagement() {
     if (!editWarehouse) return
 
     try {
-      const res = await fetch(`${API_URL}/inventory/warehouses/${editWarehouse.id}/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/${editWarehouse.id}/`, {
         method: "PUT",
         headers,
         body: JSON.stringify(editWarehouse),
       })
 
-      const responseData = await res.json()
-
       if (!res.ok) {
-        throw new Error(JSON.stringify(responseData))
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to update warehouse")
       }
+
+      const responseData = await res.json()
 
       setWarehouses(warehouses.map((w) => (w.id === responseData.id ? responseData : w)))
       setEditWarehouse(null)
@@ -218,13 +343,11 @@ export default function WarehouseManagement() {
       // Show alert message
       showAlert("success", `Warehouse "${responseData.name_ar} / ${responseData.name_en}" has been successfully updated.`)
     } catch (error) {
-      console.error("Update error:", error)
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to update warehouse")
       const errorMessage = error instanceof Error ? error.message : "Failed to update warehouse"
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
       showAlert("error", `Failed to update warehouse: ${errorMessage}`)
     }
   }
@@ -237,12 +360,15 @@ export default function WarehouseManagement() {
       const warehouseToDelete = warehouses.find((w) => w.id === deleteWarehouseId)
       if (!warehouseToDelete) return
 
-      const res = await fetch(`${API_URL}/inventory/warehouses/${deleteWarehouseId}/delete/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/${deleteWarehouseId}/delete/`, {
         method: "DELETE",
         headers,
       })
 
-      if (!res.ok) throw new Error("Failed to delete warehouse")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to delete warehouse")
+      }
 
       setWarehouses(warehouses.filter((w) => w.id !== deleteWarehouseId))
       setDeleteWarehouseId(null)
@@ -259,12 +385,10 @@ export default function WarehouseManagement() {
       // Show alert message
       showAlert("warning", `Warehouse "${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en}" has been permanently deleted from the system.`)
     } catch (error) {
-      console.error("Delete error:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete warehouse",
-        variant: "destructive",
-      })
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to delete warehouse")
       showAlert("error", "Failed to delete warehouse. Please try again.")
     }
   }
