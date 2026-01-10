@@ -288,15 +288,17 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
               <span>Item</span>
               <span>Qty</span>
               <span>Price</span>
+              <span>Disc%</span>
               <span>Total</span>
               <span>Status</span>
             </div>
             
             {(receiptData.items || []).map((item, idx) => {
               const itemTotal = calculateItemTotal(item)
+              const itemDiscountPercent = item.discount_percent || 0
               
               // Determine status
-              let status = "Outstanding"
+              let status = "Not Paid"
               let statusColor = "#dc2626"
               
               if (isFullyPaid) {
@@ -330,13 +332,14 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   paddingBottom: '2px',
                   borderBottom: '1px dotted #ccc'
                 }}>
-                  <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
+                  <div style={{ flex: '1.8', wordBreak: 'break-word', marginRight: '2px' }}>
                     {item.product_name || item.product?.title_en || 'Unknown Product'}
                   </div>
                   <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
-                  <div style={{ flex: '0.5', textAlign: 'right' }}>{displayPriceValue.toFixed(3)}</div>
-                  <div style={{ flex: '0.5', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                  <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
+                  <div style={{ flex: '0.4', textAlign: 'right' }}>{displayPriceValue.toFixed(3)}</div>
+                  <div style={{ flex: '0.3', textAlign: 'right' }}>{itemDiscountPercent.toFixed(1)}%</div>
+                  <div style={{ flex: '0.4', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
+                  <div style={{ flex: '0.35', textAlign: 'right', fontSize: '7px' }}>
                     <span style={{ color: statusColor }}>{status}</span>
                   </div>
                 </div>

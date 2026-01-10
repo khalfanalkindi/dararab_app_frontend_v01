@@ -490,6 +490,7 @@ export default function ReceiptPage() {
                   <span>Item</span>
                   <span>Qty</span>
                   <span>Price</span>
+                  <span>Disc%</span>
                   <span>Total</span>
                   <span>Status</span>
                 </div>
@@ -512,18 +513,30 @@ export default function ReceiptPage() {
                 const finalTotal = discountedSubtotal + tax;
                 
                 // Determine if invoice is fully paid
-                const isFullyPaid = Math.abs(invoiceData.total_paid - finalTotal) < 0.001;
+                const totalPaid = invoiceData.total_paid || 0;
+                const isFullyPaid = Math.abs(totalPaid - finalTotal) < 0.001;
                 
                 return (invoiceData.items || []).map((item, idx) => {
                   const itemTotal = calculateItemTotal(item);
+                  const itemDiscountPercent = item.discount_percent || 0;
                   
-                  let status = "Outstanding";
+                  // Determine status for each item
+                  let status = "Not Paid";
                   let statusColor = "#dc2626";
                   
                   if (isFullyPaid) {
                     status = "Paid";
                     statusColor = "#16a34a";
-                  } else if (invoiceData.total_paid > 0) {
+                  } else if (item.is_paid || (item.paid_amount && item.paid_amount > 0)) {
+                    const itemPaid = item.paid_amount || 0;
+                    if (itemPaid >= itemTotal) {
+                      status = "Paid";
+                      statusColor = "#16a34a";
+                    } else {
+                      status = "Partial";
+                      statusColor = "#ea580c";
+                    }
+                  } else if (totalPaid > 0) {
                     status = "Partial";
                     statusColor = "#ea580c";
                   }
@@ -538,13 +551,14 @@ export default function ReceiptPage() {
                       paddingBottom: '2px',
                       borderBottom: '1px dotted #ccc'
                     }}>
-                      <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
+                      <div style={{ flex: '1.8', wordBreak: 'break-word', marginRight: '2px' }}>
                       {item.product_name || 'Unknown Product'}
                       </div>
                     <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
-                    <div style={{ flex: '0.5', textAlign: 'right' }}>{(item.unit_price || 0).toFixed(3)}</div>
-                    <div style={{ flex: '0.5', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                      <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
+                    <div style={{ flex: '0.4', textAlign: 'right' }}>{(item.unit_price || 0).toFixed(3)}</div>
+                    <div style={{ flex: '0.3', textAlign: 'right' }}>{itemDiscountPercent.toFixed(1)}%</div>
+                    <div style={{ flex: '0.4', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
+                      <div style={{ flex: '0.35', textAlign: 'right', fontSize: '7px' }}>
                         <span style={{ color: statusColor }}>{status}</span>
                       </div>
                     </div>
@@ -564,15 +578,21 @@ export default function ReceiptPage() {
                 };
                 
                 const subtotal = (invoiceData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0);
-                const globalDiscountPercent = invoiceData.global_discount_percent || 0;
+                const globalDiscountPercent = typeof invoiceData.global_discount_percent === 'number' 
+                  ? invoiceData.global_discount_percent 
+                  : parseFloat(String(invoiceData.global_discount_percent || 0));
                 const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100;
                 const discountedSubtotal = subtotal - globalDiscountAmount;
-                const taxPercent = invoiceData.tax_percent || 0;
+                const taxPercent = typeof invoiceData.tax_percent === 'number'
+                  ? invoiceData.tax_percent
+                  : parseFloat(String(invoiceData.tax_percent || 0));
                 const tax = discountedSubtotal * (taxPercent / 100);
                 const total = discountedSubtotal + tax;
                 
                 // Payment calculations - use invoice-level data from API
-                const totalPaidAmount = invoiceData.total_paid || 0;
+                const totalPaidAmount = typeof invoiceData.total_paid === 'number'
+                  ? invoiceData.total_paid
+                  : parseFloat(String(invoiceData.total_paid || 0));
                 // Amount due is the difference between final total and total paid
                 const totalUnpaidAmount = Math.max(0, total - totalPaidAmount);
                 
@@ -580,29 +600,33 @@ export default function ReceiptPage() {
                   <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
                   <span>Subtotal:</span>
-                  <span>{subtotal.toFixed(3)} OMR</span>
+                  <span>{subtotal.toFixed(3)} $</span>
                 </div>
                     {globalDiscountPercent > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span>Discount ({globalDiscountPercent}%):</span>
-                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} OMR</span>
+                        <span>Discount ({globalDiscountPercent.toFixed(1)}%):</span>
+                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} $</span>
                   </div>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                      <span>Tax ({taxPercent}%):</span>
-                  <span>{tax.toFixed(3)} OMR</span>
-                </div>
+                {taxPercent > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                    <span>Tax ({taxPercent.toFixed(1)}%):</span>
+                    <span>{tax.toFixed(3)} $</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
                   <span>TOTAL:</span>
-                  <span>{subtotal.toFixed(3)} OMR</span>
+                  <span>{total.toFixed(3)} $</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Total Paid:</span>
-                      <span style={{ color: '#16a34a' }}>{total.toFixed(3)} OMR</span>
-                </div>
+                {totalPaidAmount > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                    <span>Total Paid:</span>
+                    <span style={{ color: '#16a34a' }}>{totalPaidAmount.toFixed(3)} $</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
                   <span>Amount Due:</span>
-                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} OMR</span>
+                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} $</span>
                 </div>
                   </>
                 );

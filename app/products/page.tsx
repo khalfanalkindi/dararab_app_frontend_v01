@@ -1898,10 +1898,11 @@ async function handleUpdateInventory() {
     }
 
     try {
-      setIsLoading(true);
+      setIsTransferring(true);
       const token = localStorage.getItem("accessToken");
       if (!token) {
         showAlert("error", "Authentication token not found");
+        setIsTransferring(false);
         return;
       }
 

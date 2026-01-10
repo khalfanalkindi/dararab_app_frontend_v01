@@ -467,13 +467,83 @@ export default function OutstandingPaymentPage() {
         // Debug logging to see the actual structure
         if (process.env.NODE_ENV !== 'production') {
           console.log('Invoice structure:', invoice)
-          console.log('Invoice customer:', invoice.customer)
-          console.log('Invoice warehouse:', invoice.warehouse)
-          console.log('Invoice invoice_type:', invoice.invoice_type)
-          console.log('Invoice payment_method:', invoice.payment_method)
+          console.log('Invoice total_amount:', invoice.total_amount)
+          console.log('Invoice total_paid:', invoice.total_paid)
+          console.log('Invoice remaining_amount:', invoice.remaining_amount)
           console.log('Invoice items:', invoice.items)
           console.log('Invoice invoice_items:', invoice.invoice_items)
-          console.log('Invoice composite_id:', invoice.composite_id)
+          console.log('Invoice line_items:', invoice.line_items)
+        }
+        
+        // Try multiple possible field names for items and map product names
+        const mappedItems = (invoice.items || invoice.invoice_items || invoice.line_items || []).map((item: InvoiceItemResponse | InvoiceItem) => {
+          const product = typeof item.product === 'object' && item.product !== null ? item.product : null
+          return {
+            ...item,
+            // Map nested product object to flat product_name with multiple fallbacks
+            product_name: (product && 'name_en' in product ? product.name_en : null) ||
+                         (product && 'title_en' in product ? product.title_en : null) ||
+                         (product && 'title' in product ? product.title : null) ||
+                         (product && 'name' in product ? product.name : null) ||
+                         ('product_name' in item ? item.product_name : null) ||
+                         'No Product Name',
+            // Keep the nested product object for reference
+            product: item.product
+          }
+        })
+        
+        // Calculate actual totals from items (sum of item total_price) if items are available
+        // If items are not in the list response (for performance), fall back to API totals
+        let calculatedTotal: number
+        let calculatedPaid: number
+        let calculatedRemaining: number
+        
+        if (mappedItems.length > 0) {
+          // Items are available, calculate from them
+          calculatedTotal = mappedItems.reduce((sum: number, item) => {
+            const itemTotal = typeof item.total_price === 'number' 
+              ? item.total_price 
+              : parseFloat(String(item.total_price || 0))
+            return sum + itemTotal
+          }, 0)
+          
+          calculatedPaid = mappedItems.reduce((sum: number, item) => {
+            const itemPaid = typeof item.paid_amount === 'number'
+              ? item.paid_amount
+              : parseFloat(String(item.paid_amount || 0))
+            return sum + itemPaid
+          }, 0)
+          
+          calculatedRemaining = calculatedTotal - calculatedPaid
+        } else {
+          // Items not available in list response, use API totals from InvoiceSerializer
+          // The InvoiceSerializer.get_total_amount() returns obj.total_amount (model property)
+          // which should be the correct total after discounts
+          const apiTotal = typeof invoice.total_amount === 'number' 
+            ? invoice.total_amount 
+            : parseFloat(String(invoice.total_amount || 0))
+          
+          const apiPaid = typeof invoice.total_paid === 'number' 
+            ? invoice.total_paid 
+            : typeof invoice.total_paid_amount === 'number'
+            ? invoice.total_paid_amount
+            : parseFloat(String(invoice.total_paid || invoice.total_paid_amount || 0))
+          
+          const apiRemaining = typeof invoice.remaining_amount === 'number'
+            ? invoice.remaining_amount
+            : apiTotal - apiPaid
+          
+          calculatedTotal = apiTotal
+          calculatedPaid = apiPaid
+          calculatedRemaining = Math.max(0, apiRemaining)
+          
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`Invoice ${invoice.id}: Using API totals (items not in response)`, {
+              total: calculatedTotal,
+              paid: calculatedPaid,
+              remaining: calculatedRemaining
+            })
+          }
         }
         
         return {
@@ -510,35 +580,13 @@ export default function OutstandingPaymentPage() {
                               invoice.payment_method?.value || 
                               invoice.payment_method_name || 
                               'No Payment Method',
-          // Ensure other properties are properly mapped
-          total_amount: typeof invoice.total_amount === 'number' ? invoice.total_amount : parseFloat(String(invoice.total_amount || 0)),
-          total_paid: typeof invoice.total_paid === 'number' 
-            ? invoice.total_paid 
-            : typeof invoice.total_paid_amount === 'number'
-            ? invoice.total_paid_amount
-            : parseFloat(String(invoice.total_paid || invoice.total_paid_amount || 0)),
-          remaining_amount: typeof invoice.remaining_amount === 'number'
-            ? invoice.remaining_amount
-            : (typeof invoice.total_amount === 'number' ? invoice.total_amount : parseFloat(String(invoice.total_amount || 0))) - 
-              (typeof invoice.total_paid === 'number' ? invoice.total_paid : typeof invoice.total_paid_amount === 'number' ? invoice.total_paid_amount : parseFloat(String(invoice.total_paid || invoice.total_paid_amount || 0))),
+          // Use calculated totals from items instead of API totals (which might be subtotal_amount)
+          total_amount: calculatedTotal,
+          total_paid: calculatedPaid,
+          remaining_amount: Math.max(0, calculatedRemaining),
           created_at: invoice.created_at || invoice.created_at_formatted || '',
           updated_at: invoice.updated_at || '',
-          // Try multiple possible field names for items and map product names
-          items: (invoice.items || invoice.invoice_items || invoice.line_items || []).map((item: InvoiceItemResponse | InvoiceItem) => {
-            const product = typeof item.product === 'object' && item.product !== null ? item.product : null
-            return {
-              ...item,
-              // Map nested product object to flat product_name with multiple fallbacks
-              product_name: (product && 'name_en' in product ? product.name_en : null) ||
-                           (product && 'title_en' in product ? product.title_en : null) ||
-                           (product && 'title' in product ? product.title : null) ||
-                           (product && 'name' in product ? product.name : null) ||
-                           ('product_name' in item ? item.product_name : null) ||
-                           'No Product Name',
-              // Keep the nested product object for reference
-              product: item.product
-            }
-          }),
+          items: mappedItems,
           selected: false
         }
       })
@@ -735,12 +783,32 @@ export default function OutstandingPaymentPage() {
               }
             })
             
+            // Calculate actual total from items (sum of item total_price)
+            // This ensures we use the correct total after discounts, not the subtotal_amount
+            const calculatedTotal = mergedItems.reduce((sum, item) => {
+              const itemTotal = typeof item.total_price === 'number' 
+                ? item.total_price 
+                : parseFloat(String(item.total_price || 0))
+              return sum + itemTotal
+            }, 0)
+            
+            // Calculate total paid from items
+            const calculatedPaid = mergedItems.reduce((sum, item) => {
+              const itemPaid = typeof item.paid_amount === 'number'
+                ? item.paid_amount
+                : parseFloat(String(item.paid_amount || 0))
+              return sum + itemPaid
+            }, 0)
+            
+            const calculatedRemaining = calculatedTotal - calculatedPaid
+            
             const finalInvoice: Invoice = {
               ...mappedInvoice,
               items: mergedItems,
-              total_amount: typeof mappedInvoice.total_amount === 'number' ? mappedInvoice.total_amount : parseFloat(String(mappedInvoice.total_amount || 0)),
-              total_paid: typeof mappedInvoice.total_paid === 'number' ? mappedInvoice.total_paid : parseFloat(String(mappedInvoice.total_paid || 0)),
-              remaining_amount: typeof mappedInvoice.remaining_amount === 'number' ? mappedInvoice.remaining_amount : parseFloat(String(mappedInvoice.remaining_amount || 0))
+              // Use calculated totals from items instead of API totals (which might be subtotal_amount)
+              total_amount: calculatedTotal,
+              total_paid: calculatedPaid,
+              remaining_amount: Math.max(0, calculatedRemaining)
             }
             
             setSelectedInvoice(finalInvoice)
@@ -748,11 +816,30 @@ export default function OutstandingPaymentPage() {
             if (process.env.NODE_ENV !== 'production') {
               console.warn('Failed to fetch detailed items for invoice:', invoice.id)
             }
+            // Calculate actual total from items (sum of item total_price)
+            const calculatedTotal = mappedInvoice.items.reduce((sum, item) => {
+              const itemTotal = typeof item.total_price === 'number' 
+                ? item.total_price 
+                : parseFloat(String(item.total_price || 0))
+              return sum + itemTotal
+            }, 0)
+            
+            // Calculate total paid from items
+            const calculatedPaid = mappedInvoice.items.reduce((sum, item) => {
+              const itemPaid = typeof item.paid_amount === 'number'
+                ? item.paid_amount
+                : parseFloat(String(item.paid_amount || 0))
+              return sum + itemPaid
+            }, 0)
+            
+            const calculatedRemaining = calculatedTotal - calculatedPaid
+            
             const mappedInvoiceTyped: Invoice = {
               ...mappedInvoice,
-              total_amount: typeof mappedInvoice.total_amount === 'number' ? mappedInvoice.total_amount : parseFloat(String(mappedInvoice.total_amount || 0)),
-              total_paid: typeof mappedInvoice.total_paid === 'number' ? mappedInvoice.total_paid : parseFloat(String(mappedInvoice.total_paid || 0)),
-              remaining_amount: typeof mappedInvoice.remaining_amount === 'number' ? mappedInvoice.remaining_amount : parseFloat(String(mappedInvoice.remaining_amount || 0))
+              // Use calculated totals from items instead of API totals
+              total_amount: calculatedTotal,
+              total_paid: calculatedPaid,
+              remaining_amount: Math.max(0, calculatedRemaining)
             }
             setSelectedInvoice(mappedInvoiceTyped)
           }
@@ -762,11 +849,30 @@ export default function OutstandingPaymentPage() {
           if (process.env.NODE_ENV !== 'production') {
             console.warn('Error fetching detailed items (using summary data):', error)
           }
+          // Calculate actual total from items (sum of item total_price)
+          const calculatedTotal = mappedInvoice.items.reduce((sum, item) => {
+            const itemTotal = typeof item.total_price === 'number' 
+              ? item.total_price 
+              : parseFloat(String(item.total_price || 0))
+            return sum + itemTotal
+          }, 0)
+          
+          // Calculate total paid from items
+          const calculatedPaid = mappedInvoice.items.reduce((sum, item) => {
+            const itemPaid = typeof item.paid_amount === 'number'
+              ? item.paid_amount
+              : parseFloat(String(item.paid_amount || 0))
+            return sum + itemPaid
+          }, 0)
+          
+          const calculatedRemaining = calculatedTotal - calculatedPaid
+          
           const mappedInvoiceTyped: Invoice = {
             ...mappedInvoice,
-            total_amount: typeof mappedInvoice.total_amount === 'number' ? mappedInvoice.total_amount : parseFloat(String(mappedInvoice.total_amount || 0)),
-            total_paid: typeof mappedInvoice.total_paid === 'number' ? mappedInvoice.total_paid : parseFloat(String(mappedInvoice.total_paid || 0)),
-            remaining_amount: typeof mappedInvoice.remaining_amount === 'number' ? mappedInvoice.remaining_amount : parseFloat(String(mappedInvoice.remaining_amount || 0))
+            // Use calculated totals from items instead of API totals
+            total_amount: calculatedTotal,
+            total_paid: calculatedPaid,
+            remaining_amount: Math.max(0, calculatedRemaining)
           }
           setSelectedInvoice(mappedInvoiceTyped)
         }
@@ -1693,7 +1799,7 @@ export default function OutstandingPaymentPage() {
             {selectedTotal > 0 && (
               <div className="mb-4 p-4 bg-primary/10 rounded-md">
                 <p className="text-lg font-semibold">
-                  Selected Outstanding Total: {selectedTotal.toFixed(3)} OMR
+                  Selected Outstanding Total: {selectedTotal.toFixed(3)} $
                 </p>
               </div>
             )}
@@ -1762,10 +1868,10 @@ export default function OutstandingPaymentPage() {
                             <td className="p-2">{invoice.customer_name || 'No Customer'}</td>
                             <td className="p-2">{invoice.warehouse_name || 'No Warehouse'}</td>
                             <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
-                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} OMR</td>
-                            <td className="p-2 text-right">{(invoice.total_paid || 0).toFixed(3)} OMR</td>
+                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} $</td>
+                            <td className="p-2 text-right">{(invoice.total_paid || 0).toFixed(3)} $</td>
                             <td className="p-2 text-right font-semibold text-red-600">
-                              {(invoice.remaining_amount || 0).toFixed(3)} OMR
+                              {(invoice.remaining_amount || 0).toFixed(3)} $
                             </td>
                             <td className="p-2 text-right">
                               <Button
@@ -1841,15 +1947,15 @@ export default function OutstandingPaymentPage() {
               <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold">{(selectedInvoice.total_amount || 0).toFixed(3)} OMR</p>
+                  <p className="text-lg font-semibold">{(selectedInvoice.total_amount || 0).toFixed(3)} $</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Paid Amount</p>
-                  <p className="text-lg font-semibold text-green-600">{(selectedInvoice.total_paid || 0).toFixed(3)} OMR</p>
+                  <p className="text-lg font-semibold text-green-600">{(selectedInvoice.total_paid || 0).toFixed(3)} $</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Outstanding</p>
-                  <p className="text-lg font-semibold text-red-600">{(selectedInvoice.remaining_amount || 0).toFixed(3)} OMR</p>
+                  <p className="text-lg font-semibold text-red-600">{(selectedInvoice.remaining_amount || 0).toFixed(3)} $</p>
                 </div>
               </div>
 
@@ -1967,11 +2073,11 @@ export default function OutstandingPaymentPage() {
                               </div>
                             </td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.quantity) || 0}</td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{(Number(item.unit_price) || 0).toFixed(3)} OMR</td>
+                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{(Number(item.unit_price) || 0).toFixed(3)} $</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.discount_percent) || 0}%</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.tax_percent) || 0}%</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700 font-semibold' : ''}`}>
-                                {(Number(item.total_price) || 0).toFixed(3)} OMR
+                                {(Number(item.total_price) || 0).toFixed(3)} $
                                 {isPaid && <span className="ml-1 text-xs text-green-600">✓</span>}
                               </td>
                           </tr>
@@ -2045,7 +2151,7 @@ export default function OutstandingPaymentPage() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold text-green-600">{selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} OMR</p>
+                  <p className="text-lg font-semibold text-green-600">{selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} $</p>
                 </div>
               </div>
 
@@ -2074,10 +2180,10 @@ export default function OutstandingPaymentPage() {
                             </div>
                           </td>
                           <td className="p-2 text-right">{Number(item.quantity) || 0}</td>
-                          <td className="p-2 text-right">{(Number(item.unit_price) || 0).toFixed(3)} OMR</td>
+                          <td className="p-2 text-right">{(Number(item.unit_price) || 0).toFixed(3)} $</td>
                           <td className="text-right">{Number(item.discount_percent) || 0}%</td>
                           <td className="p-2 text-right">{Number(item.tax_percent) || 0}%</td>
-                          <td className="p-2 text-right">{(Number(item.total_price) || 0).toFixed(3)} OMR</td>
+                          <td className="p-2 text-right">{(Number(item.total_price) || 0).toFixed(3)} $</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2087,7 +2193,7 @@ export default function OutstandingPaymentPage() {
                           Total Amount:
                         </td>
                         <td className="p-2 text-right font-medium">
-                          {selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} OMR
+                          {selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} $
                         </td>
                       </tr>
                     </tfoot>

@@ -37,8 +37,17 @@ export function TransferDialog({
 }: TransferDialogProps) {
   if (!selectedBook) return null
 
+  // Prevent dialog from closing while loading
+  const handleOpenChange = (newOpen: boolean) => {
+    if (!newOpen && isLoading) {
+      // Prevent closing while loading
+      return
+    }
+    onOpenChange(newOpen)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[500px]">
         <DialogHeader>
           <DialogTitle>Transfer Book: {selectedBook.isbn}</DialogTitle>
@@ -52,8 +61,9 @@ export function TransferDialog({
               <Select
                 value={transfer.from_warehouse?.toString() || ""}
                 onValueChange={(value) => setTransfer({ ...transfer, from_warehouse: Number.parseInt(value) })}
+                disabled={isLoading}
               >
-                <SelectTrigger id="from_warehouse" className="mt-1">
+                <SelectTrigger id="from_warehouse" className="mt-1" disabled={isLoading}>
                   <SelectValue placeholder="Select source warehouse" />
                 </SelectTrigger>
                 <SelectContent>
@@ -75,8 +85,9 @@ export function TransferDialog({
               <Select
                 value={transfer.to_warehouse?.toString() || ""}
                 onValueChange={(value) => setTransfer({ ...transfer, to_warehouse: Number.parseInt(value) })}
+                disabled={isLoading}
               >
-                <SelectTrigger id="to_warehouse" className="mt-1">
+                <SelectTrigger id="to_warehouse" className="mt-1" disabled={isLoading}>
                   <SelectValue placeholder="Select destination warehouse" />
                 </SelectTrigger>
                 <SelectContent>
@@ -98,6 +109,7 @@ export function TransferDialog({
                 value={transfer.quantity || ""}
                 onChange={(e) => setTransfer({ ...transfer, quantity: Number.parseInt(e.target.value) })}
                 className="mt-1"
+                disabled={isLoading}
               />
             </div>
 
@@ -111,6 +123,7 @@ export function TransferDialog({
                 value={transfer.shipping_cost || ""}
                 onChange={(e) => setTransfer({ ...transfer, shipping_cost: Number.parseFloat(e.target.value) })}
                 className="mt-1"
+                disabled={isLoading}
               />
             </div>
 
@@ -119,7 +132,7 @@ export function TransferDialog({
               <div className="mt-1">
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant={"outline"} className="w-full justify-start text-left font-normal">
+                    <Button variant={"outline"} className="w-full justify-start text-left font-normal" disabled={isLoading}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
                       {transfer.transfer_date ? format(new Date(transfer.transfer_date), "PPP") : "Select date"}
                     </Button>
@@ -137,6 +150,7 @@ export function TransferDialog({
                         })
                       }
                       initialFocus
+                      disabled={isLoading}
                     />
                   </PopoverContent>
                 </Popover>
@@ -146,7 +160,7 @@ export function TransferDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={isLoading}>
             Cancel
           </Button>
           <Button onClick={onSubmit} disabled={isLoading}>

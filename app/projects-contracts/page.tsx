@@ -1344,12 +1344,12 @@ export default function ProjectContract() {
     (selectedContractType ? getContractedPartyTypeFromContractType(selectedContractType) : null)
   )
 
-  // Handler to create a new party (author, translator, or rights owner)
+  // Handler to create a new party (author, translator, rights owner, or reviewer)
   const handleCreateParty = async () => {
     if (!selectedContractType) return
 
     const partyType = getContractedPartyTypeFromContractType(selectedContractType)
-    if (!partyType || (partyType !== 'author' && partyType !== 'translator' && partyType !== 'rightsowner')) {
+    if (!partyType || (partyType !== 'author' && partyType !== 'translator' && partyType !== 'rightsowner' && partyType !== 'reviewer')) {
       return
     }
 
@@ -1376,6 +1376,9 @@ export default function ProjectContract() {
       } else if (partyType === 'rightsowner') {
         endpoint = `${API_URL}/inventory/rights-owners/`
         payload.contact_info = newParty.contact_info || ''
+      } else if (partyType === 'reviewer') {
+        endpoint = `${API_URL}/inventory/reviewers/`
+        payload.bio = newParty.bio || ''
       }
 
       const res = await fetchWithRetry(endpoint, {
@@ -1419,7 +1422,7 @@ export default function ProjectContract() {
 
       toast({
         title: "Success",
-        description: `${partyType === 'rightsowner' ? 'Rights Owner' : partyType.charAt(0).toUpperCase() + partyType.slice(1)} "${createdParty.name}" has been created and selected.`,
+        description: `${partyType === 'rightsowner' ? 'Rights Owner' : partyType === 'reviewer' ? 'Reviewer' : partyType.charAt(0).toUpperCase() + partyType.slice(1)} "${createdParty.name}" has been created and selected.`,
         variant: "default",
       })
     } catch (error: any) {
@@ -2019,7 +2022,7 @@ export default function ProjectContract() {
             <Label htmlFor="contracted_party_id">Contracted Party</Label>
             {(() => {
               const partyType = getContractedPartyTypeFromContractType(selectedContractType)
-              const showAddButton = partyType === 'author' || partyType === 'translator' || partyType === 'rightsowner'
+              const showAddButton = partyType === 'author' || partyType === 'translator' || partyType === 'rightsowner' || partyType === 'reviewer'
               return showAddButton ? (
                 <Button
                   type="button"
@@ -2289,6 +2292,7 @@ export default function ProjectContract() {
                 if (partyType === 'author') return 'Add New Author'
                 if (partyType === 'translator') return 'Add New Translator'
                 if (partyType === 'rightsowner') return 'Add New Rights Owner'
+                if (partyType === 'reviewer') return 'Add New Reviewer'
                 return 'Add New Party'
               })() : 'Add New Party'}
             </DialogTitle>
@@ -2298,6 +2302,7 @@ export default function ProjectContract() {
                 if (partyType === 'author') return 'Create a new author to add to the system.'
                 if (partyType === 'translator') return 'Create a new translator to add to the system.'
                 if (partyType === 'rightsowner') return 'Create a new rights owner to add to the system.'
+                if (partyType === 'reviewer') return 'Create a new reviewer to add to the system.'
                 return 'Create a new party to add to the system.'
               })() : 'Create a new party to add to the system.'}
             </DialogDescription>
@@ -2317,7 +2322,7 @@ export default function ProjectContract() {
 
             {selectedContractType && (() => {
               const partyType = getContractedPartyTypeFromContractType(selectedContractType)
-              if (partyType === 'author' || partyType === 'translator') {
+              if (partyType === 'author' || partyType === 'translator' || partyType === 'reviewer') {
                 return (
                   <div className="space-y-2">
                     <Label htmlFor="party_bio">Bio</Label>

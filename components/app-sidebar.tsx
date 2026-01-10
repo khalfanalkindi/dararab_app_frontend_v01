@@ -127,6 +127,10 @@ const data = {
           title: "Warehouse Statistics",
           url: "/reports/warehouse-stat",
         },
+        {
+          title: "Royalties Calculation",
+          url: "/reports/royalties",
+        },
       ], // Empty items array means no submenu
     },
     

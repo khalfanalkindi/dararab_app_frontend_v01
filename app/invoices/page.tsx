@@ -990,7 +990,7 @@ export default function InvoicesPage() {
             {selectedTotal > 0 && (
               <div className="mb-4 p-4 bg-primary/10 rounded-md">
                 <p className="text-lg font-semibold">
-                  Selected Total: {selectedTotal.toFixed(3)} OMR
+                  Selected Total: {selectedTotal.toFixed(3)} $
                 </p>
               </div>
             )}
@@ -1061,7 +1061,7 @@ export default function InvoicesPage() {
                               </span>
                             </td>
                             <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
-                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} OMR</td>
+                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} $</td>
                             <td className="p-2 text-right space-x-2">
                               <Button
                                 variant="outline"
@@ -1170,9 +1170,9 @@ export default function InvoicesPage() {
                             </div>
                           </td>
                           <td className="p-2 text-right">{item.quantity || 0}</td>
-                          <td className="p-2 text-right">{(item.unit_price || 0).toFixed(3)} OMR</td>
+                          <td className="p-2 text-right">{(item.unit_price || 0).toFixed(3)} $</td>
                           <td className="p-2 text-right">{item.discount_percent || 0}%</td>
-                          <td className="p-2 text-right">{(item.total_price || 0).toFixed(3)} OMR</td>
+                          <td className="p-2 text-right">{(item.total_price || 0).toFixed(3)} $</td>
                         </tr>
                       )) || (
                         <tr>
@@ -1188,7 +1188,7 @@ export default function InvoicesPage() {
                           Subtotal:
                         </td>
                         <td className="p-2 text-right font-medium">
-                          {invoiceTotals.subtotal.toFixed(3)} OMR
+                          {invoiceTotals.subtotal.toFixed(3)} $
                         </td>
                       </tr>
                       {selectedInvoice.global_discount_percent && invoiceTotals.discountAmount > 0 && (
@@ -1197,7 +1197,7 @@ export default function InvoicesPage() {
                             Discount ({selectedInvoice.global_discount_percent}%):
                           </td>
                           <td className="p-2 text-right font-medium text-red-600">
-                            -{invoiceTotals.discountAmount.toFixed(3)} OMR
+                            -{invoiceTotals.discountAmount.toFixed(3)} $
                           </td>
                         </tr>
                       )}
@@ -1207,7 +1207,7 @@ export default function InvoicesPage() {
                             Tax ({selectedInvoice.tax_percent}%):
                           </td>
                           <td className="p-2 text-right font-medium">
-                            {invoiceTotals.taxAmount.toFixed(3)} OMR
+                            {invoiceTotals.taxAmount.toFixed(3)} $
                           </td>
                         </tr>
                       )}
@@ -1216,7 +1216,7 @@ export default function InvoicesPage() {
                           TOTAL:
                         </td>
                         <td className="p-2 text-right font-bold text-lg">
-                          {invoiceTotals.total.toFixed(3)} OMR
+                          {invoiceTotals.total.toFixed(3)} $
                         </td>
                       </tr>
                       <tr className="border-t">
@@ -1224,7 +1224,7 @@ export default function InvoicesPage() {
                           Total Paid:
                         </td>
                         <td className="p-2 text-right font-medium">
-                          {invoiceTotals.totalPaid.toFixed(3)} OMR
+                          {invoiceTotals.totalPaid.toFixed(3)} $
                         </td>
                       </tr>
                       <tr className="border-t">
@@ -1232,7 +1232,7 @@ export default function InvoicesPage() {
                           Amount Due:
                         </td>
                         <td className="p-2 text-right font-medium">
-                          {invoiceTotals.amountDue.toFixed(3)} OMR
+                          {invoiceTotals.amountDue.toFixed(3)} $
                         </td>
                       </tr>
                     </tfoot>
@@ -1283,7 +1283,7 @@ export default function InvoicesPage() {
                   <li>Composite ID: {invoiceToDelete?.composite_id || "N/A"}</li>
                   <li>Customer: {invoiceToDelete?.customer?.institution_name || "No Customer"}</li>
                   <li>Date: {invoiceToDelete?.created_at ? format(new Date(invoiceToDelete.created_at), "PPP") : "No Date"}</li>
-                  <li>Amount: {(invoiceToDelete?.total_amount || 0).toFixed(3)} OMR</li>
+                  <li>Amount: {(invoiceToDelete?.total_amount || 0).toFixed(3)} $</li>
                 </ul>
               </div>
               <div className="mt-4">
