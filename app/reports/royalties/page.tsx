@@ -263,7 +263,7 @@ export default function RoyaltiesReport() {
       })
       return
     }
-
+    
     // Cancel previous request if still pending
     if (calculationAbortControllerRef.current) {
       calculationAbortControllerRef.current.abort()
@@ -325,7 +325,7 @@ export default function RoyaltiesReport() {
       if (data.eligible) {
         toast({
           title: "Calculation Complete",
-          description: `Royalty Amount: ${data.RA?.toFixed(2)} OMR`,
+          description: `Royalty Amount: $${data.RA?.toFixed(2)}`,
           variant: "default",
         })
       } else {
@@ -477,19 +477,19 @@ export default function RoyaltiesReport() {
                                 : "Select a contract"
                             } 
                           />
-                        </SelectTrigger>
-                        <SelectContent>
+                  </SelectTrigger>
+                  <SelectContent>
                           {contracts.map((contract) => (
                             <SelectItem key={contract.id} value={contract.id.toString()}>
                               {contract.title || `Contract #${contract.id}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                     </div>
 
                     <div className="flex items-end">
-                      <Button
+                <Button
                         onClick={calculateRoyalties}
                         disabled={(!selectedContractId && !selectedProjectId) || isLoading}
                         className="min-w-[180px]"
@@ -505,11 +505,11 @@ export default function RoyaltiesReport() {
                             Calculate Royalties
                           </>
                         )}
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                </Button>
+              </div>
+            </div>
+                    </CardContent>
+                  </Card>
 
               {/* Results */}
               {hasCalculated && (
@@ -532,13 +532,13 @@ export default function RoyaltiesReport() {
                               <CheckCircle2 className="h-5 w-5 text-green-500" />
                               <CardTitle className="text-green-700">✅ Eligible for Royalties</CardTitle>
                             </div>
-                          </CardHeader>
-                          <CardContent>
+                    </CardHeader>
+                    <CardContent>
                             <div className="space-y-4">
                               <div className="text-center py-4 bg-green-50 rounded-lg border border-green-200">
                                 <div className="text-sm text-muted-foreground mb-1">Royalty Amount</div>
                                 <div className="text-4xl font-bold text-green-700">
-                                  {result.RA.toFixed(2)} OMR
+                                  ${result.RA.toFixed(2)}
                                 </div>
                               </div>
 
@@ -610,26 +610,26 @@ export default function RoyaltiesReport() {
                                             <div className="text-lg font-semibold">{result.details.edition_number}</div>
                                           </div>
                                         )}
-                                      </div>
+                </div>
                                     </AccordionContent>
                                   </AccordionItem>
                                 </Accordion>
                               )}
-                            </div>
-                          </CardContent>
-                        </Card>
+                      </div>
+                    </CardContent>
+                  </Card>
                       )}
 
                       {/* Not Eligible State */}
                       {!result.eligible && (
                         <Card className="border-yellow-500">
-                          <CardHeader>
+                    <CardHeader>
                             <div className="flex items-center gap-2">
                               <AlertCircle className="h-5 w-5 text-yellow-500" />
                               <CardTitle className="text-yellow-700">❌ Not Eligible for Royalties</CardTitle>
                             </div>
-                          </CardHeader>
-                          <CardContent>
+                    </CardHeader>
+                    <CardContent>
                             <div className="space-y-4">
                               {result.reason && (
                                 <Alert>
@@ -672,7 +672,7 @@ export default function RoyaltiesReport() {
                                         {result.details.fixed_amount !== undefined && (
                                           <div>
                                             <div className="text-sm font-medium text-muted-foreground">Advance Payment</div>
-                                            <div className="text-lg font-semibold">{result.details.fixed_amount.toFixed(2)} OMR</div>
+                                            <div className="text-lg font-semibold">${result.details.fixed_amount.toFixed(2)}</div>
                                           </div>
                                         )}
                                         {result.details.commission_percent !== undefined && (
@@ -704,9 +704,9 @@ export default function RoyaltiesReport() {
                                   </AccordionItem>
                                 </Accordion>
                               )}
-                            </div>
-                          </CardContent>
-                        </Card>
+                      </div>
+                    </CardContent>
+                  </Card>
                       )}
                     </>
                   )}
@@ -720,11 +720,11 @@ export default function RoyaltiesReport() {
                     <div className="text-center text-muted-foreground">
                       <DollarSign className="h-12 w-12 mx-auto mb-4 opacity-50" />
                       <p>Please select a contract or project, then click "Calculate Royalties" to see the results.</p>
-                    </div>
-                  </CardContent>
-                </Card>
+                      </div>
+                    </CardContent>
+                  </Card>
               )}
-            </div>
+                </div>
           </div>
         </div>
       </SidebarInset>
