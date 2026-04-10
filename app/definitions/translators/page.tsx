@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -48,8 +48,7 @@ import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { API_URL } from "@/lib/config"
 
 interface Translator {
   id: number
@@ -94,32 +93,144 @@ export default function TranslatorManagement() {
     }, 5000)
   }
 
-  useEffect(() => {
-    fetchTranslators()
+  // AbortController refs for request cancellation
+  const fetchTranslatorsAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers to prevent recreation on every render
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
   }, [])
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-  }
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((
+    error: unknown,
+    defaultMessage: string,
+    options?: {
+      title?: string
+      duration?: number
+    }
+  ) => {
+    // Ignore abort errors silently
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return
+    }
+
+    // Log error in development
+    if (process.env.NODE_ENV !== 'production') {
+      console.error("Error:", error)
+    }
+
+    // Extract error message
+    let errorMessage = defaultMessage
+    if (error instanceof Error) {
+      errorMessage = error.message || defaultMessage
+    }
+
+    // Show toast notification
+    toast({
+      title: options?.title || "Error",
+      description: errorMessage,
+      variant: "destructive",
+      duration: options?.duration || 5000,
+    })
+  }, [])
+
+  useEffect(() => {
+    fetchTranslators()
+    
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      fetchTranslatorsAbortControllerRef.current?.abort()
+    }
+  }, [])
 
   const fetchTranslators = async () => {
+    // Abort previous request if still pending
+    fetchTranslatorsAbortControllerRef.current?.abort()
+    fetchTranslatorsAbortControllerRef.current = new AbortController()
+
     try {
-      const res = await fetch(`${API_URL}/inventory/translators/`, { headers })
+      const res = await fetchWithRetry(
+        `${API_URL}/inventory/translators/`,
+        {
+          headers,
+          signal: fetchTranslatorsAbortControllerRef.current.signal
+        }
+      )
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      
       const data = await res.json()
-      console.log('API Response:', data) // Debug log
+      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('API Response:', data)
+      }
       
       // Handle the response structure with results array
       const translatorsData = data.results || []
       
-      console.log('Processed Translators:', translatorsData) // Debug log
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Processed Translators:', translatorsData)
+      }
+      
       setTranslators(translatorsData)
       setTotalItems(data.count || translatorsData.length)
     } catch (error) {
-      console.error("Error fetching translators:", error)
+      handleError(error, "Failed to fetch translators")
       setTranslators([])
       setTotalItems(0)
-      throw error
     } finally {
       setIsLoading(false)
     }
@@ -158,13 +269,16 @@ export default function TranslatorManagement() {
   // Handle adding a new translator
   const handleAddTranslator = async () => {
     try {
-      const res = await fetch(`${API_URL}/inventory/translators/?page_size=1000`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/translators/`, {
         method: "POST",
         headers,
         body: JSON.stringify(newTranslator),
       })
 
-      if (!res.ok) throw new Error("Failed to add translator")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to add translator")
+      }
 
       const data = await res.json()
       setTranslators([...translators, data])
@@ -188,11 +302,10 @@ export default function TranslatorManagement() {
       // Show alert message
       showAlert("success", `New translator "${data.name}" has been successfully added to the system.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add translator",
-        variant: "destructive",
-      })
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to add translator")
       showAlert("error", "Failed to add translator. Please try again.")
     }
   }
@@ -202,17 +315,18 @@ export default function TranslatorManagement() {
     if (!editTranslator) return
 
     try {
-      const res = await fetch(`${API_URL}/inventory/translators/${editTranslator.id}/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/translators/${editTranslator.id}/`, {
         method: "PUT",
         headers,
         body: JSON.stringify(editTranslator),
       })
 
-      const responseData = await res.json()
-
       if (!res.ok) {
-        throw new Error(JSON.stringify(responseData))
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to update translator")
       }
+
+      const responseData = await res.json()
 
       setTranslators(translators.map((t) => (t.id === responseData.id ? responseData : t)))
       setEditTranslator(null)
@@ -228,13 +342,11 @@ export default function TranslatorManagement() {
       // Show alert message
       showAlert("success", `Translator "${responseData.name}" has been successfully updated.`)
     } catch (error) {
-      console.error("Update error:", error)
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to update translator")
       const errorMessage = error instanceof Error ? error.message : "Failed to update translator"
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
       showAlert("error", `Failed to update translator: ${errorMessage}`)
     }
   }
@@ -247,12 +359,15 @@ export default function TranslatorManagement() {
       const translatorToDelete = translators.find((t) => t.id === deleteTranslatorId)
       if (!translatorToDelete) return
 
-      const res = await fetch(`${API_URL}/inventory/translators/${deleteTranslatorId}/delete/`, {
+      const res = await fetchWithRetry(`${API_URL}/inventory/translators/${deleteTranslatorId}/delete/`, {
         method: "DELETE",
         headers,
       })
 
-      if (!res.ok) throw new Error("Failed to delete translator")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || errorData.detail || "Failed to delete translator")
+      }
 
       setTranslators(translators.filter((t) => t.id !== deleteTranslatorId))
       setTotalItems(totalItems - 1)
@@ -270,12 +385,10 @@ export default function TranslatorManagement() {
       // Show alert message
       showAlert("warning", `Translator "${translatorToDelete.name}" has been permanently deleted from the system.`)
     } catch (error) {
-      console.error("Delete error:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete translator",
-        variant: "destructive",
-      })
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to delete translator")
       showAlert("error", "Failed to delete translator. Please try again.")
     }
   }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Loader2, Printer, Download, FileText, Image } from "lucide-react"
@@ -20,8 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { toast } from "@/hooks/use-toast"
 import jsPDF from "jspdf"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { API_URL } from "@/lib/config"
 
 interface InvoiceItem {
   id?: number;
@@ -70,56 +69,168 @@ export default function ReceiptPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(true)
   const printRef = useRef<HTMLDivElement>(null)
+  
+  // AbortController ref for request cancellation
+  const fetchInvoiceAbortControllerRef = useRef<AbortController | null>(null)
 
   // Get invoiceId from URL parameters
   const currentInvoiceId = searchParams.get('id')
 
+  // Memoized headers to avoid recreating on every render
+  const headers = useMemo(() => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+  }), [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+  }, [])
+
+  // Retry utility function with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Check if request was aborted
+        if (options.signal?.aborted) {
+          throw new DOMException('The operation was aborted.', 'AbortError')
+        }
+        
+        const response = await fetch(url, options)
+        
+        // Don't retry on successful responses
+        if (response.ok) {
+          return response
+        }
+        
+        // Don't retry on 4xx client errors (except 429 Too Many Requests)
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return response // Return the error response without retrying
+        }
+        
+        // For 5xx server errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`)
+        }
+        
+        // For other errors, return the response
+        return response
+      } catch (error) {
+        lastError = error as Error
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry if this was the last attempt
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Calculate exponential backoff delay: baseDelay * 2^attempt
+        const delay = baseDelay * Math.pow(2, attempt)
+        
+        // Wait before retrying (respect abort signal)
+        await new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(resolve, delay)
+          
+          // If aborted during wait, clear timeout and reject
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              clearTimeout(timeoutId)
+              reject(new DOMException('The operation was aborted.', 'AbortError'))
+            }, { once: true })
+          }
+        })
+      }
+    }
+    
+    // If we get here, all retries failed
+    throw lastError || new Error('Request failed after retries')
+  }, [])
+
   // Fetch invoice data by ID
-  const fetchInvoiceData = async (id: string) => {
+  const fetchInvoiceData = useCallback(async (id: string) => {
+    // Cancel previous request if still pending
+    if (fetchInvoiceAbortControllerRef.current) {
+      fetchInvoiceAbortControllerRef.current.abort()
+    }
+    
+    // Create new AbortController for this request
+    const abortController = new AbortController()
+    fetchInvoiceAbortControllerRef.current = abortController
+    
     try {
       setIsLoading(true);
-      console.log("Fetching invoice data for ID:", id);
-      const token = localStorage.getItem("accessToken");
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      };
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Fetching invoice data for ID:", id);
+      }
 
-      const response = await fetch(`${API_URL}/sales/invoices/${id}/summary/`, { headers });
+      const response = await fetchWithRetry(`${API_URL}/sales/invoices/${id}/summary/`, { 
+        headers,
+        signal: abortController.signal
+      });
       
       if (!response.ok) {
         throw new Error("Failed to fetch invoice data");
       }
 
       const data = await response.json();
-      console.log("Invoice data received:", data);
-      console.log("Invoice items:", data.items);
-      console.log("Financial data:", {
-        subtotal: data.subtotal,
-        total_amount: data.total_amount,
-        total_paid: data.total_paid,
-        total_remaining: data.total_remaining,
-        global_discount_percent: data.global_discount_percent,
-        tax_percent: data.tax_percent
-      });
-      if (data.items && data.items.length > 0) {
-        console.log("First item structure:", data.items[0]);
-        console.log("Payment data for first item:", {
-          product_name: data.items[0].product_name,
-          total_price: data.items[0].total_price,
-          unit_price: data.items[0].unit_price,
-          quantity: data.items[0].quantity
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Invoice data received:", data);
+        console.log("Invoice items:", data.items);
+        console.log("Financial data:", {
+          subtotal: data.subtotal,
+          total_amount: data.total_amount,
+          total_paid: data.total_paid,
+          total_remaining: data.total_remaining,
+          global_discount_percent: data.global_discount_percent,
+          tax_percent: data.tax_percent
         });
-        console.log("All items payment status:", data.items.map((item: InvoiceItem) => ({
-          product_name: item.product_name,
-          total_price: item.total_price,
-          unit_price: item.unit_price,
-          quantity: item.quantity
-        })));
+        if (data.items && data.items.length > 0) {
+          console.log("First item structure:", data.items[0]);
+          console.log("Payment data for first item:", {
+            product_name: data.items[0].product_name,
+            total_price: data.items[0].total_price,
+            unit_price: data.items[0].unit_price,
+            quantity: data.items[0].quantity
+          });
+          console.log("All items payment status:", data.items.map((item: InvoiceItem) => ({
+            product_name: item.product_name,
+            total_price: item.total_price,
+            unit_price: item.unit_price,
+            quantity: item.quantity
+          })));
+        }
       }
       setInvoiceData(data);
     } catch (error) {
-      console.error("Error fetching invoice data:", error);
+      // Handle AbortError silently
+      if (error instanceof Error && error.name === 'AbortError') {
+        return // Request was cancelled, ignore
+      }
+      
+      handleError(error, "Failed to fetch invoice data");
       toast({
         title: "Error",
         description: "Failed to load invoice data. Please try again.",
@@ -128,16 +239,23 @@ export default function ReceiptPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [headers, fetchWithRetry, handleError]);
 
   // Fetch invoice data when component mounts or invoiceId changes
   useEffect(() => {
     if (currentInvoiceId) {
       fetchInvoiceData(currentInvoiceId);
-        } else {
+    } else {
       setIsLoading(false);
     }
-  }, [currentInvoiceId]);
+    
+    // Cleanup: abort request when component unmounts or invoiceId changes
+    return () => {
+      if (fetchInvoiceAbortControllerRef.current) {
+        fetchInvoiceAbortControllerRef.current.abort()
+      }
+    }
+  }, [currentInvoiceId, fetchInvoiceData]);
 
   const handleClose = () => {
     setIsPrintDialogOpen(false)
@@ -196,7 +314,9 @@ export default function ReceiptPage() {
           printWindow.print()
         }
       } catch (error) {
-        console.error("Error printing:", error)
+        if (process.env.NODE_ENV !== 'production') {
+          console.error("Error printing:", error)
+        }
       }
     }
   }
@@ -227,7 +347,9 @@ export default function ReceiptPage() {
             doc.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
             doc.save('receipt.pdf');
           }).catch(error => {
-            console.error('Error generating PDF:', error)
+            if (process.env.NODE_ENV !== 'production') {
+              console.error('Error generating PDF:', error)
+            }
           });
         }, 500)
       });
@@ -252,7 +374,9 @@ export default function ReceiptPage() {
             link.href = canvas.toDataURL()
             link.click()
           }).catch(error => {
-            console.error('Error generating image:', error)
+            if (process.env.NODE_ENV !== 'production') {
+              console.error('Error generating image:', error)
+            }
           })
         }, 500)
       })
@@ -366,6 +490,7 @@ export default function ReceiptPage() {
                   <span>Item</span>
                   <span>Qty</span>
                   <span>Price</span>
+                  <span>Disc%</span>
                   <span>Total</span>
                   <span>Status</span>
                 </div>
@@ -388,18 +513,30 @@ export default function ReceiptPage() {
                 const finalTotal = discountedSubtotal + tax;
                 
                 // Determine if invoice is fully paid
-                const isFullyPaid = Math.abs(invoiceData.total_paid - finalTotal) < 0.001;
+                const totalPaid = invoiceData.total_paid || 0;
+                const isFullyPaid = Math.abs(totalPaid - finalTotal) < 0.001;
                 
                 return (invoiceData.items || []).map((item, idx) => {
                   const itemTotal = calculateItemTotal(item);
+                  const itemDiscountPercent = item.discount_percent || 0;
                   
-                  let status = "Outstanding";
+                  // Determine status for each item
+                  let status = "Not Paid";
                   let statusColor = "#dc2626";
                   
                   if (isFullyPaid) {
                     status = "Paid";
                     statusColor = "#16a34a";
-                  } else if (invoiceData.total_paid > 0) {
+                  } else if (item.is_paid || (item.paid_amount && item.paid_amount > 0)) {
+                    const itemPaid = item.paid_amount || 0;
+                    if (itemPaid >= itemTotal) {
+                      status = "Paid";
+                      statusColor = "#16a34a";
+                    } else {
+                      status = "Partial";
+                      statusColor = "#ea580c";
+                    }
+                  } else if (totalPaid > 0) {
                     status = "Partial";
                     statusColor = "#ea580c";
                   }
@@ -414,13 +551,14 @@ export default function ReceiptPage() {
                       paddingBottom: '2px',
                       borderBottom: '1px dotted #ccc'
                     }}>
-                      <div style={{ flex: '2', wordBreak: 'break-word', marginRight: '2px' }}>
+                      <div style={{ flex: '1.8', wordBreak: 'break-word', marginRight: '2px' }}>
                       {item.product_name || 'Unknown Product'}
                       </div>
                     <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
-                    <div style={{ flex: '0.5', textAlign: 'right' }}>{(item.unit_price || 0).toFixed(3)}</div>
-                    <div style={{ flex: '0.5', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                      <div style={{ flex: '0.4', textAlign: 'right', fontSize: '7px' }}>
+                    <div style={{ flex: '0.4', textAlign: 'right' }}>{(item.unit_price || 0).toFixed(3)}</div>
+                    <div style={{ flex: '0.3', textAlign: 'right' }}>{itemDiscountPercent.toFixed(1)}%</div>
+                    <div style={{ flex: '0.4', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
+                      <div style={{ flex: '0.35', textAlign: 'right', fontSize: '7px' }}>
                         <span style={{ color: statusColor }}>{status}</span>
                       </div>
                     </div>
@@ -440,15 +578,21 @@ export default function ReceiptPage() {
                 };
                 
                 const subtotal = (invoiceData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0);
-                const globalDiscountPercent = invoiceData.global_discount_percent || 0;
+                const globalDiscountPercent = typeof invoiceData.global_discount_percent === 'number' 
+                  ? invoiceData.global_discount_percent 
+                  : parseFloat(String(invoiceData.global_discount_percent || 0));
                 const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100;
                 const discountedSubtotal = subtotal - globalDiscountAmount;
-                const taxPercent = invoiceData.tax_percent || 0;
+                const taxPercent = typeof invoiceData.tax_percent === 'number'
+                  ? invoiceData.tax_percent
+                  : parseFloat(String(invoiceData.tax_percent || 0));
                 const tax = discountedSubtotal * (taxPercent / 100);
                 const total = discountedSubtotal + tax;
                 
                 // Payment calculations - use invoice-level data from API
-                const totalPaidAmount = invoiceData.total_paid || 0;
+                const totalPaidAmount = typeof invoiceData.total_paid === 'number'
+                  ? invoiceData.total_paid
+                  : parseFloat(String(invoiceData.total_paid || 0));
                 // Amount due is the difference between final total and total paid
                 const totalUnpaidAmount = Math.max(0, total - totalPaidAmount);
                 
@@ -456,29 +600,33 @@ export default function ReceiptPage() {
                   <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
                   <span>Subtotal:</span>
-                  <span>{subtotal.toFixed(3)} OMR</span>
+                  <span>{subtotal.toFixed(3)} $</span>
                 </div>
                     {globalDiscountPercent > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span>Discount ({globalDiscountPercent}%):</span>
-                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} OMR</span>
+                        <span>Discount ({globalDiscountPercent.toFixed(1)}%):</span>
+                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} $</span>
                   </div>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                      <span>Tax ({taxPercent}%):</span>
-                  <span>{tax.toFixed(3)} OMR</span>
-                </div>
+                {taxPercent > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                    <span>Tax ({taxPercent.toFixed(1)}%):</span>
+                    <span>{tax.toFixed(3)} $</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
                   <span>TOTAL:</span>
-                  <span>{subtotal.toFixed(3)} OMR</span>
+                  <span>{total.toFixed(3)} $</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Total Paid:</span>
-                      <span style={{ color: '#16a34a' }}>{total.toFixed(3)} OMR</span>
-                </div>
+                {totalPaidAmount > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                    <span>Total Paid:</span>
+                    <span style={{ color: '#16a34a' }}>{totalPaidAmount.toFixed(3)} $</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
                   <span>Amount Due:</span>
-                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} OMR</span>
+                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} $</span>
                 </div>
                   </>
                 );

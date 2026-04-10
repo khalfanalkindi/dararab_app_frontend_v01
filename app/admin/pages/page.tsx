@@ -1,8 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
+import { API_URL } from "@/lib/config"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -47,8 +48,6 @@ import { Label } from "@/components/ui/label"
 import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
-
 // Define page type
 type Page = {
   id: number;
@@ -74,6 +73,90 @@ export default function PagesManagement() {
   })
   const [isLoading, setIsLoading] = useState(true)
 
+  // AbortController refs for request cancellation
+  const fetchPagesAbortControllerRef = useRef<AbortController | null>(null)
+  const addPageAbortControllerRef = useRef<AbortController | null>(null)
+  const updatePageAbortControllerRef = useRef<AbortController | null>(null)
+  const deletePageAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers object
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
+  }, [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+
+    toast({
+      title: "Error",
+      description: errorMessage,
+      variant: "destructive",
+    })
+  }, [])
+
   // Form state for new page
   const [newPage, setNewPage] = useState<Omit<Page, 'id'>>({
     name: "",
@@ -92,19 +175,26 @@ export default function PagesManagement() {
 
   useEffect(() => {
     const fetchPages = async () => {
+      // Cancel previous request if any
+      if (fetchPagesAbortControllerRef.current) {
+        fetchPagesAbortControllerRef.current.abort()
+      }
+      
+      const controller = new AbortController()
+      fetchPagesAbortControllerRef.current = controller
+      
       setIsLoading(true)
       try {
-        const response = await fetch(`${API_URL}/pages/`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
+        const response = await fetchWithRetry(`${API_URL}/pages/`, {
+          headers,
+          signal: controller.signal,
         })
         if (!response.ok) throw new Error("Failed to fetch pages")
-        setPages(await response.json())
+        const data = await response.json()
+        // Handle both array and paginated response formats
+        setPages(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to fetch pages",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to fetch pages")
         showAlert("error", "Failed to fetch pages. Please try again later.")
       } finally {
         setIsLoading(false)
@@ -112,18 +202,31 @@ export default function PagesManagement() {
     }
 
     fetchPages()
-  }, [])
+
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      if (fetchPagesAbortControllerRef.current) {
+        fetchPagesAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWithRetry, handleError, headers])
 
   // Handle adding a new page
   const handleAddPage = async () => {
+    // Cancel previous request if any
+    if (addPageAbortControllerRef.current) {
+      addPageAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    addPageAbortControllerRef.current = controller
+    
     try {
-      const response = await fetch(`${API_URL}/pages/`, {
+      const response = await fetchWithRetry(`${API_URL}/pages/`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
         body: JSON.stringify(newPage),
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to add page")
@@ -147,11 +250,7 @@ export default function PagesManagement() {
       // Show alert message
       showAlert("success", `New page "${addedPage.name}" has been successfully added to the system.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add page",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to add page")
     }
   }
 
@@ -159,14 +258,20 @@ export default function PagesManagement() {
   const handleUpdatePage = async () => {
     if (!editingPage) return
 
+    // Cancel previous request if any
+    if (updatePageAbortControllerRef.current) {
+      updatePageAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    updatePageAbortControllerRef.current = controller
+
     try {
-      const response = await fetch(`${API_URL}/pages/${editingPage.id}/`, {
+      const response = await fetchWithRetry(`${API_URL}/pages/${editingPage.id}/`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
         body: JSON.stringify(editingPage),
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to update page")
@@ -185,11 +290,7 @@ export default function PagesManagement() {
       // Show alert message
       showAlert("success", `Page "${updatedPage.name}" has been successfully updated.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update page",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to update page")
     }
   }
 
@@ -197,15 +298,22 @@ export default function PagesManagement() {
   const handleDeletePage = async () => {
     if (pageToDelete === null) return
 
+    // Cancel previous request if any
+    if (deletePageAbortControllerRef.current) {
+      deletePageAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    deletePageAbortControllerRef.current = controller
+
     try {
       const pageToDeleteData = pages.find((p) => p.id === pageToDelete)
       if (!pageToDeleteData) return
 
-      const response = await fetch(`${API_URL}/pages/${pageToDelete}/delete/`, {
+      const response = await fetchWithRetry(`${API_URL}/pages/${pageToDelete}/delete/`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to delete page")
@@ -225,12 +333,7 @@ export default function PagesManagement() {
       // Show alert message
       showAlert("warning", `Page "${pageToDeleteData.name}" has been permanently deleted from the system.`)
     } catch (error) {
-      console.error("Delete error:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete page",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to delete page")
     }
   }
 

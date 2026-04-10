@@ -133,12 +133,12 @@ export function NavUser({
                 {dir === "rtl" ? "حسابي" : "My Account"}
               </DropdownMenuItem>
             </DropdownMenuGroup>
-            <DropdownMenuGroup>
+            {/* <DropdownMenuGroup>
               <DropdownMenuItem>
                 <BadgeCheck className="mr-2 h-4 w-4" />
                 {dir === "rtl" ? "الإعدادات" : "Settings"}
               </DropdownMenuItem>
-            </DropdownMenuGroup>
+            </DropdownMenuGroup> */}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />

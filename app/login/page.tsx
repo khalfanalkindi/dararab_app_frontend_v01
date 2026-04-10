@@ -12,9 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
-
-// API URL from .env.local
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
+import { API_URL } from "@/lib/config"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -24,6 +22,79 @@ export default function LoginPage() {
   const [error, setError] = React.useState("")
   const [showPassword, setShowPassword] = React.useState(false)
   const [isLoading, setIsLoading] = React.useState(false)
+
+  // AbortController ref for request cancellation
+  const loginAbortControllerRef = React.useRef<AbortController | null>(null)
+
+  // Memoized headers object
+  const headers = React.useMemo(() => ({
+    "Content-Type": "application/json",
+  }), [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = React.useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = React.useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+
+    setError(errorMessage)
+  }, [])
 
   // Load language preference
   React.useEffect(() => {
@@ -40,18 +111,34 @@ export default function LoginPage() {
     localStorage.setItem("preferredLanguage", language)
   }, [language])
 
+  // Cleanup: abort pending requests on unmount
+  React.useEffect(() => {
+    return () => {
+      if (loginAbortControllerRef.current) {
+        loginAbortControllerRef.current.abort()
+      }
+    }
+  }, [])
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
   
+    // Cancel previous request if any
+    if (loginAbortControllerRef.current) {
+      loginAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    loginAbortControllerRef.current = controller
+  
     try {
-      const response = await fetch(`${API_URL}/auth/login/`, {
+      const response = await fetchWithRetry(`${API_URL}/auth/login/`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({ username, password }),
+        signal: controller.signal,
       });
   
       const data = await response.json();
@@ -75,8 +162,18 @@ export default function LoginPage() {
       });
   
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(language === "en" ? err.message || "Login failed." : "فشل تسجيل الدخول.");
+    } catch (err: unknown) {
+      // Handle AbortError silently
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('Login request aborted')
+        }
+        return
+      }
+
+      const errorMessage = err instanceof Error ? err.message : "Login failed."
+      handleError(err, errorMessage)
+      setError(language === "en" ? errorMessage : "فشل تسجيل الدخول.");
     } finally {
       setIsLoading(false);
     }

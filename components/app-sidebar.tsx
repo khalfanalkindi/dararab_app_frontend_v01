@@ -1,7 +1,7 @@
 "use client"
 
 import type * as React from "react"
-import { BookOpen, CreditCard, ShoppingCart, SquareLibrary, BookCopy, Blocks,FileSpreadsheet, Settings2, SquareTerminal, LayoutDashboard, ReceiptText } from "lucide-react"
+import { BookOpen, CreditCard, ShoppingCart, SquareLibrary, BookCopy, Blocks,FileSpreadsheet, Settings2, SquareTerminal, LayoutDashboard, ReceiptText, ArrowRightLeft } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { NavMain } from "./nav-main"
@@ -62,6 +62,13 @@ const data = {
       items: [], // Empty items array means no submenu
     },
     {
+      title: "Product Transfer",
+      url: "/transfer",
+      icon: ArrowRightLeft,
+      isActive: true,
+      items: [], // Empty items array means no submenu
+    },
+    {
       title: "Sales",
       url: "/pos",
       icon: ShoppingCart,
@@ -104,6 +111,10 @@ const data = {
           title: "Customers",
           url: "/definitions/customers",
         },
+        {
+          title: "Rights Owners",
+          url: "/definitions/rights_owner",
+        },
       ]
     },
     {
@@ -115,6 +126,10 @@ const data = {
         {
           title: "Warehouse Statistics",
           url: "/reports/warehouse-stat",
+        },
+        {
+          title: "Royalties Calculation",
+          url: "/reports/royalties",
         },
       ], // Empty items array means no submenu
     },

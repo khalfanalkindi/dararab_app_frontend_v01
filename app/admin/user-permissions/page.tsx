@@ -1,8 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../../components/app-sidebar"
+import { API_URL } from "@/lib/config"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -49,8 +50,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://dararabappbackendv01-production.up.railway.app/api"
-
 type User = {
   id: number;
   first_name: string;
@@ -93,6 +92,92 @@ export default function UserBasedPermissions() {
   })
   const [isLoading, setIsLoading] = useState(true)
 
+  // AbortController refs for request cancellation
+  const fetchUserPermissionsAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchUsersAbortControllerRef = useRef<AbortController | null>(null)
+  const fetchPagesAbortControllerRef = useRef<AbortController | null>(null)
+  const addPermissionAbortControllerRef = useRef<AbortController | null>(null)
+  const updatePermissionAbortControllerRef = useRef<AbortController | null>(null)
+  const deletePermissionAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Memoized headers object
+  const headers = useMemo(() => {
+    const token = localStorage.getItem("accessToken")
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }
+  }, [])
+
+  // fetchWithRetry utility with exponential backoff
+  const fetchWithRetry = useCallback(async (
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, options)
+        
+        // For 5xx errors or 429, throw to trigger retry
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        return response
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on AbortError
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+        
+        // Don't retry on 4xx client errors (except 429)
+        if (error instanceof Error && error.message.includes('HTTP 4')) {
+          throw error
+        }
+        
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = baseDelay * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw lastError || new Error('Unknown error in fetchWithRetry')
+  }, [])
+
+  // Standardized error handling utility
+  const handleError = useCallback((error: unknown, defaultMessage: string) => {
+    // Silently handle AbortError (request cancellation)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Request aborted')
+      }
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : defaultMessage
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('Error:', errorMessage, error)
+    }
+
+    toast({
+      title: "Error",
+      description: errorMessage,
+      variant: "destructive",
+    })
+  }, [])
+
   // Update the newPermission state to match the model
   const [newPermission, setNewPermission] = useState({
     user: "",
@@ -115,19 +200,26 @@ export default function UserBasedPermissions() {
   // Add pages fetch to the useEffect
   useEffect(() => {
     const fetchUserPermissions = async () => {
+      // Cancel previous request if any
+      if (fetchUserPermissionsAbortControllerRef.current) {
+        fetchUserPermissionsAbortControllerRef.current.abort()
+      }
+      
+      const controller = new AbortController()
+      fetchUserPermissionsAbortControllerRef.current = controller
+      
       setIsLoading(true)
       try {
-        const response = await fetch(`${API_URL}/permissions/users/`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
+        const response = await fetchWithRetry(`${API_URL}/permissions/users/`, {
+          headers,
+          signal: controller.signal,
         })
         if (!response.ok) throw new Error("Failed to fetch user permissions")
-        setUserPermissions(await response.json())
+        const data = await response.json()
+        // Handle both array and paginated response formats
+        setUserPermissions(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to fetch user permissions",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to fetch user permissions")
         showAlert("error", "Failed to fetch user permissions. Please try again later.")
       } finally {
         setIsLoading(false)
@@ -135,52 +227,85 @@ export default function UserBasedPermissions() {
     }
 
     const fetchUsers = async () => {
+      // Cancel previous request if any
+      if (fetchUsersAbortControllerRef.current) {
+        fetchUsersAbortControllerRef.current.abort()
+      }
+      
+      const controller = new AbortController()
+      fetchUsersAbortControllerRef.current = controller
+      
       try {
-        const response = await fetch(`${API_URL}/users/`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
+        const response = await fetchWithRetry(`${API_URL}/users/`, {
+          headers,
+          signal: controller.signal,
         })
         if (!response.ok) throw new Error("Failed to fetch users")
-        setUsers(await response.json())
+        const data = await response.json()
+        // Handle both array and paginated response formats
+        setUsers(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to fetch users",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to fetch users")
       }
     }
 
     const fetchPages = async () => {
+      // Cancel previous request if any
+      if (fetchPagesAbortControllerRef.current) {
+        fetchPagesAbortControllerRef.current.abort()
+      }
+      
+      const controller = new AbortController()
+      fetchPagesAbortControllerRef.current = controller
+      
       try {
-        const response = await fetch(`${API_URL}/pages/`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("accessToken")}` },
+        const response = await fetchWithRetry(`${API_URL}/pages/`, {
+          headers,
+          signal: controller.signal,
         })
         if (!response.ok) throw new Error("Failed to fetch pages")
-        setPages(await response.json())
+        const data = await response.json()
+        // Handle both array and paginated response formats
+        setPages(Array.isArray(data) ? data : data.results || [])
       } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to fetch pages",
-          variant: "destructive",
-        })
+        handleError(error, "Failed to fetch pages")
       }
     }
 
     fetchUserPermissions()
     fetchUsers()
     fetchPages()
-  }, [])
+
+    // Cleanup: abort pending requests on unmount
+    return () => {
+      if (fetchUserPermissionsAbortControllerRef.current) {
+        fetchUserPermissionsAbortControllerRef.current.abort()
+      }
+      if (fetchUsersAbortControllerRef.current) {
+        fetchUsersAbortControllerRef.current.abort()
+      }
+      if (fetchPagesAbortControllerRef.current) {
+        fetchPagesAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWithRetry, handleError, headers])
 
   // Handle adding a new permission
   const handleAddPermission = async () => {
+    // Cancel previous request if any
+    if (addPermissionAbortControllerRef.current) {
+      addPermissionAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    addPermissionAbortControllerRef.current = controller
+    
     try {
-      const response = await fetch(`${API_URL}/permissions/users/`, {
+      const response = await fetchWithRetry(`${API_URL}/permissions/users/`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
         body: JSON.stringify(newPermission),
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to add permission")
@@ -220,11 +345,7 @@ export default function UserBasedPermissions() {
       // Show alert message
       showAlert("success", `New permission for ${userName} on ${pageName} has been successfully added.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add permission",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to add permission")
     }
   }
 
@@ -232,14 +353,20 @@ export default function UserBasedPermissions() {
   const handleUpdatePermission = async () => {
     if (!editingPermission) return
 
+    // Cancel previous request if any
+    if (updatePermissionAbortControllerRef.current) {
+      updatePermissionAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    updatePermissionAbortControllerRef.current = controller
+
     try {
-      const response = await fetch(`${API_URL}/permissions/users/${editingPermission.id}/`, {
+      const response = await fetchWithRetry(`${API_URL}/permissions/users/${editingPermission.id}/`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
         body: JSON.stringify(editingPermission),
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to update permission")
@@ -262,17 +389,21 @@ export default function UserBasedPermissions() {
       // Show alert message
       showAlert("success", `Permission for ${userName} on ${resourceName} has been successfully updated.`)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update permission",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to update permission")
     }
   }
 
   // Handle deleting a permission
   const handleDeletePermission = async () => {
     if (permissionToDelete === null) return
+
+    // Cancel previous request if any
+    if (deletePermissionAbortControllerRef.current) {
+      deletePermissionAbortControllerRef.current.abort()
+    }
+    
+    const controller = new AbortController()
+    deletePermissionAbortControllerRef.current = controller
 
     try {
       const permToDeleteData = userPermissions.find((p) => p.id === permissionToDelete)
@@ -282,11 +413,10 @@ export default function UserBasedPermissions() {
       const userName = getUserName(permToDeleteData.user)
       const resourceName = permToDeleteData.resource
 
-      const response = await fetch(`${API_URL}/permissions/users/${permissionToDelete}/delete/`, {
+      const response = await fetchWithRetry(`${API_URL}/permissions/users/${permissionToDelete}/delete/`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
-        },
+        headers,
+        signal: controller.signal,
       })
 
       if (!response.ok) throw new Error("Failed to delete permission")
@@ -306,12 +436,7 @@ export default function UserBasedPermissions() {
       // Show alert message
       showAlert("warning", `Permission for ${userName} on ${resourceName} has been permanently deleted.`)
     } catch (error) {
-      console.error("Delete error:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete permission",
-        variant: "destructive",
-      })
+      handleError(error, "Failed to delete permission")
     }
   }
 
