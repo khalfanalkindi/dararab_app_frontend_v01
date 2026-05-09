@@ -694,6 +694,12 @@ export default function POSPage() {
     });
   }
 
+  const handleQuantityInputChange = (productId: number, rawValue: string) => {
+    const parsedQuantity = parseInt(rawValue, 10);
+    if (isNaN(parsedQuantity)) return;
+    updateQuantity(productId, parsedQuantity);
+  }
+
   const updateItemDiscount = (productId: number, discountPercent: number) => {
     updateCartItem(productId, (item, currentCart) => {
       const updatedItem = { ...item, discount_percent: discountPercent };
@@ -2237,7 +2243,20 @@ export default function POSPage() {
                                   >
                                     <Minus className="h-4 w-4" />
                                   </Button>
-                                  <span className="w-8 text-center">{item.quantity}</span>
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={item.quantity}
+                                    onChange={(e) => handleQuantityInputChange(item.product.id, e.target.value)}
+                                    onBlur={(e) => {
+                                      const parsedQuantity = parseInt(e.target.value, 10);
+                                      if (isNaN(parsedQuantity) || parsedQuantity < 1) {
+                                        updateQuantity(item.product.id, 1);
+                                      }
+                                    }}
+                                    className="h-8 w-16 text-center"
+                                  />
                                   <Button
                                     variant="outline"
                                     size="sm"
