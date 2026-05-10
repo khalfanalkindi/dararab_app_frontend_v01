@@ -662,12 +662,13 @@ export default function POSPage() {
   }
 
   const updateQuantity = (productId: number, newQuantity: number) => {
-    if (newQuantity < 1) {
+    const q = Math.floor(Number(newQuantity))
+    if (!Number.isFinite(q) || q < 1) {
       removeFromCart(productId)
       return
     }
     updateCartItem(productId, (item, currentCart) => {
-      const updatedItem = { ...item, quantity: newQuantity };
+      const updatedItem = { ...item, quantity: q };
       // Calculate NEW item total with updated quantity AND current cart (fixes stale closure)
       const newItemTotal = calculateItemTotal(updatedItem, currentCart);
       
@@ -2237,9 +2238,10 @@ export default function POSPage() {
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Button
+                                    type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                                    onClick={() => updateQuantity(item.product.id, Number(item.quantity) - 1)}
                                   >
                                     <Minus className="h-4 w-4" />
                                   </Button>
@@ -2258,13 +2260,14 @@ export default function POSPage() {
                                     className="h-8 w-16 text-center"
                                   />
                                   <Button
+                                    type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                                    onClick={() => updateQuantity(item.product.id, Number(item.quantity) + 1)}
                                   >
                                     <Plus className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="sm" onClick={() => removeFromCart(item.product.id)}>
+                                  <Button type="button" variant="ghost" size="sm" onClick={() => removeFromCart(item.product.id)}>
                                     <Trash2 className="h-4 w-4 text-red-500" />
                                   </Button>
                                 </div>
@@ -2466,9 +2469,11 @@ export default function POSPage() {
                   </div>
 
                   <Button
+                    type="button"
                     className="w-full mt-4"
                     size="lg"
                     disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={handleCompleteSale}
                   >
                     {isSubmitting ? (
@@ -2885,6 +2890,8 @@ export default function POSPage() {
                 Cancel
               </Button>
               <Button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={handleCompleteSale}
                 disabled={isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
               >
