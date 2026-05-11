@@ -116,6 +116,11 @@ interface CartItem {
   paid_amount: number
 }
 
+/** Replace one line so totals that depend on the whole cart (e.g. store + global discount split) stay consistent. */
+function replaceCartItemForTotals(cart: CartItem[], replacement: CartItem): CartItem[] {
+  return cart.map((c) => (c.product.id === replacement.product.id ? replacement : c))
+}
+
 interface Genre {
   id: number
   value: string
@@ -669,8 +674,9 @@ export default function POSPage() {
     }
     updateCartItem(productId, (item, currentCart) => {
       const updatedItem = { ...item, quantity: q };
-      // Calculate NEW item total with updated quantity AND current cart (fixes stale closure)
-      const newItemTotal = calculateItemTotal(updatedItem, currentCart);
+      const mergedCart = replaceCartItemForTotals(currentCart, updatedItem)
+      // Calculate NEW item total with updated quantity AND cart that already includes this line (store + global discount)
+      const newItemTotal = calculateItemTotal(updatedItem, mergedCart);
       
       // Check if cash payment is selected
       const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
@@ -704,8 +710,8 @@ export default function POSPage() {
   const updateItemDiscount = (productId: number, discountPercent: number) => {
     updateCartItem(productId, (item, currentCart) => {
       const updatedItem = { ...item, discount_percent: discountPercent };
-      // Calculate NEW item total with updated discount AND current cart (fixes stale closure)
-      const newItemTotal = calculateItemTotal(updatedItem, currentCart);
+      const mergedCart = replaceCartItemForTotals(currentCart, updatedItem)
+      const newItemTotal = calculateItemTotal(updatedItem, mergedCart);
       
       // Check if cash payment is selected
       const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
@@ -2473,8 +2479,12 @@ export default function POSPage() {
                     className="w-full mt-4"
                     size="lg"
                     disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
+                    onPointerDown={(e) => {
+                      if (e.pointerType === "mouse" && e.button !== 0) return
+                      e.preventDefault()
+                    }}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={handleCompleteSale}
+                    onClick={() => void handleCompleteSale()}
                   >
                     {isSubmitting ? (
                       <>
@@ -2891,8 +2901,12 @@ export default function POSPage() {
               </Button>
               <Button
                 type="button"
+                onPointerDown={(e) => {
+                  if (e.pointerType === "mouse" && e.button !== 0) return
+                  e.preventDefault()
+                }}
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={handleCompleteSale}
+                onClick={() => void handleCompleteSale()}
                 disabled={isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
               >
                 {isSubmitting ? (
