@@ -1024,6 +1024,11 @@ export default function POSPage() {
     }
   }, [calculateItemTotal, selectedCustomer, customerTypes, discountPercentage]);
 
+  // Wire ref for the cash re-allocation effect below (effect intentionally omits allocatePayInFull from deps).
+  useEffect(() => {
+    allocatePayInFullRef.current = allocatePayInFull
+  }, [allocatePayInFull])
+
   
   // Note: Items are added to cart as paid by default
   
