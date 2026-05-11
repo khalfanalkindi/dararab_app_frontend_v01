@@ -161,23 +161,25 @@ const useCartCalculations = (
   taxPercentage: number,
   calculateItemTotal: (item: CartItem) => number,
   calculateItemSubtotal: (item: CartItem) => number,
-  selectedCustomer: Customer | null,
-  customerTypes: any[]
 ) => {
   // Calculate subtotal from all cart items (BEFORE global discount)
   const subtotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + calculateItemSubtotal(item), 0);
   }, [cart, calculateItemSubtotal]);
 
-  // Create a stable signature of cart items that affect grand total
+  // Stable signature for cart + global discount so effects (e.g. payment sync) react when only global % changes
   const cartTotalSignature = useMemo(() => {
-    if (cart.length === 0) return '';
-    return cart.map(item => {
-      const price = item.product.price || item.product.latest_price;
-      const priceValue = price ? parseFloat(price) : 0;
-      return `${item.product.id}:${item.quantity}:${item.discount_percent}:${priceValue}`;
-    }).join('|');
-  }, [cart]);
+    const g = Math.max(0, Math.min(100, discountPercentage || 0));
+    if (cart.length === 0) return `g:${g}`;
+    const lines = cart
+      .map((item) => {
+        const price = item.product.price || item.product.latest_price;
+        const priceValue = price ? parseFloat(price) : 0;
+        return `${item.product.id}:${item.quantity}:${item.discount_percent}:${priceValue}`;
+      })
+      .join("|");
+    return `${lines}|g:${g}`;
+  }, [cart, discountPercentage]);
 
   // Safe discount percentage (clamped to 0-100)
   const safeDiscountPercentage = useMemo(() => {
@@ -189,25 +191,10 @@ const useCartCalculations = (
     return (subtotal * safeDiscountPercentage) / 100;
   }, [subtotal, safeDiscountPercentage]);
 
-  // Check if customer is individual type (using value instead of ID)
-  const isIndividual = useMemo(() => {
-    if (!selectedCustomer?.customer_type) return false;
-    const customerType = customerTypes.find(ct => ct.id === selectedCustomer.customer_type);
-    return customerType?.value === 'individual';
-  }, [selectedCustomer, customerTypes]);
-
-  // Subtotal after global discount
-  // For "individual" customers: apply global discount at invoice level (subtotal - discount)
-  // For "store" customers: sum of item totals (which already include divided discount)
+  // Subtotal after global discount: sum of per-line totals (each line applies the same global % to its subtotal for store/individual)
   const discountedSubtotal = useMemo(() => {
-    if (isIndividual) {
-      // For individual: apply discount at invoice level, not at item level
-      return Math.max(0, subtotal - globalDiscountAmount);
-    } else {
-      // For store: items already have discount divided, so sum them
-      return cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
-    }
-  }, [cart, calculateItemTotal, isIndividual, subtotal, globalDiscountAmount]);
+    return cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
+  }, [cart, calculateItemTotal]);
 
   // Safe tax percentage (clamped to 0-100)
   const safeTaxPercentage = useMemo(() => {
@@ -251,14 +238,13 @@ const useCartCalculations = (
   // Check if any items have partial payments
   // Uses tolerance check to handle floating point precision issues
   const hasPartialPayment = useMemo(() => {
-    return cart.some(item => {
-      const itemTotal = calculateItemTotal(item);
-      const paidAmount = item.paid_amount;
-      const difference = Math.abs(paidAmount - itemTotal);
-      // Item is partial if paid_amount > 0 and not fully paid (within tolerance)
-      return paidAmount > 0.001 && difference >= 0.001 && paidAmount < itemTotal;
-    });
-  }, [cart, calculateItemTotal]);
+    return cart.some((item) => {
+      const target = calculateItemTotal(item)
+      const paidAmount = item.paid_amount
+      const difference = Math.abs(paidAmount - target)
+      return paidAmount > 0.001 && difference >= 0.001 && paidAmount < target
+    })
+  }, [cart, calculateItemTotal])
 
   return {
     subtotal,
@@ -340,6 +326,8 @@ export default function POSPage() {
   const syncingRef = useRef(false)
   // Ref to store the latest allocatePayInFull function
   const allocatePayInFullRef = useRef<(() => void) | undefined>(undefined)
+  /** Product ids where the user edited "Paid amount" — auto-reconcile skips these lines (paid is clamped to line total). */
+  const manualPaidAmountLineIdsRef = useRef<Set<number>>(new Set())
   const [selectedInvoiceType, setSelectedInvoiceType] = useState<number | null>(null)
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false)
   const [customerSearchQuery, setCustomerSearchQuery] = useState("")
@@ -671,111 +659,25 @@ export default function POSPage() {
     // (slight timeout lets React commit state before we read totals)
     // Skip for Individual customers (handled by separate effect)
     setTimeout(() => {
-      if (isIndividualCustomer) return; // Skip for Individual customers
-      const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
-      const isCash = pm.includes("cash"); // adjust if you have other immediate-pay methods
-      if (isCash) allocatePayInFull();
+      if (isIndividualCustomer) return;
+      // Store (cash or outstanding) and non-individual cash: reconcile line paid amounts to match payment method
+      allocatePayInFullRef.current?.();
     }, 0);
   }
 
   const removeFromCart = (productId: number) => {
+    manualPaidAmountLineIdsRef.current.delete(productId)
     setCart((prevCart) => prevCart.filter((item) => item.product.id !== productId))
   }
 
-  const updateQuantity = (productId: number, newQuantity: number) => {
-    const q = Math.floor(Number(newQuantity))
-    if (!Number.isFinite(q) || q < 1) {
-      removeFromCart(productId)
-      return
-    }
-    updateCartItem(productId, (item, currentCart) => {
-      const updatedItem = { ...item, quantity: q };
-      const mergedCart = replaceCartItemForTotals(currentCart, updatedItem)
-      // Calculate NEW item total with updated quantity AND cart that already includes this line (store + global discount)
-      const newItemTotal = calculateItemTotal(updatedItem, mergedCart);
-      
-      // Check if cash payment is selected
-      const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
-      const isCash = pm.includes("cash");
-      
-      // Check if OLD item was fully paid (compare OLD paid_amount vs OLD itemTotal)
-      // Use current cart for old calculation too to ensure consistency
-      const oldItemTotal = calculateItemTotal(item, currentCart);
-      const wasFullyPaid = Math.abs(item.paid_amount - oldItemTotal) < 0.001;
-      
-      // For cash payments, always update paid_amount to match new total (no partial payments allowed)
-      // For other payment methods, only update if item was already fully paid
-      const shouldUpdatePaidAmount = isCash || wasFullyPaid;
-      
-      const updatedWithPayment = {
-        ...updatedItem,
-        paid_amount: shouldUpdatePaidAmount ? newItemTotal : item.paid_amount
-      };
-      
-      // Sync payment status based on actual paid_amount vs new itemTotal
-      return syncItemPaymentStatus(updatedWithPayment, newItemTotal);
-    });
-  }
-
-  const handleQuantityInputChange = (productId: number, rawValue: string) => {
-    const parsedQuantity = parseInt(rawValue, 10);
-    if (isNaN(parsedQuantity)) return;
-    updateQuantity(productId, parsedQuantity);
-  }
-
-  const updateItemDiscount = (productId: number, discountPercent: number) => {
-    if (!isStoreCustomer) return
-    updateCartItem(productId, (item, currentCart) => {
-      const updatedItem = { ...item, discount_percent: discountPercent };
-      const mergedCart = replaceCartItemForTotals(currentCart, updatedItem)
-      const newItemTotal = calculateItemTotal(updatedItem, mergedCart);
-      
-      // Check if cash payment is selected
-      const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
-      const isCash = pm.includes("cash");
-      
-      // Check if OLD item was fully paid (compare OLD paid_amount vs OLD itemTotal)
-      // Use current cart for old calculation too to ensure consistency
-      const oldItemTotal = calculateItemTotal(item, currentCart);
-      const wasFullyPaid = Math.abs(item.paid_amount - oldItemTotal) < 0.001;
-      
-      // For cash payments, always update paid_amount to match new total (no partial payments allowed)
-      // For other payment methods, only update if item was already fully paid
-      const shouldUpdatePaidAmount = isCash || wasFullyPaid;
-      
-      const updatedWithPayment = {
-        ...updatedItem,
-        paid_amount: shouldUpdatePaidAmount ? newItemTotal : item.paid_amount
-      };
-      
-      // Sync payment status based on actual paid_amount vs new itemTotal
-      return syncItemPaymentStatus(updatedWithPayment, newItemTotal);
-    });
-  }
-
-  const updateItemPaymentStatus = (productId: number, isPaid: boolean) => {
-    updateCartItem(productId, (item, currentCart) => {
-      const itemTotal = calculateItemTotal(item, currentCart);
-      return { 
-        ...item, 
-        is_paid: isPaid, 
-        paid_amount: isPaid ? itemTotal : 0 
-      };
-    });
-  }
-
-  const updateItemPaidAmount = (productId: number, paidAmount: number) => {
-    updateCartItem(productId, (item, currentCart) => {
-      const itemTotal = calculateItemTotal(item, currentCart);
-      const validPaidAmount = Math.min(Math.max(0, paidAmount), itemTotal);
-      const updatedItem = { 
-        ...item, 
-        paid_amount: validPaidAmount
-      };
-      // Sync payment status based on actual paid_amount vs itemTotal
-      return syncItemPaymentStatus(updatedItem, itemTotal);
-    });
-  }
+  // ---------------------------------------------------------------------------
+  // Payment & discount rules (line totals use calculateItemSubtotal / calculateItemTotal):
+  // STORE — cash or outstanding: item discount only on that line; global discount same % on every line's
+  //         post–item-discount subtotal (e.g. 50% global → each line × 0.5). Outstanding: lines default
+  //         unpaid (paid 0); cash: lines default fully paid at line total. Partial only if user edits Paid amount.
+  // INDIVIDUAL — cash only in UI: no line item discount; same global % on each line. Full pay by default.
+  //         Partial only if user edits Paid amount.
+  // ---------------------------------------------------------------------------
 
   // Update the calculateItemTotal function to handle the new price format
   // Memoized with useCallback to prevent recreation on every render
@@ -791,58 +693,33 @@ export default function POSPage() {
     return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
   }, [isStoreCustomer]);
 
-  // Calculate item total with global discount handling
-  // IMPORTANT: 
-  // - For "individual" customer type (value='individual'): global discount is NOT applied to items (only at invoice level)
-  // - For "store" customer type (value='store'): global discount is divided equally among all items
-  // IMPORTANT: All return values are rounded to 3 decimal places to match paid_amount rounding
-  // FIXED: Accepts optional cart parameter to avoid stale closures
+  // Calculate item total: after line subtotal, store & individual apply the same invoice global % to each line.
   const calculateItemTotal = useCallback((item: CartItem, currentCart?: CartItem[]) => {
     const itemSubtotal = calculateItemSubtotal(item);
-    // Use provided cart or fall back to state cart (for backward compatibility)
     const cartToUse = currentCart ?? cart;
-    
-    // If no global discount or no items in cart, return item subtotal (rounded)
+
     if (!discountPercentage || cartToUse.length === 0) {
       return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
     }
-    
-    // Check customer type using value field (not ID)
-    const customerTypeValue = selectedCustomer?.customer_type 
-      ? customerTypes.find(ct => ct.id === selectedCustomer.customer_type)?.value
+
+    const customerTypeValue = selectedCustomer?.customer_type
+      ? customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value
       : null;
-    
-    const isIndividual = customerTypeValue === 'individual';
-    const isStore = customerTypeValue === 'store';
-    
-    // For individual customers: DO NOT apply global discount to items
-    // Global discount is only applied at the invoice/total level, not distributed to items
-    if (isIndividual) {
-      // Return item subtotal without any global discount applied
+
+    const appliesGlobalPerLine = customerTypeValue === "store" || customerTypeValue === "individual";
+    if (!appliesGlobalPerLine) {
       return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
     }
-    
-    // For store customers ONLY: divide global discount equally among all items
-    // For any other customer type, also return item subtotal without global discount
-    if (!isStore) {
-      // Not a store customer, return item subtotal without global discount
-      return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
-    }
-    // Calculate total of all items before global discount
-    const totalSubtotal = cartToUse.reduce((sum, cartItem) => sum + calculateItemSubtotal(cartItem), 0);
-    
-    // Calculate total global discount amount
-    const totalGlobalDiscount = (totalSubtotal * discountPercentage) / 100;
-    
-    // Divide global discount equally among all items
-    const globalDiscountPerItem = totalGlobalDiscount / cartToUse.length;
-    
-    // Apply global discount to this item
-    const itemTotal = itemSubtotal - globalDiscountPerItem;
-    
-    // Round to 3 decimal places to match paid_amount rounding and prevent precision issues
+
+    const safeGlobalFraction = Math.max(0, Math.min(100, discountPercentage)) / 100;
+    const itemTotal = itemSubtotal * (1 - safeGlobalFraction);
     return isNaN(itemTotal) ? 0 : Math.max(0, Number(itemTotal.toFixed(3)));
   }, [cart, discountPercentage, calculateItemSubtotal, selectedCustomer, customerTypes]);
+
+  const getLinePaymentTargetTotal = useCallback(
+    (item: CartItem, cartOverride?: CartItem[]) => calculateItemTotal(item, cartOverride ?? cart),
+    [cart, calculateItemTotal],
+  )
 
   // Use the custom hook for all cart calculations
   const {
@@ -857,7 +734,7 @@ export default function POSPage() {
     paidItems,
     unpaidItems,
     hasPartialPayment,
-  } = useCartCalculations(cart, discountPercentage, taxPercentage, calculateItemTotal, calculateItemSubtotal, selectedCustomer, customerTypes);
+  } = useCartCalculations(cart, discountPercentage, taxPercentage, calculateItemTotal, calculateItemSubtotal);
 
 
   // Helper function to update a cart item, reducing repetition
@@ -872,6 +749,114 @@ export default function POSPage() {
       })
     );
   }, []);
+
+  /** How much to set paid_amount after qty/discount change when the user did not manually set a partial paid amount. */
+  const resolveNextPaidAmount = (
+    productId: number,
+    item: CartItem,
+    currentCart: CartItem[],
+    mergedCart: CartItem[],
+    updatedItem: CartItem,
+  ): number => {
+    const newTarget = getLinePaymentTargetTotal(updatedItem, mergedCart);
+    const oldTarget = getLinePaymentTargetTotal(item, currentCart);
+    const pm = paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
+    const isCash = pm.includes("cash");
+    const isOutstanding = pm.includes("outstanding");
+
+    if (manualPaidAmountLineIdsRef.current.has(productId)) {
+      return Math.min(Math.max(0, item.paid_amount), newTarget);
+    }
+    if (isStoreCustomer && isOutstanding) {
+      return 0;
+    }
+    if (isCash && !isOutstanding) {
+      const wasFullyPaid = Math.abs(item.paid_amount - oldTarget) < 0.001;
+      if (wasFullyPaid) return newTarget;
+      return item.paid_amount;
+    }
+    if (isOutstanding) {
+      return 0;
+    }
+    const wasFullyPaid = Math.abs(item.paid_amount - oldTarget) < 0.001;
+    return wasFullyPaid ? newTarget : item.paid_amount;
+  };
+
+  const updateQuantity = (productId: number, newQuantity: number) => {
+    const q = Math.floor(Number(newQuantity))
+    if (!Number.isFinite(q) || q < 1) {
+      removeFromCart(productId)
+      return
+    }
+    updateCartItem(productId, (item, currentCart) => {
+      const updatedItem = { ...item, quantity: q };
+      const mergedCart = replaceCartItemForTotals(currentCart, updatedItem);
+      const newItemPaymentTarget = getLinePaymentTargetTotal(updatedItem, mergedCart);
+
+      const nextPaid = resolveNextPaidAmount(productId, item, currentCart, mergedCart, updatedItem);
+
+      const updatedWithPayment = {
+        ...updatedItem,
+        paid_amount: Number(nextPaid.toFixed(3)),
+      };
+
+      return syncItemPaymentStatus(updatedWithPayment, newItemPaymentTarget);
+    });
+  }
+
+  const handleQuantityInputChange = (productId: number, rawValue: string) => {
+    const parsedQuantity = parseInt(rawValue, 10);
+    if (isNaN(parsedQuantity)) return;
+    updateQuantity(productId, parsedQuantity);
+  }
+
+  const updateItemDiscount = (productId: number, discountPercent: number) => {
+    if (!isStoreCustomer) return
+    updateCartItem(productId, (item, currentCart) => {
+      const updatedItem = { ...item, discount_percent: discountPercent };
+      const mergedCart = replaceCartItemForTotals(currentCart, updatedItem);
+      const newItemPaymentTarget = getLinePaymentTargetTotal(updatedItem, mergedCart);
+
+      const nextPaid = resolveNextPaidAmount(productId, item, currentCart, mergedCart, updatedItem);
+
+      const updatedWithPayment = {
+        ...updatedItem,
+        paid_amount: Number(nextPaid.toFixed(3)),
+      };
+
+      return syncItemPaymentStatus(updatedWithPayment, newItemPaymentTarget);
+    });
+  }
+
+  const updateItemPaymentStatus = (productId: number, isPaid: boolean) => {
+    manualPaidAmountLineIdsRef.current.delete(productId)
+    updateCartItem(productId, (item, currentCart) => {
+      const paymentTarget = getLinePaymentTargetTotal(item, currentCart);
+      return {
+        ...item,
+        is_paid: isPaid,
+        paid_amount: isPaid ? paymentTarget : 0
+      };
+    });
+  }
+
+  const updateItemPaidAmount = (productId: number, paidAmount: number) => {
+    updateCartItem(productId, (item, currentCart) => {
+      const paymentTarget = getLinePaymentTargetTotal(item, currentCart);
+      const validPaidAmount = Math.min(Math.max(0, paidAmount), paymentTarget);
+      const tol = 0.001;
+      if (validPaidAmount > tol && validPaidAmount < paymentTarget - tol) {
+        manualPaidAmountLineIdsRef.current.add(productId);
+      } else {
+        manualPaidAmountLineIdsRef.current.delete(productId);
+      }
+      const updatedItem = {
+        ...item,
+        paid_amount: validPaidAmount
+      };
+      return syncItemPaymentStatus(updatedItem, paymentTarget);
+    });
+  }
 
   // Check if selected warehouse is in Muscat (for OMR price display)
   const isMuscatWarehouse = useMemo(() => {
@@ -929,16 +914,20 @@ export default function POSPage() {
           // Use functional update and calculateItemTotal inside to avoid dependency on it
           setCart(prevCart => {
             const updatedCart = prevCart.map(item => {
-              // Calculate item total inside the functional update with current cart (fixes stale closure)
-              const itemTotal = calculateItemTotal(item, prevCart);
-              // Only update if not already fully paid
-              if (item.is_paid && Math.abs(item.paid_amount - itemTotal) < 0.001) {
-                return item; // No change needed (already fully paid)
+              const paymentTarget = calculateItemTotal(item, prevCart);
+              const pid = item.product.id;
+              if (manualPaidAmountLineIdsRef.current.has(pid)) {
+                const p = Math.min(Math.max(0, item.paid_amount), paymentTarget);
+                const clamped = Number(p.toFixed(3));
+                return syncItemPaymentStatus({ ...item, paid_amount: clamped }, paymentTarget);
+              }
+              if (item.is_paid && Math.abs(item.paid_amount - paymentTarget) < 0.001) {
+                return item;
               }
               return {
                 ...item,
                 is_paid: true,
-                paid_amount: Number(itemTotal.toFixed(3))
+                paid_amount: Number(paymentTarget.toFixed(3))
               };
             });
             // Only update state if something changed
@@ -960,102 +949,13 @@ export default function POSPage() {
     }
     // Note: calculateItemTotal is NOT in dependencies - we use it inside the functional update
     // This prevents infinite loops when cart changes
-  }, [isIndividualCustomer, selectedPaymentMethod, cart.length]); // Trigger when customer, payment method, or cart size changes
+  }, [isIndividualCustomer, selectedPaymentMethod, cart.length, discountPercentage, cartTotalSignature]); // Re-run when global % or line amounts change
 
-  const allocatePayInFull = useCallback(() => {
-    // Prevent re-entrancy to avoid infinite loops
-    if (isAllocatingRef.current) return;
-    isAllocatingRef.current = true;
-    
-    try {
-      // Use functional update to avoid depending on cart in dependencies
-      setCart((prevCart) => {
-        if (prevCart.length === 0) return prevCart;
-
-      // Check if customer is individual type (using value instead of ID)
-      const isIndividual = selectedCustomer?.customer_type 
-        ? customerTypes.find(ct => ct.id === selectedCustomer.customer_type)?.value === 'individual'
-        : false;
-
-      // For individual customers: items don't have discount, but total does
-      // We need to proportionally reduce paid amounts to match discounted total
-      if (isIndividual && discountPercentage > 0) {
-        // Calculate total of all items (without global discount) - use current cart
-        const totalItemsSubtotal = prevCart.reduce((sum, item) => sum + calculateItemTotal(item, prevCart), 0);
-        // Calculate discounted total (subtotal - global discount)
-        const globalDiscountAmount = (totalItemsSubtotal * discountPercentage) / 100;
-        const discountedTotal = totalItemsSubtotal - globalDiscountAmount;
-        
-        // Proportionally distribute the discounted total across items
-        const discountRatio = totalItemsSubtotal > 0 ? discountedTotal / totalItemsSubtotal : 1;
-        
-        const nextCart = prevCart.map((it) => {
-          const itTotal = calculateItemTotal(it, prevCart);
-          // Apply the discount ratio to each item's paid amount
-          const exactPaidAmount = Number((itTotal * discountRatio).toFixed(3));
-          return {
-            ...it,
-            is_paid: true,
-            paid_amount: exactPaidAmount,
-          };
-        });
-
-        // Only update state if something actually changed (prevents loops)
-        const changed = nextCart.some((n, i) => {
-          const prevItem = prevCart[i];
-          if (!prevItem) return true;
-          const paidAmountChanged = Math.abs(n.paid_amount - prevItem.paid_amount) > 0.001;
-          const paidStatusChanged = n.is_paid !== prevItem.is_paid;
-          return paidAmountChanged || paidStatusChanged;
-        });
-        return changed ? nextCart : prevCart;
-      }
-
-      // For store customers or no discount: mark all items as fully paid at their individual totals
-      // Global discount is already divided equally among items for store customers
-      const nextCart = prevCart.map((it) => {
-        const itTotal = calculateItemTotal(it, prevCart);
-        // Ensure paid_amount exactly matches the item total (no partial payments for cash)
-        const exactPaidAmount = Number(itTotal.toFixed(3));
-        return {
-          ...it,
-          is_paid: true,
-          paid_amount: exactPaidAmount,
-        };
-      });
-
-      // Only update state if something actually changed (prevents loops)
-      const changed = nextCart.some((n, i) => {
-        const prevItem = prevCart[i];
-        if (!prevItem) return true;
-        // Check if paid_amount or is_paid status changed
-        const paidAmountChanged = Math.abs(n.paid_amount - prevItem.paid_amount) > 0.001;
-        const paidStatusChanged = n.is_paid !== prevItem.is_paid;
-        return paidAmountChanged || paidStatusChanged;
-      });
-      return changed ? nextCart : prevCart;
-      });
-    } finally {
-      // Reset the flag after a short delay to allow state updates to complete
-      setTimeout(() => {
-        isAllocatingRef.current = false;
-      }, 0);
-    }
-  }, [calculateItemTotal, selectedCustomer, customerTypes, discountPercentage]);
-
-  // Wire ref for the cash re-allocation effect below (effect intentionally omits allocatePayInFull from deps).
-  useEffect(() => {
-    allocatePayInFullRef.current = allocatePayInFull
-  }, [allocatePayInFull])
-
-  
-  // Note: Items are added to cart as paid by default
-  
   // Validation function for payment amounts
   const validatePaymentAmounts = () => {
     for (const item of cart) {
-      const itemTotal = calculateItemTotal(item);
-      if (item.paid_amount > itemTotal) {
+      const target = getLinePaymentTargetTotal(item);
+      if (item.paid_amount > target + 0.0001) {
         return false;
       }
     }
@@ -1065,10 +965,10 @@ export default function POSPage() {
   // Helper function to get payment status badge
   // Uses tolerance check to handle floating point precision issues
   const getPaymentStatusBadge = (item: CartItem) => {
-    const itemTotal = calculateItemTotal(item);
+    const target = getLinePaymentTargetTotal(item);
     const paidAmount = item.paid_amount;
-    const difference = Math.abs(paidAmount - itemTotal);
-    const isFullyPaid = difference < 0.001 || paidAmount >= itemTotal;
+    const difference = Math.abs(paidAmount - target);
+    const isFullyPaid = difference < 0.001 || paidAmount >= target;
     const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
     
     if (isFullyPaid) {
@@ -1083,8 +983,8 @@ export default function POSPage() {
 
   // Helper function to check if item is fully paid
   const isItemFullyPaid = (item: CartItem) => {
-    const itemTotal = calculateItemTotal(item);
-    return Math.abs(item.paid_amount - itemTotal) < 0.001;
+    const target = getLinePaymentTargetTotal(item);
+    return Math.abs(item.paid_amount - target) < 0.001;
   }
 
   // Helper function to sync payment status based on paid_amount vs itemTotal
@@ -1109,6 +1009,69 @@ export default function POSPage() {
     return item;
   }, [])
 
+  // Reconcile line paid_amount / is_paid with payment method (store cash vs outstanding, other cash, etc.).
+  // Lines the user edited in "Paid amount" (manual partial) are only clamped, not reset to defaults.
+  const allocatePayInFull = useCallback(() => {
+    if (isAllocatingRef.current) return;
+    isAllocatingRef.current = true;
+
+    try {
+      setCart((prevCart) => {
+        if (prevCart.length === 0) return prevCart;
+
+        const pm =
+          paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
+        const isCash = pm.includes("cash");
+        const isOutstanding = pm.includes("outstanding");
+
+        const nextCart = prevCart.map((it) => {
+          const target = Number(calculateItemTotal(it, prevCart).toFixed(3));
+          const pid = it.product.id;
+
+          if (manualPaidAmountLineIdsRef.current.has(pid)) {
+            const p = Math.min(Math.max(0, it.paid_amount), target);
+            return syncItemPaymentStatus({ ...it, paid_amount: Number(p.toFixed(3)) }, target);
+          }
+
+          if (isStoreCustomer && isOutstanding) {
+            return { ...it, is_paid: false, paid_amount: 0 };
+          }
+          if (isCash && !isOutstanding) {
+            return { ...it, is_paid: true, paid_amount: target };
+          }
+          if (isOutstanding) {
+            return { ...it, is_paid: false, paid_amount: 0 };
+          }
+          return { ...it, is_paid: true, paid_amount: target };
+        });
+
+        const changed = nextCart.some((n, i) => {
+          const prevItem = prevCart[i];
+          if (!prevItem) return true;
+          const paidAmountChanged = Math.abs(n.paid_amount - prevItem.paid_amount) > 0.001;
+          const paidStatusChanged = n.is_paid !== prevItem.is_paid;
+          return paidAmountChanged || paidStatusChanged;
+        });
+        return changed ? nextCart : prevCart;
+      });
+    } finally {
+      setTimeout(() => {
+        isAllocatingRef.current = false;
+      }, 0);
+    }
+  }, [calculateItemTotal, selectedPaymentMethod, paymentMethods, isStoreCustomer, syncItemPaymentStatus]);
+
+  useEffect(() => {
+    allocatePayInFullRef.current = allocatePayInFull;
+  }, [allocatePayInFull]);
+
+  useEffect(() => {
+    if (selectedPaymentMethod == null) return;
+    manualPaidAmountLineIdsRef.current.clear();
+    const t = setTimeout(() => allocatePayInFullRef.current?.(), 0);
+    return () => clearTimeout(t);
+  }, [selectedPaymentMethod]);
+
   // Function to apply payment method to existing items
   const applyPaymentMethodToExistingItems = () => {
     if (!selectedPaymentMethod || cart.length === 0) return;
@@ -1118,12 +1081,13 @@ export default function POSPage() {
     
     const isOutstanding = paymentMethod.display_name_en.toLowerCase().includes('outstanding');
     
+    manualPaidAmountLineIdsRef.current.clear()
     setCart(prevCart => prevCart.map(item => {
-      const itemTotal = calculateItemTotal(item);
+      const target = calculateItemTotal(item, prevCart);
       return {
         ...item,
         is_paid: !isOutstanding,
-        paid_amount: !isOutstanding ? itemTotal : 0
+        paid_amount: !isOutstanding ? target : 0
       };
     }));
   }
@@ -1309,30 +1273,19 @@ export default function POSPage() {
       // Track processing items for UI feedback
       setProcessingItems(new Set(cart.map(item => item.product.id)))
       
-      // Calculate effective discount percentage for each item
-      // For store customers: item discount + divided global discount
-      // For individual customers: only item discount (global discount not applied to items)
-      const customerTypeValue = selectedCustomer?.customer_type 
-        ? customerTypes.find(ct => ct.id === selectedCustomer.customer_type)?.value
-        : null;
-      const isStore = customerTypeValue === 'store';
-      
-      // Calculate total subtotal for dividing global discount
-      const totalSubtotal = cart.reduce((sum, cartItem) => sum + calculateItemSubtotal(cartItem), 0);
-      const globalDiscountPerItemPercent = isStore && discountPercentage && cart.length > 0
-        ? discountPercentage / cart.length // Divide global discount equally among items
-        : 0;
-      
+      // Effective line discount % vs list gross (unit_price × qty) so API discount_percent matches total_price (line + global % on line)
       for (const item of cart) {
         const itemTotal = calculateItemTotal(item, cart);
-        const itemSubtotal = calculateItemSubtotal(item);
-        
-        // Calculate effective discount percentage
-        // For store: item discount + divided global discount
-        // For individual: only item discount
-        const effectiveDiscountPercent = isStore
-          ? item.discount_percent + globalDiscountPerItemPercent
-          : item.discount_percent;
+        const unitPrice = (() => {
+          const price = item.product.price || item.product.latest_price;
+          return price ? parseFloat(price) : 0;
+        })();
+        const gross = unitPrice * item.quantity;
+        let effectiveDiscountPercent = item.discount_percent;
+        if (gross > 1e-9) {
+          effectiveDiscountPercent = 100 * (1 - itemTotal / gross);
+          effectiveDiscountPercent = Math.max(0, Math.min(100, Number(effectiveDiscountPercent.toFixed(3))));
+        }
         
         const itemData = {
           invoice: invoiceId,
@@ -1342,8 +1295,8 @@ export default function POSPage() {
             const price = item.product.price || item.product.latest_price;
             return price ? parseFloat(price) : 0;
           })(),
-          discount_percent: effectiveDiscountPercent, // Save effective discount (item + divided global)
-          total_price: itemTotal, // This includes item discount + divided global discount for store customers
+          discount_percent: effectiveDiscountPercent,
+          total_price: itemTotal,
           paid_amount: item.paid_amount,
           remaining_amount: itemTotal - item.paid_amount,
           is_paid: item.is_paid,
@@ -1791,8 +1744,8 @@ export default function POSPage() {
     setCart(prevCart => {
       let hasChanges = false;
       const syncedCart = prevCart.map(item => {
-        const itemTotal = calculateItemTotal(item, prevCart);
-        const syncedItem = syncItemPaymentStatus(item, itemTotal);
+        const paymentTarget = getLinePaymentTargetTotal(item, prevCart);
+        const syncedItem = syncItemPaymentStatus(item, paymentTarget);
         if (syncedItem !== item) {
           hasChanges = true;
         }
@@ -1809,34 +1762,28 @@ export default function POSPage() {
     }, 0);
   }, [cartTotalSignature]); // Only trigger when cart values change (not on every render)
 
-  // Auto-reallocate when anything affecting the grand total changes
-  // CRITICAL: For cash payments, ensure ALL items are fully paid regardless of discounts
-  // This effect ensures that when global discount, item discount, quantity, or price changes,
-  // all items are marked as fully paid with paid_amount matching their calculated total
-  // Uses cartTotalSignature instead of cart.length to only trigger when
-  // actual item values (quantity, price, discount) change, not just cart length
+  // Auto-reallocate when anything affecting the grand total changes.
+  // Store: both cash (full line pay) and outstanding (unpaid lines at 0); individual cash: full line pay.
+  // Partial only comes from user-edited Paid amount (tracked in manualPaidAmountLineIdsRef).
   useEffect(() => {
     if (!selectedPaymentMethod) return;
     const pm = paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() || "";
     const isCash = pm.includes("cash");
-    if (!isCash) return;
-    // Check cart length inside the effect to avoid dependency
+    // Store (cash or outstanding) or any cash checkout (incl. individual)
+    if (!isStoreCustomer && !isCash) return;
     if (cart.length === 0) return;
-    if (isAllocatingRef.current) return; // Skip if already allocating
+    if (isAllocatingRef.current) return;
 
-    // Re-allocate to match current item totals (ensures no partial payments for cash)
-    // This handles global discount, item-level discount, quantity changes, customer type changes, etc.
-    // Use ref to avoid dependency on allocatePayInFull which changes when calculateItemTotal changes
     if (allocatePayInFullRef.current) {
       allocatePayInFullRef.current();
     }
   }, [
     selectedPaymentMethod,
-    discountPercentage, // Global discount changes must trigger reallocation
+    discountPercentage,
     taxPercentage,
-    cartTotalSignature, // Only changes when item quantities, prices, or item-level discounts change
-    selectedCustomer?.customer_type, // Customer type changes must trigger reallocation for individual vs store logic
-    // Note: allocatePayInFull is NOT in dependencies to prevent loops - we use a ref instead
+    cartTotalSignature,
+    selectedCustomer?.customer_type,
+    isStoreCustomer,
   ]);
 
   // Add PaginationControls to the products section
@@ -2226,12 +2173,12 @@ export default function POSPage() {
                         <p className="text-center text-muted-foreground">No items in cart</p>
                       ) : (
                         cart.map((item) => {
-                          const itemTotal = calculateItemTotal(item);
-                          const remainingAmount = Math.max(0, itemTotal - item.paid_amount);
+                          const lineTotal = calculateItemTotal(item);
+                          const remainingAmount = Math.max(0, lineTotal - item.paid_amount);
                           const paidAmount = item.paid_amount;
-                          const difference = Math.abs(paidAmount - itemTotal);
+                          const difference = Math.abs(paidAmount - lineTotal);
                           // Use tolerance check to handle floating point precision
-                          const isFullyPaid = difference < 0.001 || paidAmount >= itemTotal;
+                          const isFullyPaid = difference < 0.001 || paidAmount >= lineTotal;
                           const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
                           
                           return (
@@ -2331,7 +2278,7 @@ export default function POSPage() {
                                   </SelectContent>
                                 </Select>
                                 <span className="text-xs ml-auto">
-                                  Total: {itemTotal.toFixed(3)} {getCurrencyLabel()}
+                                  Total: {lineTotal.toFixed(3)} {getCurrencyLabel()}
                                 </span>
                               </div>
 
@@ -2342,7 +2289,7 @@ export default function POSPage() {
                                     type="number"
                                     step="0.001"
                                     min="0"
-                                    max={itemTotal}
+                                    max={lineTotal}
                                     value={item.paid_amount}
                                     onChange={(e) => updateItemPaidAmount(item.product.id, parseFloat(e.target.value) || 0)}
                                     className="h-7 text-xs w-24"
@@ -2383,10 +2330,6 @@ export default function POSPage() {
                           onValueChange={(value) => {
                             setDiscountPercentage(Number(value))
                             setTimeout(() => {
-                              const pm =
-                                paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() ||
-                                ""
-                              if (!pm.includes("cash")) return
                               allocatePayInFullRef.current?.()
                             }, 0)
                           }}
@@ -2486,11 +2429,10 @@ export default function POSPage() {
                               </span>
                               <span className="text-orange-600 font-medium">
                                 {cart.filter(item => {
-                                  const itemTotal = calculateItemTotal(item);
+                                  const target = calculateItemTotal(item);
                                   const paidAmount = item.paid_amount;
-                                  const difference = Math.abs(paidAmount - itemTotal);
-                                  // Item is partial if paid_amount > 0 and not fully paid (within tolerance)
-                                  return paidAmount > 0.001 && difference >= 0.001 && paidAmount < itemTotal;
+                                  const difference = Math.abs(paidAmount - target);
+                                  return paidAmount > 0.001 && difference >= 0.001 && paidAmount < target;
                                 }).length} items
                               </span>
                             </div>
