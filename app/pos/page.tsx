@@ -625,6 +625,22 @@ export default function POSPage() {
     );
   }, [customers, debouncedCustomerSearchQuery]);
 
+  const isStoreCustomer = useMemo(() => {
+    if (!selectedCustomer?.customer_type) return false
+    const customerType = customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)
+    return customerType?.value === "store"
+  }, [selectedCustomer, customerTypes])
+
+  // Line-level discount only applies to store customers; clear when not store (e.g. individual).
+  useEffect(() => {
+    if (isStoreCustomer) return
+    setCart((prev) => {
+      if (prev.length === 0) return prev
+      if (!prev.some((i) => i.discount_percent !== 0)) return prev
+      return prev.map((i) => ({ ...i, discount_percent: 0 }))
+    })
+  }, [isStoreCustomer])
+
   // Cart functions
   const addToCart = (product: Product) => {
     setCart((prevCart) => {
@@ -708,6 +724,7 @@ export default function POSPage() {
   }
 
   const updateItemDiscount = (productId: number, discountPercent: number) => {
+    if (!isStoreCustomer) return
     updateCartItem(productId, (item, currentCart) => {
       const updatedItem = { ...item, discount_percent: discountPercent };
       const mergedCart = replaceCartItemForTotals(currentCart, updatedItem)
@@ -767,10 +784,12 @@ export default function POSPage() {
     const price = item.product.price || item.product.latest_price;
     const priceValue = price ? parseFloat(price) : 0;
     const quantity = item.quantity;
-    const discount = Math.max(0, Math.min(100, item.discount_percent)) / 100; // Ensure discount is between 0-100%
+    // Per-line discount applies only for store customers; global invoice discount is handled in calculateItemTotal.
+    const lineDiscountPercent = isStoreCustomer ? item.discount_percent : 0;
+    const discount = Math.max(0, Math.min(100, lineDiscountPercent)) / 100;
     const total = priceValue * quantity * (1 - discount);
     return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
-  }, []);
+  }, [isStoreCustomer]);
 
   // Calculate item total with global discount handling
   // IMPORTANT: 
@@ -2285,12 +2304,13 @@ export default function POSPage() {
                               </div>
                               
                               <div className="flex items-center gap-2">
-                                <Label className="text-xs">Item Discount:</Label>
+                                <Label className="text-xs">Item Discount{isStoreCustomer ? "" : " (store only)"}:</Label>
                                 <Select
                                   value={item.discount_percent.toString()}
                                   onValueChange={(value) => updateItemDiscount(item.product.id, Number(value))}
+                                  disabled={!isStoreCustomer}
                                 >
-                                  <SelectTrigger className="h-7 text-xs">
+                                  <SelectTrigger className={cn("h-7 text-xs", !isStoreCustomer && "bg-muted cursor-not-allowed")}>
                                     <SelectValue placeholder="0%" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -2360,7 +2380,16 @@ export default function POSPage() {
                       <div className="flex items-center gap-2">
                         <Select
                           value={discountPercentage.toString()}
-                          onValueChange={(value) => setDiscountPercentage(Number(value))}
+                          onValueChange={(value) => {
+                            setDiscountPercentage(Number(value))
+                            setTimeout(() => {
+                              const pm =
+                                paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase() ||
+                                ""
+                              if (!pm.includes("cash")) return
+                              allocatePayInFullRef.current?.()
+                            }, 0)
+                          }}
                         >
                           <SelectTrigger className="w-[100px] h-8">
                             <SelectValue placeholder="0%" />
