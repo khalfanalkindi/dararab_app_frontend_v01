@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import jsPDF from "jspdf"
 
-interface ReceiptItem {
+export interface ReceiptItem {
   id?: number
   product_name?: string
   product?: {
@@ -32,7 +32,7 @@ interface ReceiptItem {
   is_paid?: boolean
 }
 
-interface ReceiptData {
+export interface ReceiptData {
   id: number
   composite_id?: string
   customer_name: string
@@ -134,11 +134,11 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   margin: 0; 
                 }
                 body { 
-                  font-family: monospace; 
-                  font-size: 12px; 
-                  line-height: 1.3; 
+                  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
+                  font-size: 11px; 
+                  line-height: 1.45; 
                   margin: 0; 
-                  padding: 15px; 
+                  padding: 12px; 
                   width: 100%; 
                 }
                 .receipt-container { 
@@ -147,6 +147,16 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   margin: 0 !important; 
                   padding: 0 !important; 
                 }
+                .receipt-section-title {
+                  border-bottom: 1px solid #000 !important;
+                  padding-bottom: 4px !important;
+                  margin-bottom: 6px !important;
+                }
+                .receipt-kv-value, .receipt-item-name {
+                  word-wrap: break-word !important;
+                  overflow-wrap: anywhere !important;
+                  white-space: normal !important;
+                }
                 img {
                   -webkit-print-color-adjust: exact !important;
                   color-adjust: exact !important;
@@ -154,13 +164,44 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                 }
               }
               body { 
-                font-family: monospace; 
-                font-size: 12px; 
-                line-height: 1.3; 
+                font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
+                font-size: 11px; 
+                line-height: 1.45; 
                 margin: 0; 
-                padding: 15px; 
+                padding: 12px; 
                 width: 100%; 
               }
+              .receipt-section-title {
+                font-weight: bold;
+                font-size: 10px;
+                letter-spacing: 0.02em;
+                border-bottom: 1px solid #000;
+                padding-bottom: 4px;
+                margin-bottom: 6px;
+              }
+              .receipt-kv-block { margin-bottom: 8px; }
+              .receipt-kv-label { font-weight: 600; font-size: 8px; color: #333; margin-bottom: 2px; }
+              .receipt-kv-value {
+                font-size: 10px;
+                word-wrap: break-word;
+                overflow-wrap: anywhere;
+                white-space: normal;
+              }
+              .receipt-item-block {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 8px;
+                margin-bottom: 8px;
+              }
+              .receipt-item-name {
+                font-weight: 600;
+                font-size: 10px;
+                margin-bottom: 6px;
+                word-wrap: break-word;
+                overflow-wrap: anywhere;
+                white-space: normal;
+              }
+              .receipt-item-row { display: flex; justify-content: space-between; font-size: 9px; margin-top: 3px; gap: 8px; }
             </style>
           `)
           printWindow.document.write("</head><body>")
@@ -236,71 +277,181 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
   return (
     <>
       <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-        <div className="receipt-container" style={{
-          width: '280px',
-          maxWidth: '280px',
-          margin: '0 auto',
-          padding: '8px',
-          fontFamily: 'monospace',
-          fontSize: '10px',
-          lineHeight: '1.1',
-          backgroundColor: 'white',
-          minHeight: '100%'
-        }}>
-          <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
-            <div style={{ marginBottom: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              <img 
-                src="/dararab-logo-1.png" 
-                alt="DarArab Logo" 
-                style={{ 
-                  maxWidth: '60px', 
-                  maxHeight: '40px', 
-                  objectFit: 'contain',
-                  filter: 'grayscale(100%) contrast(200%)',
-                  display: 'block'
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+        .receipt-container .receipt-section-title {
+          font-weight: bold;
+          font-size: 10px;
+          letter-spacing: 0.02em;
+          border-bottom: 1px solid #000;
+          padding-bottom: 4px;
+          margin-bottom: 6px;
+        }
+        .receipt-container .receipt-kv-block { margin-bottom: 8px; }
+        .receipt-container .receipt-kv-label {
+          font-weight: 600;
+          font-size: 8px;
+          color: #333;
+          margin-bottom: 2px;
+        }
+        .receipt-container .receipt-kv-value {
+          font-size: 10px;
+          word-wrap: break-word;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+        .receipt-container .receipt-item-block {
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          padding: 8px;
+          margin-bottom: 8px;
+        }
+        .receipt-container .receipt-item-name {
+          font-weight: 600;
+          font-size: 10px;
+          margin-bottom: 6px;
+          word-wrap: break-word;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+        .receipt-container .receipt-item-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 9px;
+          margin-top: 3px;
+          gap: 8px;
+        }
+      `,
+          }}
+        />
+        <div
+          className="receipt-container"
+          style={{
+            width: "100%",
+            maxWidth: "340px",
+            margin: "0 auto",
+            padding: "12px",
+            fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+            fontSize: "10px",
+            lineHeight: 1.45,
+            backgroundColor: "white",
+            minHeight: "100%",
+            wordWrap: "break-word",
+            overflowWrap: "anywhere",
+          }}
+        >
+          <div
+            className="receipt-header text-center mb-3"
+            style={{ borderBottom: "1px dashed #000", paddingBottom: "10px" }}
+          >
+            <div style={{ marginBottom: "6px", display: "flex", justifyContent: "center", alignItems: "center" }}>
+              <img
+                src="/dararab-logo-1.png"
+                alt="DarArab Logo"
+                style={{
+                  maxWidth: "64px",
+                  maxHeight: "44px",
+                  objectFit: "contain",
+                  filter: "grayscale(100%) contrast(200%)",
+                  display: "block",
                 }}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement
-                  target.style.display = 'none'
+                  target.style.display = "none"
                 }}
               />
             </div>
-            <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>DarArab for Publishing & Translation</h2>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>Seeb, Muscat, Sultanate of Oman</p>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +96871523542</p>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>Email: info@dararab.co.uk | Web: dararab.co.uk</p>
-            <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{receiptData.id}</p>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>{receiptData.created_at_formatted || format(new Date(), "PPP")}</p>
-          </div>
-          
-          <div className="mb-2" style={{ fontSize: '9px' }}>
-            <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {receiptData.customer_name || "Walk-in Customer"}</p>
-            {receiptData.customer_contact && (
-              <p style={{ margin: '2px 0', fontSize: '8px' }}>{receiptData.customer_contact}</p>
-            )}
-            <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {receiptData.payment_method_name || "N/A"}</p>
-            <p style={{ margin: '2px 0' }}><strong>Type:</strong> {receiptData.invoice_type_name || "N/A"}</p>
-            <p style={{ margin: '2px 0' }}><strong>Warehouse:</strong> {receiptData.warehouse_name || "N/A"}</p>
-          </div>
-          
-          <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
-              <span>Item</span>
-              <span>Qty</span>
-              <span>Price</span>
-              <span>Disc%</span>
-              <span>Total</span>
-              <span>Status</span>
+            <h2 style={{ fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0", lineHeight: 1.3 }}>
+              DarArab for Publishing & Translation
+            </h2>
+            <div
+              style={{
+                fontSize: "9px",
+                margin: "4px 0",
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
+              }}
+            >
+              Seeb, Muscat, Sultanate of Oman
             </div>
-            
+            <div style={{ fontSize: "9px", margin: "4px 0" }}>Tel: +96871523542</div>
+            <div
+              style={{
+                fontSize: "9px",
+                margin: "4px 0",
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
+              }}
+            >
+              Email: info@dararab.co.uk
+            </div>
+            <div style={{ fontSize: "9px", margin: "4px 0" }}>Web: dararab.co.uk</div>
+          </div>
+
+          <div style={{ marginBottom: "14px" }}>
+            <div className="receipt-section-title">Receipt details</div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Receipt number</div>
+              <div className="receipt-kv-value">
+                {receiptData.composite_id ? receiptData.composite_id : `#${receiptData.id}`}
+              </div>
+            </div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Date</div>
+              <div className="receipt-kv-value">
+                {receiptData.created_at_formatted || format(new Date(), "PPP")}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: "14px" }}>
+            <div className="receipt-section-title">Customer</div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Name</div>
+              <div className="receipt-kv-value">{receiptData.customer_name || "Walk-in Customer"}</div>
+            </div>
+            {receiptData.customer_contact ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Contact</div>
+                <div className="receipt-kv-value">{receiptData.customer_contact}</div>
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ marginBottom: "14px" }}>
+            <div className="receipt-section-title">Sale information</div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Payment method</div>
+              <div className="receipt-kv-value">{receiptData.payment_method_name || "N/A"}</div>
+            </div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Invoice type</div>
+              <div className="receipt-kv-value">{receiptData.invoice_type_name || "N/A"}</div>
+            </div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Warehouse</div>
+              <div className="receipt-kv-value">{receiptData.warehouse_name || "N/A"}</div>
+            </div>
+            {receiptData.warehouse_location ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Location</div>
+                <div className="receipt-kv-value">{receiptData.warehouse_location}</div>
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ marginBottom: "14px" }}>
+            <div className="receipt-section-title">Items</div>
             {(receiptData.items || []).map((item, idx) => {
               const itemTotal = calculateItemTotal(item)
               const itemDiscountPercent = item.discount_percent || 0
-              
-              // Determine status
+
               let status = "Not Paid"
               let statusColor = "#dc2626"
-              
+
               if (isFullyPaid) {
                 status = "Paid"
                 statusColor = "#16a34a"
@@ -317,90 +468,125 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                 status = "Partial"
                 statusColor = "#ea580c"
               }
-              
-              // Get display price (OMR or $)
+
               const displayPrice = item.product ? getDisplayPrice(item) : null
               const displayPriceValue = displayPrice ? parseFloat(displayPrice) : item.unit_price || 0
-              
+              const productLabel = item.product_name || item.product?.title_en || "Unknown Product"
+
               return (
-                <div key={idx} style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'flex-start',
-                  fontSize: '8px',
-                  marginBottom: '2px',
-                  paddingBottom: '2px',
-                  borderBottom: '1px dotted #ccc'
-                }}>
-                  <div style={{ flex: '1.8', wordBreak: 'break-word', marginRight: '2px' }}>
-                    {item.product_name || item.product?.title_en || 'Unknown Product'}
+                <div key={idx} className="receipt-item-block">
+                  <div className="receipt-item-name">{productLabel}</div>
+                  <div className="receipt-item-row">
+                    <span>Quantity</span>
+                    <span>{item.quantity || 0}</span>
                   </div>
-                  <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
-                  <div style={{ flex: '0.4', textAlign: 'right' }}>{displayPriceValue.toFixed(3)}</div>
-                  <div style={{ flex: '0.3', textAlign: 'right' }}>{itemDiscountPercent.toFixed(1)}%</div>
-                  <div style={{ flex: '0.4', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                  <div style={{ flex: '0.35', textAlign: 'right', fontSize: '7px' }}>
-                    <span style={{ color: statusColor }}>{status}</span>
+                  <div className="receipt-item-row">
+                    <span>Unit price</span>
+                    <span>
+                      {displayPriceValue.toFixed(3)} {currencyLabel}
+                    </span>
+                  </div>
+                  <div className="receipt-item-row">
+                    <span>Line discount</span>
+                    <span>{itemDiscountPercent.toFixed(1)}%</span>
+                  </div>
+                  <div className="receipt-item-row" style={{ fontWeight: 600 }}>
+                    <span>Line total</span>
+                    <span>
+                      {itemTotal.toFixed(3)} {currencyLabel}
+                    </span>
+                  </div>
+                  <div className="receipt-item-row" style={{ marginTop: "6px" }}>
+                    <span>Payment status</span>
+                    <span style={{ color: statusColor, fontWeight: 600 }}>{status}</span>
                   </div>
                 </div>
               )
             })}
           </div>
-          
-          <div style={{ marginTop: '6px', fontSize: '9px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-              <span>Subtotal:</span>
-              <span>{financials.subtotal.toFixed(3)} {currencyLabel}</span>
-            </div>
-            {globalDiscountPercent > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Discount ({globalDiscountPercent.toFixed(1)}%):</span>
-                <span style={{ color: '#16a34a' }}>-{financials.globalDiscountAmount.toFixed(3)} {currencyLabel}</span>
+
+          <div style={{ marginBottom: "14px" }}>
+            <div className="receipt-section-title">Totals</div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Subtotal</div>
+              <div className="receipt-kv-value">
+                {financials.subtotal.toFixed(3)} {currencyLabel}
               </div>
-            )}
-            {taxPercent > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Tax ({taxPercent.toFixed(1)}%):</span>
-                <span>{financials.tax.toFixed(3)} {currencyLabel}</span>
+            </div>
+            {globalDiscountPercent > 0 ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Global discount ({globalDiscountPercent.toFixed(1)}%)</div>
+                <div className="receipt-kv-value" style={{ color: "#16a34a" }}>
+                  −{financials.globalDiscountAmount.toFixed(3)} {currencyLabel}
+                </div>
               </div>
-            )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
-              <span>TOTAL:</span>
-              <span>{financials.total.toFixed(3)} {currencyLabel}</span>
+            ) : null}
+            {taxPercent > 0 ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Tax ({taxPercent.toFixed(1)}%)</div>
+                <div className="receipt-kv-value">
+                  {financials.tax.toFixed(3)} {currencyLabel}
+                </div>
+              </div>
+            ) : null}
+            <div className="receipt-kv-block" style={{ borderTop: "1px solid #000", paddingTop: "8px", marginTop: "6px" }}>
+              <div className="receipt-kv-label">Invoice total</div>
+              <div className="receipt-kv-value" style={{ fontWeight: 700, fontSize: "11px" }}>
+                {financials.total.toFixed(3)} {currencyLabel}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-              <span>Total Paid:</span>
-              <span style={{ color: '#16a34a' }}>{financials.totalPaid.toFixed(3)} {currencyLabel}</span>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Total paid</div>
+              <div className="receipt-kv-value" style={{ color: "#16a34a" }}>
+                {financials.totalPaid.toFixed(3)} {currencyLabel}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
-              <span>Amount Due:</span>
-              <span style={{ color: financials.totalUnpaid > 0 ? '#dc2626' : '#16a34a' }}>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Amount due</div>
+              <div
+                className="receipt-kv-value"
+                style={{
+                  fontWeight: 700,
+                  color: financials.totalUnpaid > 0 ? "#dc2626" : "#16a34a",
+                }}
+              >
                 {financials.totalUnpaid.toFixed(3)} {currencyLabel}
-              </span>
-            </div>
-            {receiptData.hasPartialPayment && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '8px' }}>
-                <span style={{ color: '#ea580c' }}>Partial Payments:</span>
-                <span style={{ color: '#ea580c' }}>
-                  {(receiptData.items || []).filter(item => {
-                    const itemTotal = calculateItemTotal(item)
-                    return (item.paid_amount || 0) > 0 && (item.paid_amount || 0) < itemTotal
-                  }).length} items
-                </span>
               </div>
-            )}
-          </div>
-          
-          {receiptData.notes && (
-            <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
-              <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
-              <p style={{ margin: '2px 0 0 0' }}>{receiptData.notes}</p>
             </div>
-          )}
-          
-          <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
-            <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
-            <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
+            {receiptData.hasPartialPayment ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Lines with partial payment</div>
+                <div className="receipt-kv-value" style={{ color: "#ea580c" }}>
+                  {(receiptData.items || []).filter((it) => {
+                    const t = calculateItemTotal(it)
+                    return (it.paid_amount || 0) > 0 && (it.paid_amount || 0) < t
+                  }).length}{" "}
+                  items
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {receiptData.notes ? (
+            <div style={{ marginBottom: "14px", padding: "10px", border: "1px dashed #000" }}>
+              <div className="receipt-section-title" style={{ borderBottom: "none", marginBottom: "6px" }}>
+                Notes
+              </div>
+              <div
+                className="receipt-kv-value"
+                style={{ whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere" }}
+              >
+                {receiptData.notes}
+              </div>
+            </div>
+          ) : null}
+
+          <div
+            className="receipt-footer text-center"
+            style={{ borderTop: "1px dashed #000", paddingTop: "10px", fontSize: "9px" }}
+          >
+            <p style={{ margin: "4px 0" }}>Thank you for your purchase.</p>
+            <p style={{ margin: "4px 0", fontSize: "8px", color: "#555" }}>We hope to see you again soon.</p>
           </div>
         </div>
       </div>
