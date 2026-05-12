@@ -341,8 +341,10 @@ export default function POSPage() {
   })
   const [customerTypes, setCustomerTypes] = useState<any[]>([])
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = 'newCustomer' | 'print' | 'confirm' | null
+  type DialogType = "newCustomer" | "print" | null
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
+  /** Separate from activeDialog so closing confirm after sale does not overwrite `print` via onOpenChange. */
+  const [confirmSaleOpen, setConfirmSaleOpen] = useState(false)
   const [selectedGenre, setSelectedGenre] = useState<Genre | null>(null)
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -1482,7 +1484,8 @@ export default function POSPage() {
       }
       const summary = await summaryRes.json()
       setReceiptData(summary)
-      setActiveDialog('print')
+      setConfirmSaleOpen(false)
+      setActiveDialog("print")
 
       // Update sales summary locally - use the total amount (which matches paid amount when fully paid)
       setTodaySales(prev => prev + roundedTotal)
@@ -1868,6 +1871,7 @@ export default function POSPage() {
     setSearchInput("")
     setSelectedGenre(null)
     setReceiptData(null)
+    setConfirmSaleOpen(false)
   }
 
   const fetchSalesMetrics = async () => {
@@ -2800,7 +2804,7 @@ export default function POSPage() {
             <Button
               size="lg"
               className="rounded-full h-14 w-14 shadow-lg"
-              onClick={() => setActiveDialog('confirm')}
+              onClick={() => setConfirmSaleOpen(true)}
             >
               <CheckCircle2 className="h-6 w-6" />
             </Button>
@@ -2808,7 +2812,7 @@ export default function POSPage() {
         )}
 
         {/* Confirm Sale Dialog */}
-        <Dialog open={activeDialog === 'confirm'} onOpenChange={(open) => setActiveDialog(open ? 'confirm' : null)}>
+        <Dialog open={confirmSaleOpen} onOpenChange={setConfirmSaleOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Confirm Sale</DialogTitle>
@@ -2871,7 +2875,7 @@ export default function POSPage() {
             <DialogFooter>
               <Button
                 variant="outline"
-                onClick={() => setActiveDialog(null)}
+                onClick={() => setConfirmSaleOpen(false)}
               >
                 Cancel
               </Button>
