@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Loader2, Printer, Download, FileText, Image } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -11,16 +11,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { format } from "date-fns"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { toast } from "@/hooks/use-toast"
-import jsPDF from "jspdf"
 import { API_URL } from "@/lib/config"
+import { ReceiptContent, toNum } from "@/components/receipt/ReceiptContent"
+import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface InvoiceItem {
   id?: number;
@@ -68,7 +62,6 @@ export default function ReceiptPage() {
   const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(true)
-  const printRef = useRef<HTMLDivElement>(null)
   
   // AbortController ref for request cancellation
   const fetchInvoiceAbortControllerRef = useRef<AbortController | null>(null)
@@ -263,125 +256,52 @@ export default function ReceiptPage() {
     window.history.back()
   }
 
-  // Print function
-  const handlePrint = () => {
-    if (printRef.current) {
-      try {
-        const printWindow = window.open("", "_blank")
-        if (printWindow) {
-          printWindow.document.write("<html><head><title>Receipt</title>")
-          printWindow.document.write(`
-            <style>
-              @media print {
-                @page { 
-                  size: auto; 
-                  margin: 0; 
-                }
-                body { 
-                  font-family: monospace; 
-                  font-size: 12px; 
-                  line-height: 1.3; 
-                  margin: 0; 
-                  padding: 15px; 
-                  width: 100%; 
-                }
-                .receipt-container { 
-                  width: 100% !important; 
-                  max-width: 100% !important; 
-                  margin: 0 !important; 
-                  padding: 0 !important; 
-                }
-                img {
-                  -webkit-print-color-adjust: exact !important;
-                  color-adjust: exact !important;
-                  print-color-adjust: exact !important;
-                }
-              }
-              body { 
-                font-family: monospace; 
-                font-size: 12px; 
-                line-height: 1.3; 
-                margin: 0; 
-                padding: 15px; 
-                width: 100%; 
-              }
-            </style>
-          `)
-          printWindow.document.write("</head><body>")
-          printWindow.document.write(printRef.current.innerHTML)
-          printWindow.document.write("</body></html>")
-          printWindow.document.close()
-          printWindow.print()
-        }
-      } catch (error) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error("Error printing:", error)
-        }
-      }
-    }
-  }
+  const lineItemTotal = useCallback((item: InvoiceItem) => {
+    const price = toNum(item.unit_price)
+    const quantity = toNum(item.quantity)
+    const discount = toNum(item.discount_percent) / 100
+    const raw = price * quantity * (1 - discount)
+    return Number.isFinite(raw) ? Math.max(0, raw) : 0
+  }, [])
 
-  const handleDownloadPDF = () => {
-    if (printRef.current) {
-      import('html2canvas').then((html2canvas) => {
-        setTimeout(() => {
-          html2canvas.default(printRef.current!, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            allowTaint: true,
-            logging: true,
-            width: printRef.current?.scrollWidth,
-            height: printRef.current?.scrollHeight
-          }).then(canvas => {
-            const imgWidth = canvas.width;
-            const imgHeight = canvas.height;
-            
-            const doc = new jsPDF({
-              unit: 'px',
-              format: [imgWidth, imgHeight],
-              orientation: imgHeight > imgWidth ? 'portrait' : 'landscape'
-            });
-            
-            const imgData = canvas.toDataURL('image/png');
-            doc.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-            doc.save('receipt.pdf');
-          }).catch(error => {
-            if (process.env.NODE_ENV !== 'production') {
-              console.error('Error generating PDF:', error)
-            }
-          });
-        }, 500)
-      });
+  const receiptPayload = useMemo((): ReceiptData | null => {
+    if (!invoiceData) return null
+    const items = invoiceData.items || []
+    const hasPartialPayment = items.some((item) => {
+      const t = lineItemTotal(item)
+      const p = toNum(item.paid_amount)
+      return p > 0.001 && p < t - 0.001
+    })
+    return {
+      id: invoiceData.id,
+      composite_id: invoiceData.composite_id,
+      customer_name: invoiceData.customer_name,
+      customer_contact: invoiceData.customer_contact,
+      warehouse_name: invoiceData.warehouse_name,
+      invoice_type_name: invoiceData.invoice_type_name,
+      payment_method_name: invoiceData.payment_method_name,
+      items: items.map((it) => ({
+        id: it.id,
+        product_name: it.product_name,
+        product: it.product,
+        quantity: toNum(it.quantity),
+        unit_price: toNum(it.unit_price),
+        discount_percent: toNum(it.discount_percent),
+        total_price: toNum(it.total_price),
+        paid_amount: toNum(it.paid_amount),
+        is_paid: it.is_paid,
+      })),
+      total_amount: toNum(invoiceData.total_amount),
+      total_paid: toNum(invoiceData.total_paid),
+      remaining_amount: toNum(invoiceData.remaining_amount),
+      notes: invoiceData.notes,
+      created_at_formatted: invoiceData.created_at_formatted,
+      global_discount_percent: toNum(invoiceData.global_discount_percent),
+      tax_percent: toNum(invoiceData.tax_percent),
+      totalUnpaidAmount: toNum(invoiceData.remaining_amount),
+      hasPartialPayment,
     }
-  }
-
-  const handleDownloadImage = () => {
-    if (printRef.current) {
-      import('html2canvas').then((html2canvas) => {
-        setTimeout(() => {
-          html2canvas.default(printRef.current!, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            allowTaint: true,
-            logging: true,
-            width: printRef.current?.scrollWidth,
-            height: printRef.current?.scrollHeight
-          }).then(canvas => {
-            const link = document.createElement('a')
-            link.download = 'receipt.png'
-            link.href = canvas.toDataURL()
-            link.click()
-          }).catch(error => {
-            if (process.env.NODE_ENV !== 'production') {
-              console.error('Error generating image:', error)
-            }
-          })
-        }, 500)
-      })
-    }
-  }
+  }, [invoiceData, lineItemTotal])
 
   if (isLoading) {
   return (
@@ -430,246 +350,22 @@ export default function ReceiptPage() {
 
   return (
     <Dialog open={isPrintDialogOpen} onOpenChange={handleClose}>
-        <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
-          <div className="shrink-0">
-            <DialogHeader>
-              <DialogTitle>Receipt</DialogTitle>
-              <DialogDescription>View, print, or download your receipt.</DialogDescription>
-            </DialogHeader>
-          </div>
-          <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-            <div className="receipt-container" style={{
-              width: '280px',
-              maxWidth: '280px',
-              margin: '0 auto',
-              padding: '8px',
-              fontFamily: 'monospace',
-              fontSize: '10px',
-              lineHeight: '1.1',
-              backgroundColor: 'white',
-              minHeight: '100%'
-            }}>
-              <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
-              <div style={{ marginBottom: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                <img 
-                  src="/dararab-logo-1.png" 
-                  alt="DarArab Logo" 
-                  style={{ 
-                    maxWidth: '60px', 
-                    maxHeight: '40px', 
-                    objectFit: 'contain',
-                    filter: 'grayscale(100%) contrast(200%)', // Make it print-friendly
-                    display: 'block'
-                  }}
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.style.display = 'none';
-                  }}
-                />
-              </div>
-              <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>DarArab for Publishing & Translation</h2>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Seeb, Muscat, Sultanate of Oman</p>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +96871523542</p>
-                <p style={{ fontSize: '9px', margin: '2px 0' }}>Email: info@dararab.co.uk | Web: dararab.co.uk</p>
-              <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{invoiceData.id}</p>
-              <p style={{ fontSize: '9px', margin: '2px 0' }}>{invoiceData.created_at_formatted || format(new Date(), "PPP")}</p>
-              </div>
-              
-              <div className="mb-2" style={{ fontSize: '9px' }}>
-              <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {invoiceData.customer_name || "Walk-in Customer"}</p>
-              {invoiceData.customer_contact && (
-                <p style={{ margin: '2px 0', fontSize: '8px' }}>{invoiceData.customer_contact}</p>
-              )}
-              <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {invoiceData.payment_method_name || "N/A"}</p>
-              <p style={{ margin: '2px 0' }}><strong>Type:</strong> {invoiceData.invoice_type_name || "N/A"}</p>
-              <p style={{ margin: '2px 0' }}><strong>Warehouse:</strong> {invoiceData.warehouse_name || "N/A"}</p>
-              </div>
-              
-              <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
-                  <span>Item</span>
-                  <span>Qty</span>
-                  <span>Price</span>
-                  <span>Disc%</span>
-                  <span>Total</span>
-                  <span>Status</span>
-                </div>
-                
-              {(() => {
-                // Calculate totals first
-                const calculateItemTotal = (item: InvoiceItem) => {
-                  const price = item.unit_price || 0;
-                  const quantity = item.quantity || 0;
-                  const discount = (item.discount_percent || 0) / 100;
-                  return price * quantity * (1 - discount);
-                };
-                
-                const subtotal = (invoiceData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0);
-                const globalDiscountPercent = invoiceData.global_discount_percent || 0;
-                const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100;
-                const discountedSubtotal = subtotal - globalDiscountAmount;
-                const taxPercent = invoiceData.tax_percent || 0;
-                const tax = discountedSubtotal * (taxPercent / 100);
-                const finalTotal = discountedSubtotal + tax;
-                
-                // Determine if invoice is fully paid
-                const totalPaid = invoiceData.total_paid || 0;
-                const isFullyPaid = Math.abs(totalPaid - finalTotal) < 0.001;
-                
-                return (invoiceData.items || []).map((item, idx) => {
-                  const itemTotal = calculateItemTotal(item);
-                  const itemDiscountPercent = item.discount_percent || 0;
-                  
-                  // Determine status for each item
-                  let status = "Not Paid";
-                  let statusColor = "#dc2626";
-                  
-                  if (isFullyPaid) {
-                    status = "Paid";
-                    statusColor = "#16a34a";
-                  } else if (item.is_paid || (item.paid_amount && item.paid_amount > 0)) {
-                    const itemPaid = item.paid_amount || 0;
-                    if (itemPaid >= itemTotal) {
-                      status = "Paid";
-                      statusColor = "#16a34a";
-                    } else {
-                      status = "Partial";
-                      statusColor = "#ea580c";
-                    }
-                  } else if (totalPaid > 0) {
-                    status = "Partial";
-                    statusColor = "#ea580c";
-                  }
-                  
-                  return (
-                  <div key={`${item.product_name}-${idx}`} style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'flex-start',
-                      fontSize: '8px',
-                      marginBottom: '2px',
-                      paddingBottom: '2px',
-                      borderBottom: '1px dotted #ccc'
-                    }}>
-                      <div style={{ flex: '1.8', wordBreak: 'break-word', marginRight: '2px' }}>
-                      {item.product_name || 'Unknown Product'}
-                      </div>
-                    <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
-                    <div style={{ flex: '0.4', textAlign: 'right' }}>{(item.unit_price || 0).toFixed(3)}</div>
-                    <div style={{ flex: '0.3', textAlign: 'right' }}>{itemDiscountPercent.toFixed(1)}%</div>
-                    <div style={{ flex: '0.4', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                      <div style={{ flex: '0.35', textAlign: 'right', fontSize: '7px' }}>
-                        <span style={{ color: statusColor }}>{status}</span>
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-              </div>
-              
-              <div style={{ marginTop: '6px', fontSize: '9px' }}>
-              {(() => {
-                // Recalculate totals for financial summary
-                const calculateItemTotal = (item: InvoiceItem) => {
-                  const price = item.unit_price || 0;
-                  const quantity = item.quantity || 0;
-                  const discount = (item.discount_percent || 0) / 100;
-                  return price * quantity * (1 - discount);
-                };
-                
-                const subtotal = (invoiceData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0);
-                const globalDiscountPercent = typeof invoiceData.global_discount_percent === 'number' 
-                  ? invoiceData.global_discount_percent 
-                  : parseFloat(String(invoiceData.global_discount_percent || 0));
-                const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100;
-                const discountedSubtotal = subtotal - globalDiscountAmount;
-                const taxPercent = typeof invoiceData.tax_percent === 'number'
-                  ? invoiceData.tax_percent
-                  : parseFloat(String(invoiceData.tax_percent || 0));
-                const tax = discountedSubtotal * (taxPercent / 100);
-                const total = discountedSubtotal + tax;
-                
-                // Payment calculations - use invoice-level data from API
-                const totalPaidAmount = typeof invoiceData.total_paid === 'number'
-                  ? invoiceData.total_paid
-                  : parseFloat(String(invoiceData.total_paid || 0));
-                // Amount due is the difference between final total and total paid
-                const totalUnpaidAmount = Math.max(0, total - totalPaidAmount);
-                
-                return (
-                  <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span>Subtotal:</span>
-                  <span>{subtotal.toFixed(3)} $</span>
-                </div>
-                    {globalDiscountPercent > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span>Discount ({globalDiscountPercent.toFixed(1)}%):</span>
-                    <span style={{ color: '#16a34a' }}>-{globalDiscountAmount.toFixed(3)} $</span>
-                  </div>
-                )}
-                {taxPercent > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                    <span>Tax ({taxPercent.toFixed(1)}%):</span>
-                    <span>{tax.toFixed(3)} $</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
-                  <span>TOTAL:</span>
-                  <span>{total.toFixed(3)} $</span>
-                </div>
-                {totalPaidAmount > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                    <span>Total Paid:</span>
-                    <span style={{ color: '#16a34a' }}>{totalPaidAmount.toFixed(3)} $</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
-                  <span>Amount Due:</span>
-                  <span style={{ color: totalUnpaidAmount > 0 ? '#dc2626' : '#16a34a' }}>{totalUnpaidAmount.toFixed(3)} $</span>
-                </div>
-                  </>
-                );
-              })()}
-              </div>
-              
-            {invoiceData.notes && (
-                <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
-                  <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
-                <p style={{ margin: '2px 0 0 0' }}>{invoiceData.notes}</p>
-                </div>
-              )}
-              
-              <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
-                <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
-                <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
-              </div>
-            </div>
-          </div>
-          <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:justify-end pt-2 border-t bg-white">
-            <Button variant="outline" onClick={handlePrint} aria-label="Print" title="Print">
-              <Printer className="h-5 w-5" />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" aria-label="Download" title="Download">
-                  <Download className="h-5 w-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleDownloadPDF}>
-                  <FileText className="h-4 w-4 mr-2" />
-                  Download as PDF
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleDownloadImage}>
-                  <Image className="h-4 w-4 mr-2" />
-                  Download as Image
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          <Button onClick={handleClose}>Close</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 space-y-1 pb-2">
+          <DialogTitle>Receipt</DialogTitle>
+          <DialogDescription>View, print, or download your receipt.</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col">
+          {receiptPayload ? (
+            <ReceiptContent
+              receiptData={receiptPayload}
+              currencyLabel="$"
+              getDisplayPrice={() => null}
+              onClose={handleClose}
+            />
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

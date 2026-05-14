@@ -12,7 +12,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 import jsPDF from "jspdf"
 
-interface ReceiptItem {
+/** Coerce API / JSON values to a finite number (avoids `.toFixed` on strings). */
+export function toNum(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  const n = parseFloat(String(value ?? "").replace(/,/g, ""))
+  return Number.isFinite(n) ? n : fallback
+}
+
+export interface ReceiptItem {
   id?: number
   product_name?: string
   product?: {
@@ -32,7 +39,7 @@ interface ReceiptItem {
   is_paid?: boolean
 }
 
-interface ReceiptData {
+export interface ReceiptData {
   id: number
   composite_id?: string
   customer_name: string
@@ -70,10 +77,11 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
 
   // Calculate item total (for display)
   const calculateItemTotal = (item: ReceiptItem) => {
-    const price = item.unit_price || 0
-    const quantity = item.quantity || 0
-    const discount = ((item.discount_percent || 0) / 100)
-    return price * quantity * (1 - discount)
+    const price = toNum(item.unit_price)
+    const quantity = toNum(item.quantity)
+    const discount = toNum(item.discount_percent) / 100
+    const raw = price * quantity * (1 - discount)
+    return Number.isFinite(raw) ? Math.max(0, raw) : 0
   }
 
   // Calculate financial summary
@@ -81,24 +89,24 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
     // If using POS cart data (has subtotal, tax, etc.)
     if (receiptData.subtotal !== undefined) {
       return {
-        subtotal: receiptData.subtotal,
-        globalDiscountAmount: receiptData.globalDiscountAmount || 0,
-        tax: receiptData.tax || 0,
-        total: receiptData.total || receiptData.total_amount,
-        totalPaid: receiptData.total_paid || 0,
-        totalUnpaid: receiptData.totalUnpaidAmount || 0,
+        subtotal: toNum(receiptData.subtotal),
+        globalDiscountAmount: toNum(receiptData.globalDiscountAmount),
+        tax: toNum(receiptData.tax),
+        total: toNum(receiptData.total ?? receiptData.total_amount),
+        totalPaid: toNum(receiptData.total_paid),
+        totalUnpaid: toNum(receiptData.totalUnpaidAmount),
       }
     }
 
     // Otherwise calculate from items (for invoice-based receipts)
     const subtotal = (receiptData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0)
-    const globalDiscountPercent = receiptData.global_discount_percent || 0
+    const globalDiscountPercent = toNum(receiptData.global_discount_percent)
     const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100
     const discountedSubtotal = subtotal - globalDiscountAmount
-    const taxPercent = receiptData.tax_percent || 0
-    const tax = discountedSubtotal * (taxPercent / 100)
+    const taxPercentRaw = toNum(receiptData.tax_percent)
+    const tax = discountedSubtotal * (taxPercentRaw / 100)
     const total = discountedSubtotal + tax
-    const totalPaid = receiptData.total_paid || 0
+    const totalPaid = toNum(receiptData.total_paid)
     const totalUnpaid = Math.max(0, total - totalPaid)
 
     return {
@@ -112,13 +120,23 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
   }
 
   const financials = calculateFinancials()
-  const globalDiscountPercent = receiptData.global_discount_percent || 
-    (financials.subtotal > 0 ? (financials.globalDiscountAmount / financials.subtotal) * 100 : 0)
-  const taxPercent = receiptData.tax_percent || 
-    (financials.subtotal > 0 ? (financials.tax / financials.subtotal) * 100 : 0)
+  const rawGlobalPct = receiptData.global_discount_percent
+  const globalDiscountPercent =
+    rawGlobalPct !== undefined && rawGlobalPct !== null && String(rawGlobalPct).trim() !== ""
+      ? toNum(rawGlobalPct)
+      : financials.subtotal > 0
+        ? (financials.globalDiscountAmount / financials.subtotal) * 100
+        : 0
+  const rawTaxPct = receiptData.tax_percent
+  const taxPercent =
+    rawTaxPct !== undefined && rawTaxPct !== null && String(rawTaxPct).trim() !== ""
+      ? toNum(rawTaxPct)
+      : financials.subtotal > 0
+        ? (financials.tax / financials.subtotal) * 100
+        : 0
 
   // Determine payment status for items
-  const isFullyPaid = Math.abs((financials.totalPaid || 0) - financials.total) < 0.001
+  const isFullyPaid = Math.abs(toNum(financials.totalPaid) - toNum(financials.total)) < 0.001
 
   const handlePrint = () => {
     if (printRef.current) {
@@ -134,18 +152,35 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   margin: 0; 
                 }
                 body { 
-                  font-family: monospace; 
-                  font-size: 12px; 
-                  line-height: 1.3; 
+                  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
+                  font-size: 11px; 
+                  line-height: 1.35; 
                   margin: 0; 
-                  padding: 15px; 
-                  width: 100%; 
+                  padding: 10px; 
+                  width: 100%;
+                  color: #000000;
                 }
                 .receipt-container { 
                   width: 100% !important; 
                   max-width: 100% !important; 
                   margin: 0 !important; 
-                  padding: 0 !important; 
+                  padding: 0 !important;
+                  color: #000000 !important;
+                }
+                .receipt-section-title {
+                  border-bottom: 1px solid #000 !important;
+                  padding-bottom: 3px !important;
+                  margin-bottom: 5px !important;
+                  color: #000000 !important;
+                }
+                .receipt-meta-compact {
+                  color: #000000 !important;
+                }
+                .receipt-kv-value, .receipt-item-name {
+                  word-wrap: break-word !important;
+                  overflow-wrap: anywhere !important;
+                  white-space: normal !important;
+                  color: #000000 !important;
                 }
                 img {
                   -webkit-print-color-adjust: exact !important;
@@ -154,13 +189,59 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                 }
               }
               body { 
-                font-family: monospace; 
-                font-size: 12px; 
-                line-height: 1.3; 
+                font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
+                font-size: 11px; 
+                line-height: 1.35; 
                 margin: 0; 
-                padding: 15px; 
-                width: 100%; 
+                padding: 10px; 
+                width: 100%;
+                color: #000000;
               }
+              .receipt-container { color: #000000; }
+              .receipt-section-title {
+                font-weight: bold;
+                font-size: 9px;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+                border-bottom: 1px solid #000;
+                padding-bottom: 3px;
+                margin-bottom: 5px;
+                color: #000000;
+              }
+              .receipt-meta-compact {
+                font-size: 8px;
+                line-height: 1.25;
+                margin-bottom: 6px;
+                padding-bottom: 5px;
+                border-bottom: 1px dashed #000;
+                color: #000000;
+              }
+              .receipt-meta-compact strong { font-weight: 700; }
+              .receipt-kv-block { margin-bottom: 5px; }
+              .receipt-kv-label { font-weight: 700; font-size: 8px; color: #000000; margin-bottom: 1px; }
+              .receipt-kv-value {
+                font-size: 9px;
+                color: #000000;
+                word-wrap: break-word;
+                overflow-wrap: anywhere;
+                white-space: normal;
+              }
+              .receipt-item-block {
+                border: 1px solid #000;
+                border-radius: 2px;
+                padding: 6px;
+                margin-bottom: 6px;
+              }
+              .receipt-item-name {
+                font-weight: 700;
+                font-size: 9px;
+                margin-bottom: 4px;
+                color: #000000;
+                word-wrap: break-word;
+                overflow-wrap: anywhere;
+                white-space: normal;
+              }
+              .receipt-item-row { display: flex; justify-content: space-between; font-size: 8px; margin-top: 2px; gap: 6px; color: #000000; }
             </style>
           `)
           printWindow.document.write("</head><body>")
@@ -236,171 +317,330 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
   return (
     <>
       <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
-        <div className="receipt-container" style={{
-          width: '280px',
-          maxWidth: '280px',
-          margin: '0 auto',
-          padding: '8px',
-          fontFamily: 'monospace',
-          fontSize: '10px',
-          lineHeight: '1.1',
-          backgroundColor: 'white',
-          minHeight: '100%'
-        }}>
-          <div className="receipt-header text-center mb-2" style={{ borderBottom: '1px dashed #000', paddingBottom: '6px' }}>
-            <div style={{ marginBottom: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              <img 
-                src="/dararab-logo-1.png" 
-                alt="DarArab Logo" 
-                style={{ 
-                  maxWidth: '60px', 
-                  maxHeight: '40px', 
-                  objectFit: 'contain',
-                  filter: 'grayscale(100%) contrast(200%)',
-                  display: 'block'
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+        .receipt-container {
+          color: #000000;
+        }
+        .receipt-section-title {
+          font-weight: bold;
+          font-size: 9px;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          border-bottom: 1px solid #000;
+          padding-bottom: 3px;
+          margin-bottom: 5px;
+          color: #000000;
+        }
+        .receipt-meta-compact {
+          font-size: 8px;
+          line-height: 1.25;
+          margin-bottom: 6px;
+          padding-bottom: 5px;
+          border-bottom: 1px dashed #000;
+          color: #000000;
+        }
+        .receipt-meta-compact strong { font-weight: 700; }
+        .receipt-kv-block { margin-bottom: 5px; }
+        .receipt-container .receipt-kv-label {
+          font-weight: 700;
+          font-size: 8px;
+          color: #000000;
+          margin-bottom: 1px;
+        }
+        .receipt-container .receipt-kv-value {
+          font-size: 9px;
+          color: #000000;
+          word-wrap: break-word;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+        .receipt-container .receipt-item-block {
+          border: 1px solid #000;
+          border-radius: 2px;
+          padding: 6px;
+          margin-bottom: 6px;
+        }
+        .receipt-container .receipt-item-name {
+          font-weight: 700;
+          font-size: 9px;
+          margin-bottom: 4px;
+          color: #000000;
+          word-wrap: break-word;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+        .receipt-container .receipt-item-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 8px;
+          margin-top: 2px;
+          gap: 6px;
+          color: #000000;
+        }
+      `,
+          }}
+        />
+        <div
+          className="receipt-container"
+          style={{
+            width: "100%",
+            maxWidth: "340px",
+            margin: "0 auto",
+            padding: "8px 10px 10px",
+            fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+            fontSize: "9px",
+            lineHeight: 1.35,
+            backgroundColor: "white",
+            minHeight: "100%",
+            wordWrap: "break-word",
+            overflowWrap: "anywhere",
+            color: "#000000",
+          }}
+        >
+          <div
+            className="receipt-header text-center"
+            style={{ borderBottom: "1px dashed #000", paddingBottom: "6px", marginBottom: "6px" }}
+          >
+            <div style={{ marginBottom: "4px", display: "flex", justifyContent: "center", alignItems: "center" }}>
+              <img
+                src="/dararab-logo-1.png"
+                alt="DarArab Logo"
+                style={{
+                  maxWidth: "56px",
+                  maxHeight: "38px",
+                  objectFit: "contain",
+                  filter: "grayscale(100%) contrast(200%)",
+                  display: "block",
                 }}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement
-                  target.style.display = 'none'
+                  target.style.display = "none"
                 }}
               />
             </div>
-            <h2 style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 3px 0' }}>DarArab for Publishing & Translation</h2>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>Seeb, Muscat, Sultanate of Oman</p>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>Tel: +96871523542</p>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>Email: info@dararab.co.uk | Web: dararab.co.uk</p>
-            <p style={{ fontSize: '9px', margin: '3px 0 0 0' }}>Receipt #{receiptData.id}</p>
-            <p style={{ fontSize: '9px', margin: '2px 0' }}>{receiptData.created_at_formatted || format(new Date(), "PPP")}</p>
-          </div>
-          
-          <div className="mb-2" style={{ fontSize: '9px' }}>
-            <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {receiptData.customer_name || "Walk-in Customer"}</p>
-            {receiptData.customer_contact && (
-              <p style={{ margin: '2px 0', fontSize: '8px' }}>{receiptData.customer_contact}</p>
-            )}
-            <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {receiptData.payment_method_name || "N/A"}</p>
-            <p style={{ margin: '2px 0' }}><strong>Type:</strong> {receiptData.invoice_type_name || "N/A"}</p>
-            <p style={{ margin: '2px 0' }}><strong>Warehouse:</strong> {receiptData.warehouse_name || "N/A"}</p>
-          </div>
-          
-          <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', marginBottom: '3px' }}>
-              <span>Item</span>
-              <span>Qty</span>
-              <span>Price</span>
-              <span>Disc%</span>
-              <span>Total</span>
-              <span>Status</span>
+            <h2 style={{ fontSize: "11px", fontWeight: "bold", margin: "0 0 4px 0", lineHeight: 1.25, color: "#000" }}>
+              DarArab for Publishing & Translation
+            </h2>
+            <div
+              style={{
+                fontSize: "8px",
+                margin: "2px 0",
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
+                color: "#000",
+              }}
+            >
+              Seeb, Muscat, Sultanate of Oman
             </div>
-            
+            <div style={{ fontSize: "8px", margin: "2px 0", color: "#000" }}>Tel: +96871523542</div>
+            <div
+              style={{
+                fontSize: "8px",
+                margin: "2px 0",
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
+                color: "#000",
+              }}
+            >
+              Email: info@dararab.co.uk
+            </div>
+            <div style={{ fontSize: "8px", margin: "2px 0", color: "#000" }}>Web: dararab.co.uk</div>
+          </div>
+
+          <div
+            className="receipt-meta-compact"
+            style={{
+              marginBottom: "6px",
+              paddingBottom: "5px",
+              borderBottom: "1px dashed #000",
+              fontSize: "8px",
+              lineHeight: 1.25,
+              color: "#000",
+            }}
+          >
+            <div style={{ marginBottom: "2px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+              <strong>#</strong>
+              {receiptData.composite_id || String(receiptData.id)}
+              <span style={{ margin: "0 4px" }}>·</span>
+              {receiptData.created_at_formatted || format(new Date(), "PPP")}
+            </div>
+            <div style={{ marginBottom: "2px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+              <strong>Cust:</strong> {receiptData.customer_name || "Walk-in"}
+              {receiptData.customer_contact ? (
+                <>
+                  <span style={{ margin: "0 4px" }}>·</span>
+                  {receiptData.customer_contact}
+                </>
+              ) : null}
+            </div>
+            <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
+              <strong>Pay:</strong> {receiptData.payment_method_name || "—"}
+              <span style={{ margin: "0 4px" }}>·</span>
+              <strong>Type:</strong> {receiptData.invoice_type_name || "—"}
+              <span style={{ margin: "0 4px" }}>·</span>
+              <strong>Wh:</strong> {receiptData.warehouse_name || "—"}
+              {receiptData.warehouse_location ? (
+                <>
+                  <span style={{ margin: "0 4px" }}>·</span>
+                  {receiptData.warehouse_location}
+                </>
+              ) : null}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: "10px" }}>
+            <div className="receipt-section-title">Items</div>
             {(receiptData.items || []).map((item, idx) => {
               const itemTotal = calculateItemTotal(item)
-              const itemDiscountPercent = item.discount_percent || 0
-              
-              // Determine status
-              let status = "Not Paid"
-              let statusColor = "#dc2626"
-              
+              const itemDiscountPercent = toNum(item.discount_percent)
+
+              let status = "Due"
+
               if (isFullyPaid) {
                 status = "Paid"
-                statusColor = "#16a34a"
-              } else if (item.is_paid || (item.paid_amount && item.paid_amount > 0)) {
-                const itemPaid = item.paid_amount || 0
+              } else if (item.is_paid || toNum(item.paid_amount) > 0) {
+                const itemPaid = toNum(item.paid_amount)
                 if (itemPaid >= itemTotal) {
                   status = "Paid"
-                  statusColor = "#16a34a"
                 } else {
                   status = "Partial"
-                  statusColor = "#ea580c"
                 }
               } else if (financials.totalPaid > 0) {
                 status = "Partial"
-                statusColor = "#ea580c"
               }
-              
-              // Get display price (OMR or $)
+
               const displayPrice = item.product ? getDisplayPrice(item) : null
-              const displayPriceValue = displayPrice ? parseFloat(displayPrice) : item.unit_price || 0
-              
+              const displayPriceValue = displayPrice ? toNum(parseFloat(displayPrice)) : toNum(item.unit_price)
+              const productLabel = item.product_name || item.product?.title_en || "Unknown Product"
+
               return (
-                <div key={idx} style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'flex-start',
-                  fontSize: '8px',
-                  marginBottom: '2px',
-                  paddingBottom: '2px',
-                  borderBottom: '1px dotted #ccc'
-                }}>
-                  <div style={{ flex: '1.8', wordBreak: 'break-word', marginRight: '2px' }}>
-                    {item.product_name || item.product?.title_en || 'Unknown Product'}
+                <div key={idx} className="receipt-item-block">
+                  <div className="receipt-item-name">{productLabel}</div>
+                  <div className="receipt-item-row">
+                    <span>Quantity</span>
+                    <span>{toNum(item.quantity)}</span>
                   </div>
-                  <div style={{ flex: '0.3', textAlign: 'center' }}>{item.quantity || 0}</div>
-                  <div style={{ flex: '0.4', textAlign: 'right' }}>{displayPriceValue.toFixed(3)}</div>
-                  <div style={{ flex: '0.3', textAlign: 'right' }}>{itemDiscountPercent.toFixed(1)}%</div>
-                  <div style={{ flex: '0.4', textAlign: 'right' }}>{itemTotal.toFixed(3)}</div>
-                  <div style={{ flex: '0.35', textAlign: 'right', fontSize: '7px' }}>
-                    <span style={{ color: statusColor }}>{status}</span>
+                  <div className="receipt-item-row">
+                    <span>Unit price</span>
+                    <span>
+                      {displayPriceValue.toFixed(3)} {currencyLabel}
+                    </span>
+                  </div>
+                  <div className="receipt-item-row">
+                    <span>Line discount</span>
+                    <span>{itemDiscountPercent.toFixed(1)}%</span>
+                  </div>
+                  <div className="receipt-item-row" style={{ fontWeight: 600 }}>
+                    <span>Line total</span>
+                    <span>
+                      {itemTotal.toFixed(3)} {currencyLabel}
+                    </span>
+                  </div>
+                  <div className="receipt-item-row" style={{ marginTop: "4px" }}>
+                    <span>Status</span>
+                    <span style={{ fontWeight: 700, color: "#000" }}>
+                      {status === "Partial" ? `${status} *` : status}
+                    </span>
                   </div>
                 </div>
               )
             })}
           </div>
-          
-          <div style={{ marginTop: '6px', fontSize: '9px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-              <span>Subtotal:</span>
-              <span>{financials.subtotal.toFixed(3)} {currencyLabel}</span>
-            </div>
-            {globalDiscountPercent > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Discount ({globalDiscountPercent.toFixed(1)}%):</span>
-                <span style={{ color: '#16a34a' }}>-{financials.globalDiscountAmount.toFixed(3)} {currencyLabel}</span>
+
+          <div style={{ marginBottom: "10px" }}>
+            <div className="receipt-section-title">Totals</div>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Subtotal</div>
+              <div className="receipt-kv-value">
+                {financials.subtotal.toFixed(3)} {currencyLabel}
               </div>
-            )}
-            {taxPercent > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                <span>Tax ({taxPercent.toFixed(1)}%):</span>
-                <span>{financials.tax.toFixed(3)} {currencyLabel}</span>
+            </div>
+            {globalDiscountPercent > 0 ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Discount ({globalDiscountPercent.toFixed(1)}%)</div>
+                <div className="receipt-kv-value" style={{ fontWeight: 700 }}>
+                  −{financials.globalDiscountAmount.toFixed(3)} {currencyLabel}
+                </div>
               </div>
-            )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold', borderTop: '1px solid #000', paddingTop: '2px' }}>
-              <span>TOTAL:</span>
-              <span>{financials.total.toFixed(3)} {currencyLabel}</span>
+            ) : null}
+            {taxPercent > 0 ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Tax ({taxPercent.toFixed(1)}%)</div>
+                <div className="receipt-kv-value">
+                  {financials.tax.toFixed(3)} {currencyLabel}
+                </div>
+              </div>
+            ) : null}
+            <div className="receipt-kv-block" style={{ borderTop: "1px solid #000", paddingTop: "5px", marginTop: "4px" }}>
+              <div className="receipt-kv-label">Invoice total</div>
+              <div className="receipt-kv-value" style={{ fontWeight: 700, fontSize: "10px", color: "#000" }}>
+                {financials.total.toFixed(3)} {currencyLabel}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-              <span>Total Paid:</span>
-              <span style={{ color: '#16a34a' }}>{financials.totalPaid.toFixed(3)} {currencyLabel}</span>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Total paid</div>
+              <div className="receipt-kv-value" style={{ fontWeight: 600, color: "#000" }}>
+                {financials.totalPaid.toFixed(3)} {currencyLabel}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontWeight: 'bold' }}>
-              <span>Amount Due:</span>
-              <span style={{ color: financials.totalUnpaid > 0 ? '#dc2626' : '#16a34a' }}>
+            <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Amount due</div>
+              <div className="receipt-kv-value" style={{ fontWeight: 700, color: "#000" }}>
                 {financials.totalUnpaid.toFixed(3)} {currencyLabel}
-              </span>
-            </div>
-            {receiptData.hasPartialPayment && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '8px' }}>
-                <span style={{ color: '#ea580c' }}>Partial Payments:</span>
-                <span style={{ color: '#ea580c' }}>
-                  {(receiptData.items || []).filter(item => {
-                    const itemTotal = calculateItemTotal(item)
-                    return (item.paid_amount || 0) > 0 && (item.paid_amount || 0) < itemTotal
-                  }).length} items
-                </span>
+                {financials.totalUnpaid > 0.001 ? " (balance)" : " (clear)"}
               </div>
-            )}
-          </div>
-          
-          {receiptData.notes && (
-            <div style={{ marginTop: '6px', padding: '4px', border: '1px dashed #000', fontSize: '8px' }}>
-              <p style={{ margin: '0', fontWeight: 'bold' }}>Notes:</p>
-              <p style={{ margin: '2px 0 0 0' }}>{receiptData.notes}</p>
             </div>
-          )}
-          
-          <div className="receipt-footer text-center mt-2" style={{ borderTop: '1px dashed #000', paddingTop: '4px', fontSize: '8px' }}>
-            <p style={{ margin: '2px 0' }}>Thank you for your purchase!</p>
-            <p style={{ margin: '2px 0', fontSize: '7px' }}>Visit us again soon</p>
+            {receiptData.hasPartialPayment ? (
+              <div className="receipt-kv-block">
+                <div className="receipt-kv-label">Partial lines</div>
+                <div className="receipt-kv-value" style={{ fontWeight: 600, color: "#000" }}>
+                  {(receiptData.items || []).filter((it) => {
+                    const t = calculateItemTotal(it)
+                    return toNum(it.paid_amount) > 0 && toNum(it.paid_amount) < t
+                  }).length}{" "}
+                  items *
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {receiptData.notes ? (
+            <div
+              style={{
+                marginBottom: "8px",
+                padding: "5px 6px",
+                border: "1px dashed #000",
+                fontSize: "8px",
+                lineHeight: 1.3,
+                color: "#000",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: "2px", fontSize: "8px" }}>Notes</div>
+              <div
+                className="receipt-kv-value"
+                style={{
+                  whiteSpace: "normal",
+                  wordBreak: "break-word",
+                  overflowWrap: "anywhere",
+                  fontSize: "8px",
+                  color: "#000",
+                }}
+              >
+                {receiptData.notes}
+              </div>
+            </div>
+          ) : null}
+
+          <div
+            className="receipt-footer text-center"
+            style={{ borderTop: "1px dashed #000", paddingTop: "6px", fontSize: "8px", color: "#000" }}
+          >
+            <p style={{ margin: "2px 0", color: "#000" }}>Thank you for your purchase.</p>
+            <p style={{ margin: "2px 0", fontSize: "7px", color: "#000" }}>We hope to see you again soon.</p>
           </div>
         </div>
       </div>
