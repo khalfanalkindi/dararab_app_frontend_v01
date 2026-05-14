@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/dropdown-menu"
 import jsPDF from "jspdf"
 
+/** Coerce API / JSON values to a finite number (avoids `.toFixed` on strings). */
+export function toNum(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  const n = parseFloat(String(value ?? "").replace(/,/g, ""))
+  return Number.isFinite(n) ? n : fallback
+}
+
 export interface ReceiptItem {
   id?: number
   product_name?: string
@@ -70,10 +77,11 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
 
   // Calculate item total (for display)
   const calculateItemTotal = (item: ReceiptItem) => {
-    const price = item.unit_price || 0
-    const quantity = item.quantity || 0
-    const discount = ((item.discount_percent || 0) / 100)
-    return price * quantity * (1 - discount)
+    const price = toNum(item.unit_price)
+    const quantity = toNum(item.quantity)
+    const discount = toNum(item.discount_percent) / 100
+    const raw = price * quantity * (1 - discount)
+    return Number.isFinite(raw) ? Math.max(0, raw) : 0
   }
 
   // Calculate financial summary
@@ -81,24 +89,24 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
     // If using POS cart data (has subtotal, tax, etc.)
     if (receiptData.subtotal !== undefined) {
       return {
-        subtotal: receiptData.subtotal,
-        globalDiscountAmount: receiptData.globalDiscountAmount || 0,
-        tax: receiptData.tax || 0,
-        total: receiptData.total || receiptData.total_amount,
-        totalPaid: receiptData.total_paid || 0,
-        totalUnpaid: receiptData.totalUnpaidAmount || 0,
+        subtotal: toNum(receiptData.subtotal),
+        globalDiscountAmount: toNum(receiptData.globalDiscountAmount),
+        tax: toNum(receiptData.tax),
+        total: toNum(receiptData.total ?? receiptData.total_amount),
+        totalPaid: toNum(receiptData.total_paid),
+        totalUnpaid: toNum(receiptData.totalUnpaidAmount),
       }
     }
 
     // Otherwise calculate from items (for invoice-based receipts)
     const subtotal = (receiptData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0)
-    const globalDiscountPercent = receiptData.global_discount_percent || 0
+    const globalDiscountPercent = toNum(receiptData.global_discount_percent)
     const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100
     const discountedSubtotal = subtotal - globalDiscountAmount
-    const taxPercent = receiptData.tax_percent || 0
-    const tax = discountedSubtotal * (taxPercent / 100)
+    const taxPercentRaw = toNum(receiptData.tax_percent)
+    const tax = discountedSubtotal * (taxPercentRaw / 100)
     const total = discountedSubtotal + tax
-    const totalPaid = receiptData.total_paid || 0
+    const totalPaid = toNum(receiptData.total_paid)
     const totalUnpaid = Math.max(0, total - totalPaid)
 
     return {
@@ -112,13 +120,23 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
   }
 
   const financials = calculateFinancials()
-  const globalDiscountPercent = receiptData.global_discount_percent || 
-    (financials.subtotal > 0 ? (financials.globalDiscountAmount / financials.subtotal) * 100 : 0)
-  const taxPercent = receiptData.tax_percent || 
-    (financials.subtotal > 0 ? (financials.tax / financials.subtotal) * 100 : 0)
+  const rawGlobalPct = receiptData.global_discount_percent
+  const globalDiscountPercent =
+    rawGlobalPct !== undefined && rawGlobalPct !== null && String(rawGlobalPct).trim() !== ""
+      ? toNum(rawGlobalPct)
+      : financials.subtotal > 0
+        ? (financials.globalDiscountAmount / financials.subtotal) * 100
+        : 0
+  const rawTaxPct = receiptData.tax_percent
+  const taxPercent =
+    rawTaxPct !== undefined && rawTaxPct !== null && String(rawTaxPct).trim() !== ""
+      ? toNum(rawTaxPct)
+      : financials.subtotal > 0
+        ? (financials.tax / financials.subtotal) * 100
+        : 0
 
   // Determine payment status for items
-  const isFullyPaid = Math.abs((financials.totalPaid || 0) - financials.total) < 0.001
+  const isFullyPaid = Math.abs(toNum(financials.totalPaid) - toNum(financials.total)) < 0.001
 
   const handlePrint = () => {
     if (printRef.current) {
@@ -478,14 +496,14 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
             <div className="receipt-section-title">Items</div>
             {(receiptData.items || []).map((item, idx) => {
               const itemTotal = calculateItemTotal(item)
-              const itemDiscountPercent = item.discount_percent || 0
+              const itemDiscountPercent = toNum(item.discount_percent)
 
               let status = "Due"
 
               if (isFullyPaid) {
                 status = "Paid"
-              } else if (item.is_paid || (item.paid_amount && item.paid_amount > 0)) {
-                const itemPaid = item.paid_amount || 0
+              } else if (item.is_paid || toNum(item.paid_amount) > 0) {
+                const itemPaid = toNum(item.paid_amount)
                 if (itemPaid >= itemTotal) {
                   status = "Paid"
                 } else {
@@ -496,7 +514,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
               }
 
               const displayPrice = item.product ? getDisplayPrice(item) : null
-              const displayPriceValue = displayPrice ? parseFloat(displayPrice) : item.unit_price || 0
+              const displayPriceValue = displayPrice ? toNum(parseFloat(displayPrice)) : toNum(item.unit_price)
               const productLabel = item.product_name || item.product?.title_en || "Unknown Product"
 
               return (
@@ -504,7 +522,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   <div className="receipt-item-name">{productLabel}</div>
                   <div className="receipt-item-row">
                     <span>Quantity</span>
-                    <span>{item.quantity || 0}</span>
+                    <span>{toNum(item.quantity)}</span>
                   </div>
                   <div className="receipt-item-row">
                     <span>Unit price</span>
@@ -582,7 +600,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                 <div className="receipt-kv-value" style={{ fontWeight: 600, color: "#000" }}>
                   {(receiptData.items || []).filter((it) => {
                     const t = calculateItemTotal(it)
-                    return (it.paid_amount || 0) > 0 && (it.paid_amount || 0) < t
+                    return toNum(it.paid_amount) > 0 && toNum(it.paid_amount) < t
                   }).length}{" "}
                   items *
                 </div>

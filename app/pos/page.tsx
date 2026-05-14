@@ -1483,9 +1483,11 @@ export default function POSPage() {
         throw new Error("Failed to fetch invoice summary for receipt")
       }
       const summary = await summaryRes.json()
-      setReceiptData(summary)
       setConfirmSaleOpen(false)
-      setActiveDialog("print")
+      setReceiptData(summary)
+      queueMicrotask(() => {
+        setActiveDialog("print")
+      })
 
       // Update sales summary locally - use the total amount (which matches paid amount when fully paid)
       setTodaySales(prev => prev + roundedTotal)
