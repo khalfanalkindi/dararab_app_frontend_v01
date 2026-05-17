@@ -75,13 +75,26 @@ interface ReceiptContentProps {
 export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, onClose }: ReceiptContentProps) {
   const printRef = useRef<HTMLDivElement>(null)
 
-  // Calculate item total (for display)
-  const calculateItemTotal = (item: ReceiptItem) => {
+  const getItemLineGross = (item: ReceiptItem) => toNum(item.unit_price) * toNum(item.quantity)
+
+  /** Prefer API/POS `total_price` (final after all discounts); else derive from unit × qty × line %. */
+  const getItemLineTotal = (item: ReceiptItem) => {
+    if (item.total_price !== undefined && item.total_price !== null) {
+      const fromApi = toNum(item.total_price)
+      if (Number.isFinite(fromApi)) return Math.max(0, fromApi)
+    }
     const price = toNum(item.unit_price)
     const quantity = toNum(item.quantity)
     const discount = toNum(item.discount_percent) / 100
     const raw = price * quantity * (1 - discount)
     return Number.isFinite(raw) ? Math.max(0, raw) : 0
+  }
+
+  const getItemEffectiveDiscountPercent = (item: ReceiptItem) => {
+    const gross = getItemLineGross(item)
+    if (gross <= 1e-9) return 0
+    const net = getItemLineTotal(item)
+    return Math.max(0, Math.min(100, Number((100 * (1 - net / gross)).toFixed(3))))
   }
 
   // Calculate financial summary
@@ -98,10 +111,35 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
       }
     }
 
-    // Otherwise calculate from items (for invoice-based receipts)
-    const subtotal = (receiptData.items || []).reduce((sum, item) => sum + calculateItemTotal(item), 0)
-    const globalDiscountPercent = toNum(receiptData.global_discount_percent)
-    const globalDiscountAmount = (subtotal * globalDiscountPercent) / 100
+    // Invoice / summary API: global may be 0 when discount is already on each line (POS store/individual)
+    const items = receiptData.items || []
+    const lineGrossSum = items.reduce((sum, item) => sum + getItemLineGross(item), 0)
+    const lineNetSum = items.reduce((sum, item) => sum + getItemLineTotal(item), 0)
+    const apiGlobalPct = toNum(receiptData.global_discount_percent)
+    const discountFromLines = Math.max(0, lineGrossSum - lineNetSum)
+
+    if (apiGlobalPct < 0.001 || discountFromLines > 0.001) {
+      const subtotal = lineGrossSum
+      const globalDiscountAmount = discountFromLines
+      const discountedSubtotal = lineNetSum
+      const taxPercentRaw = toNum(receiptData.tax_percent)
+      const tax = discountedSubtotal * (taxPercentRaw / 100)
+      const total = discountedSubtotal + tax
+      const totalPaid = toNum(receiptData.total_paid)
+      const totalUnpaid = Math.max(0, total - totalPaid)
+      return {
+        subtotal,
+        globalDiscountAmount,
+        tax,
+        total,
+        totalPaid,
+        totalUnpaid,
+      }
+    }
+
+    // Legacy: invoice-level global only (lines do not include global in their totals)
+    const subtotal = items.reduce((sum, item) => sum + getItemLineTotal(item), 0)
+    const globalDiscountAmount = (subtotal * apiGlobalPct) / 100
     const discountedSubtotal = subtotal - globalDiscountAmount
     const taxPercentRaw = toNum(receiptData.tax_percent)
     const tax = discountedSubtotal * (taxPercentRaw / 100)
@@ -133,6 +171,13 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
       ? toNum(rawTaxPct)
       : financials.subtotal > 0
         ? (financials.tax / financials.subtotal) * 100
+        : 0
+
+  const displayGlobalDiscountPercent =
+    globalDiscountPercent > 0.001
+      ? globalDiscountPercent
+      : financials.subtotal > 0
+        ? (financials.globalDiscountAmount / financials.subtotal) * 100
         : 0
 
   // Determine payment status for items
@@ -495,8 +540,9 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
           <div style={{ marginBottom: "10px" }}>
             <div className="receipt-section-title">Items</div>
             {(receiptData.items || []).map((item, idx) => {
-              const itemTotal = calculateItemTotal(item)
-              const itemDiscountPercent = toNum(item.discount_percent)
+              const itemTotal = getItemLineTotal(item)
+              const itemDiscountPercent = getItemEffectiveDiscountPercent(item)
+              const lineGross = getItemLineGross(item)
 
               let status = "Due"
 
@@ -531,9 +577,17 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                     </span>
                   </div>
                   <div className="receipt-item-row">
-                    <span>Line discount</span>
-                    <span>{itemDiscountPercent.toFixed(1)}%</span>
+                    <span>Line amount</span>
+                    <span>
+                      {lineGross.toFixed(3)} {currencyLabel}
+                    </span>
                   </div>
+                  {itemDiscountPercent > 0.001 ? (
+                    <div className="receipt-item-row">
+                      <span>Discount</span>
+                      <span>{itemDiscountPercent.toFixed(1)}%</span>
+                    </div>
+                  ) : null}
                   <div className="receipt-item-row" style={{ fontWeight: 600 }}>
                     <span>Line total</span>
                     <span>
@@ -559,9 +613,11 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                 {financials.subtotal.toFixed(3)} {currencyLabel}
               </div>
             </div>
-            {globalDiscountPercent > 0 ? (
+            {financials.globalDiscountAmount > 0.001 ? (
               <div className="receipt-kv-block">
-                <div className="receipt-kv-label">Discount ({globalDiscountPercent.toFixed(1)}%)</div>
+                <div className="receipt-kv-label">
+                  Discount ({displayGlobalDiscountPercent.toFixed(1)}%)
+                </div>
                 <div className="receipt-kv-value" style={{ fontWeight: 700 }}>
                   −{financials.globalDiscountAmount.toFixed(3)} {currencyLabel}
                 </div>
@@ -599,7 +655,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                 <div className="receipt-kv-label">Partial lines</div>
                 <div className="receipt-kv-value" style={{ fontWeight: 600, color: "#000" }}>
                   {(receiptData.items || []).filter((it) => {
-                    const t = calculateItemTotal(it)
+                    const t = getItemLineTotal(it)
                     return toNum(it.paid_amount) > 0 && toNum(it.paid_amount) < t
                   }).length}{" "}
                   items *

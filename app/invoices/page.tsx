@@ -1191,16 +1191,6 @@ export default function InvoicesPage() {
                           {invoiceTotals.subtotal.toFixed(3)} $
                         </td>
                       </tr>
-                      {selectedInvoice.global_discount_percent && invoiceTotals.discountAmount > 0 && (
-                        <tr className="border-t">
-                          <td colSpan={4} className="p-2 text-right font-medium text-red-600">
-                            Discount ({selectedInvoice.global_discount_percent}%):
-                          </td>
-                          <td className="p-2 text-right font-medium text-red-600">
-                            -{invoiceTotals.discountAmount.toFixed(3)} $
-                          </td>
-                        </tr>
-                      )}
                       {selectedInvoice.tax_percent && invoiceTotals.taxAmount > 0 && (
                         <tr className="border-t">
                           <td colSpan={4} className="p-2 text-right font-medium">
