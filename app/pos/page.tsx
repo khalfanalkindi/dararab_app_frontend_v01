@@ -186,15 +186,15 @@ const useCartCalculations = (
     return Math.max(0, Math.min(100, discountPercentage || 0));
   }, [discountPercentage]);
 
-  // Global discount amount (total discount amount)
-  const globalDiscountAmount = useMemo(() => {
-    return (subtotal * safeDiscountPercentage) / 100;
-  }, [subtotal, safeDiscountPercentage]);
-
-  // Subtotal after global discount: sum of per-line totals (each line applies the same global % to its subtotal for store/individual)
+  // Subtotal after discounts: sum of per-line net totals
   const discountedSubtotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
   }, [cart, calculateItemTotal]);
+
+  // Total discount amount (global and/or per-line; subtotal is always gross list sum)
+  const globalDiscountAmount = useMemo(() => {
+    return Math.max(0, subtotal - discountedSubtotal);
+  }, [subtotal, discountedSubtotal]);
 
   // Safe tax percentage (clamped to 0-100)
   const safeTaxPercentage = useMemo(() => {
@@ -673,13 +673,16 @@ export default function POSPage() {
   }
 
   // ---------------------------------------------------------------------------
-  // Payment & discount rules (line totals use calculateItemSubtotal / calculateItemTotal):
-  // STORE — cash or outstanding: item discount only on that line; global discount same % on every line's
-  //         post–item-discount subtotal (e.g. 50% global → each line × 0.5). Outstanding: lines default
-  //         unpaid (paid 0); cash: lines default fully paid at line total. Partial only if user edits Paid amount.
-  // INDIVIDUAL — cash only: no line item discount; same global % on each line's list amount (e.g. 50% → $10→$5, $20→$10).
-  //         Invoice API stores discount on lines only (global_discount_percent: 0) to avoid double discount.
+  // Payment & discount rules (subtotal = gross list sum; calculateItemTotal = net per line):
+  // STORE — either global % on each line's gross OR per-line item discount, never both. Changing global clears
+  //         line discounts; changing any line discount clears global. Outstanding: lines default unpaid; cash: full pay.
+  // INDIVIDUAL — cash only: no line discount; same global % on each line gross. API: global_discount_percent 0, discount on lines.
   // ---------------------------------------------------------------------------
+
+  const cartHasStoreItemDiscount = useMemo(
+    () => isStoreCustomer && cart.some((i) => i.discount_percent > 0),
+    [isStoreCustomer, cart],
+  );
 
   const getLineGross = useCallback((item: CartItem) => {
     const price = item.product.price || item.product.latest_price;
@@ -690,45 +693,50 @@ export default function POSPage() {
   const appliesGlobalDiscountPerLine = useMemo(() => {
     if (!discountPercentage || !selectedCustomer?.customer_type) return false;
     const customerType = customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value;
-    return customerType === "store" || customerType === "individual";
-  }, [discountPercentage, selectedCustomer, customerTypes]);
+    if (customerType === "individual") return true;
+    if (customerType === "store") return !cart.some((i) => i.discount_percent > 0);
+    return false;
+  }, [discountPercentage, selectedCustomer, customerTypes, cart]);
 
-  // Update the calculateItemTotal function to handle the new price format
-  // Memoized with useCallback to prevent recreation on every render
-  // Calculate item total before global discount (with item-level discount only)
-  const calculateItemSubtotal = useCallback((item: CartItem) => {
-    const price = item.product.price || item.product.latest_price;
-    const priceValue = price ? parseFloat(price) : 0;
-    const quantity = item.quantity;
-    // Per-line discount applies only for store customers; global invoice discount is handled in calculateItemTotal.
-    const lineDiscountPercent = isStoreCustomer ? item.discount_percent : 0;
-    const discount = Math.max(0, Math.min(100, lineDiscountPercent)) / 100;
-    const total = priceValue * quantity * (1 - discount);
-    return isNaN(total) ? 0 : Math.max(0, total); // Prevent NaN and negative values
-  }, [isStoreCustomer]);
+  const calculateItemSubtotal = useCallback(
+    (item: CartItem) => getLineGross(item),
+    [getLineGross],
+  );
 
-  // Calculate item total: after line subtotal, store & individual apply the same invoice global % to each line.
-  const calculateItemTotal = useCallback((item: CartItem, currentCart?: CartItem[]) => {
-    const itemSubtotal = calculateItemSubtotal(item);
-    const cartToUse = currentCart ?? cart;
+  const calculateItemTotal = useCallback(
+    (item: CartItem, currentCart?: CartItem[]) => {
+      const gross = getLineGross(item);
+      const cartToUse = currentCart ?? cart;
 
-    if (!discountPercentage || cartToUse.length === 0) {
-      return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
-    }
+      const customerTypeValue = selectedCustomer?.customer_type
+        ? customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value
+        : null;
 
-    const customerTypeValue = selectedCustomer?.customer_type
-      ? customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value
-      : null;
+      const globalPct = Math.max(0, Math.min(100, discountPercentage || 0));
 
-    const appliesGlobalPerLine = customerTypeValue === "store" || customerTypeValue === "individual";
-    if (!appliesGlobalPerLine) {
-      return isNaN(itemSubtotal) ? 0 : Math.max(0, Number(itemSubtotal.toFixed(3)));
-    }
+      if (customerTypeValue === "store") {
+        const hasItemDiscount = cartToUse.some((i) => i.discount_percent > 0);
+        if (hasItemDiscount) {
+          const lineDisc = Math.max(0, Math.min(100, item.discount_percent)) / 100;
+          return Number((gross * (1 - lineDisc)).toFixed(3));
+        }
+        if (globalPct > 0) {
+          return Number((gross * (1 - globalPct / 100)).toFixed(3));
+        }
+        return Number(gross.toFixed(3));
+      }
 
-    const safeGlobalFraction = Math.max(0, Math.min(100, discountPercentage)) / 100;
-    const itemTotal = itemSubtotal * (1 - safeGlobalFraction);
-    return isNaN(itemTotal) ? 0 : Math.max(0, Number(itemTotal.toFixed(3)));
-  }, [cart, discountPercentage, calculateItemSubtotal, selectedCustomer, customerTypes]);
+      if (customerTypeValue === "individual") {
+        if (globalPct > 0) {
+          return Number((gross * (1 - globalPct / 100)).toFixed(3));
+        }
+        return Number(gross.toFixed(3));
+      }
+
+      return Number(gross.toFixed(3));
+    },
+    [cart, discountPercentage, getLineGross, selectedCustomer, customerTypes],
+  );
 
   const getEffectiveLineDiscountPercent = useCallback(
     (item: CartItem, cartOverride?: CartItem[]) => {
@@ -836,6 +844,9 @@ export default function POSPage() {
 
   const updateItemDiscount = (productId: number, discountPercent: number) => {
     if (!isStoreCustomer) return
+    if (discountPercent > 0) {
+      setDiscountPercentage(0)
+    }
     updateCartItem(productId, (item, currentCart) => {
       const updatedItem = { ...item, discount_percent: discountPercent };
       const mergedCart = replaceCartItemForTotals(currentCart, updatedItem);
@@ -2282,9 +2293,9 @@ export default function POSPage() {
                                 <Select
                                   value={item.discount_percent.toString()}
                                   onValueChange={(value) => updateItemDiscount(item.product.id, Number(value))}
-                                  disabled={!isStoreCustomer}
+                                  disabled={!isStoreCustomer || discountPercentage > 0}
                                 >
-                                  <SelectTrigger className={cn("h-7 text-xs", !isStoreCustomer && "bg-muted cursor-not-allowed")}>
+                                  <SelectTrigger className={cn("h-7 text-xs", (!isStoreCustomer || discountPercentage > 0) && "bg-muted cursor-not-allowed")}>
                                     <SelectValue placeholder="0%" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -2355,13 +2366,20 @@ export default function POSPage() {
                         <Select
                           value={discountPercentage.toString()}
                           onValueChange={(value) => {
-                            setDiscountPercentage(Number(value))
+                            const pct = Number(value)
+                            setDiscountPercentage(pct)
+                            if (isStoreCustomer && pct > 0) {
+                              setCart((prev) =>
+                                prev.map((i) => ({ ...i, discount_percent: 0 })),
+                              )
+                            }
                             setTimeout(() => {
                               allocatePayInFullRef.current?.()
                             }, 0)
                           }}
+                          disabled={cartHasStoreItemDiscount}
                         >
-                          <SelectTrigger className="w-[100px] h-8">
+                          <SelectTrigger className={cn("w-[100px] h-8", cartHasStoreItemDiscount && "bg-muted cursor-not-allowed")}>
                             <SelectValue placeholder="0%" />
                           </SelectTrigger>
                           <SelectContent>
@@ -2989,7 +3007,7 @@ export default function POSPage() {
                 remaining_amount: totalUnpaidAmount,
                 notes: receiptData.notes || invoiceNotes,
                 created_at_formatted: receiptData.created_at_formatted || format(new Date(), "PPP"),
-                global_discount_percent: discountPercentage,
+                global_discount_percent: appliesGlobalDiscountPerLine ? 0 : discountPercentage,
                 tax_percent: taxPercentage,
                 // Pass POS-specific calculated values
                 subtotal,
