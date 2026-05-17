@@ -677,9 +677,21 @@ export default function POSPage() {
   // STORE — cash or outstanding: item discount only on that line; global discount same % on every line's
   //         post–item-discount subtotal (e.g. 50% global → each line × 0.5). Outstanding: lines default
   //         unpaid (paid 0); cash: lines default fully paid at line total. Partial only if user edits Paid amount.
-  // INDIVIDUAL — cash only in UI: no line item discount; same global % on each line. Full pay by default.
-  //         Partial only if user edits Paid amount.
+  // INDIVIDUAL — cash only: no line item discount; same global % on each line's list amount (e.g. 50% → $10→$5, $20→$10).
+  //         Invoice API stores discount on lines only (global_discount_percent: 0) to avoid double discount.
   // ---------------------------------------------------------------------------
+
+  const getLineGross = useCallback((item: CartItem) => {
+    const price = item.product.price || item.product.latest_price;
+    const priceValue = price ? parseFloat(price) : 0;
+    return priceValue * item.quantity;
+  }, []);
+
+  const appliesGlobalDiscountPerLine = useMemo(() => {
+    if (!discountPercentage || !selectedCustomer?.customer_type) return false;
+    const customerType = customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value;
+    return customerType === "store" || customerType === "individual";
+  }, [discountPercentage, selectedCustomer, customerTypes]);
 
   // Update the calculateItemTotal function to handle the new price format
   // Memoized with useCallback to prevent recreation on every render
@@ -717,6 +729,16 @@ export default function POSPage() {
     const itemTotal = itemSubtotal * (1 - safeGlobalFraction);
     return isNaN(itemTotal) ? 0 : Math.max(0, Number(itemTotal.toFixed(3)));
   }, [cart, discountPercentage, calculateItemSubtotal, selectedCustomer, customerTypes]);
+
+  const getEffectiveLineDiscountPercent = useCallback(
+    (item: CartItem, cartOverride?: CartItem[]) => {
+      const gross = getLineGross(item);
+      if (gross <= 1e-9) return 0;
+      const net = calculateItemTotal(item, cartOverride ?? cart);
+      return Math.max(0, Math.min(100, Number((100 * (1 - net / gross)).toFixed(3))));
+    },
+    [getLineGross, calculateItemTotal, cart],
+  );
 
   const getLinePaymentTargetTotal = useCallback(
     (item: CartItem, cartOverride?: CartItem[]) => calculateItemTotal(item, cartOverride ?? cart),
@@ -1243,7 +1265,7 @@ export default function POSPage() {
         payment_method_id: selectedPaymentMethod,
         is_returnable: true,
         notes: invoiceNotes,
-        global_discount_percent: discountPercentage,
+        global_discount_percent: appliesGlobalDiscountPerLine ? 0 : discountPercentage,
         tax_percent: taxPercentage,
         total_amount: roundedTotal, // Grand total after global discount and tax
         total_paid: finalPaidAmount, // Sum of individual item paid amounts (from memoized totalPaidAmount)
@@ -1285,8 +1307,7 @@ export default function POSPage() {
         const gross = unitPrice * item.quantity;
         let effectiveDiscountPercent = item.discount_percent;
         if (gross > 1e-9) {
-          effectiveDiscountPercent = 100 * (1 - itemTotal / gross);
-          effectiveDiscountPercent = Math.max(0, Math.min(100, Number(effectiveDiscountPercent.toFixed(3))));
+          effectiveDiscountPercent = getEffectiveLineDiscountPercent(item, cart);
         }
         
         const itemData = {
@@ -2958,15 +2979,13 @@ export default function POSPage() {
                     const price = item.product.price || item.product.latest_price;
                     return price ? parseFloat(price) : 0;
                   })(),
-                  discount_percent: item.discount_percent,
+                  discount_percent: getEffectiveLineDiscountPercent(item),
                   total_price: calculateItemTotal(item),
                   paid_amount: item.paid_amount,
                   is_paid: item.is_paid,
                 })),
                 total_amount: total,
-                // For individual customers with discount: show discounted total as paid amount on receipt
-                // (items have full price paid_amount, but customer actually pays the discounted total)
-                total_paid: isIndividualCustomer && discountPercentage > 0 ? total : totalPaidAmount,
+                total_paid: totalPaidAmount,
                 remaining_amount: totalUnpaidAmount,
                 notes: receiptData.notes || invoiceNotes,
                 created_at_formatted: receiptData.created_at_formatted || format(new Date(), "PPP"),
