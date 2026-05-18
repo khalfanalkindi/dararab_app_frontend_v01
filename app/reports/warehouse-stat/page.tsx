@@ -12,13 +12,20 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { FileText, DollarSign, BookOpen, TrendingUp, Percent, Receipt, BarChart3 } from "lucide-react"
+import { DollarSign, BookOpen, TrendingUp, Percent, Download, FileSpreadsheet, FileText } from "lucide-react"
+import { format } from "date-fns"
+import jsPDF from "jspdf"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ResponsiveContainer } from "recharts"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
-import { addDays } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { API_URL } from "@/lib/config"
 import { toast } from "@/hooks/use-toast"
 
@@ -40,11 +47,22 @@ interface Warehouse {
   name_ar: string
 }
 
+interface ExportMeta {
+  warehouseName: string
+  startDate: string
+  endDate: string
+}
+
+function formatDateParam(date: Date): string {
+  return format(date, "yyyy-MM-dd")
+}
+
 export default function WarehouseStats() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<DateRange | null>(null)
   const [stats, setStats] = useState<WarehouseStats | null>(null)
+  const [exportMeta, setExportMeta] = useState<ExportMeta | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
 
@@ -198,10 +216,112 @@ export default function WarehouseStats() {
     }
   }, [fetchWarehouses])
 
+  const exportToCsv = useCallback(() => {
+    if (!stats || !exportMeta) return
+
+    const periodLabel =
+      exportMeta.startDate === exportMeta.endDate
+        ? exportMeta.startDate
+        : `${exportMeta.startDate} to ${exportMeta.endDate}`
+
+    const escape = (value: string | number) =>
+      `"${String(value).replace(/"/g, '""')}"`
+
+    const rows: (string | number)[][] = [
+      ["Warehouse Statistics Report"],
+      ["Warehouse", exportMeta.warehouseName],
+      ["Period", periodLabel],
+      [],
+      ["Metric", "Value"],
+      ["Total Income (with Discount) ($)", stats.totalIncome],
+      ["Total Income Without Discount ($)", stats.totalIncomeWithoutDiscount],
+      ["Total Books Sold", stats.totalBooksSold],
+      ["Total Bills", stats.totalBills],
+      ["Bills with Discount", stats.billsWithDiscount],
+      ["Average Discount (%)", stats.averageDiscount],
+      [],
+      ["Popular Books", "Quantity Sold"],
+      ...stats.popularBooks.map((b) => [b.title, b.quantity]),
+      [],
+      ["Top Categories", "Quantity Sold"],
+      ...stats.topCategories.map((c) => [c.category, c.quantity]),
+      [],
+      ["Daily Sales", "Units", "Revenue ($)"],
+      ...stats.dailySales.map((d) => [d.date, d.sales, d.revenue]),
+    ]
+
+    const csv = rows.map((row) => row.map(escape).join(",")).join("\n")
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `warehouse-stats-${exportMeta.startDate}${exportMeta.endDate !== exportMeta.startDate ? `_to_${exportMeta.endDate}` : ""}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }, [stats, exportMeta])
+
+  const exportToPdf = useCallback(() => {
+    if (!stats || !exportMeta) return
+
+    const periodLabel =
+      exportMeta.startDate === exportMeta.endDate
+        ? exportMeta.startDate
+        : `${exportMeta.startDate} to ${exportMeta.endDate}`
+
+    const doc = new jsPDF()
+    let y = 14
+    const line = (text: string, size = 10) => {
+      doc.setFontSize(size)
+      const lines = doc.splitTextToSize(text, 180)
+      doc.text(lines, 14, y)
+      y += lines.length * (size * 0.45) + 2
+    }
+
+    line("Warehouse Statistics Report", 14)
+    line(`Warehouse: ${exportMeta.warehouseName}`)
+    line(`Period: ${periodLabel}`)
+    y += 4
+    line("Summary", 12)
+    line(`Total Income (with Discount): $${stats.totalIncome.toLocaleString()}`)
+    line(`Total Income Without Discount: $${stats.totalIncomeWithoutDiscount.toLocaleString()}`)
+    line(`Total Books Sold: ${stats.totalBooksSold.toLocaleString()}`)
+    line(`Total Bills: ${stats.totalBills}`)
+    line(`Bills with Discount: ${stats.billsWithDiscount}`)
+    line(`Average Discount: ${stats.averageDiscount}%`)
+
+    if (stats.popularBooks.length > 0) {
+      y += 4
+      line("Popular Books", 12)
+      stats.popularBooks.forEach((b) => line(`  ${b.title}: ${b.quantity}`))
+    }
+
+    if (stats.topCategories.length > 0) {
+      y += 4
+      line("Top Categories", 12)
+      stats.topCategories.forEach((c) => line(`  ${c.category}: ${c.quantity}`))
+    }
+
+    if (stats.dailySales.length > 0) {
+      y += 4
+      line("Daily Sales", 12)
+      stats.dailySales.forEach((d) =>
+        line(`  ${d.date}: ${d.sales} units, $${Number(d.revenue).toLocaleString()}`)
+      )
+    }
+
+    doc.save(
+      `warehouse-stats-${exportMeta.startDate}${exportMeta.endDate !== exportMeta.startDate ? `_to_${exportMeta.endDate}` : ""}.pdf`
+    )
+  }, [stats, exportMeta])
+
   // Fetch stats only after user clicks button
   const fetchStats = useCallback(async () => {
-    if (!selectedWarehouse || !dateRange?.from || !dateRange?.to) return
-    
+    if (!selectedWarehouse || !dateRange?.from) return
+
+    const endDate = dateRange.to ?? dateRange.from
+    const startDateStr = formatDateParam(dateRange.from)
+    const endDateStr = formatDateParam(endDate)
+
     // Cancel previous request if still pending
     if (statsAbortControllerRef.current) {
       statsAbortControllerRef.current.abort()
@@ -213,10 +333,13 @@ export default function WarehouseStats() {
     
     setIsLoading(true)
     setHasSearched(true)
+    setExportMeta(null)
     try {
-      const params = new URLSearchParams({ warehouse_id: selectedWarehouse })
-      if (dateRange.from) params.set('start_date', dateRange.from.toISOString().slice(0, 10))
-      if (dateRange.to) params.set('end_date', dateRange.to.toISOString().slice(0, 10))
+      const params = new URLSearchParams({
+        warehouse_id: selectedWarehouse,
+        start_date: startDateStr,
+        end_date: endDateStr,
+      })
       
       const res = await fetchWithRetry(`${API_URL}/sales/warehouse-dashboard/?${params}`, { 
         headers,
@@ -228,6 +351,10 @@ export default function WarehouseStats() {
       }
       
       const data = await res.json()
+      const warehouseName =
+        warehouses.find((w) => w.id.toString() === selectedWarehouse)?.name_en ??
+        selectedWarehouse
+
       setStats({
         totalIncome: data.total_income,
         totalIncomeWithoutDiscount: data.total_income_without_discount,
@@ -235,15 +362,20 @@ export default function WarehouseStats() {
         billsWithDiscount: data.bills_with_discount,
         totalBills: data.total_bills,
         averageDiscount: data.average_discount,
-        popularBooks: data.popular_books.map((b: any) => ({
+        popularBooks: data.popular_books.map((b: { product__title_ar: string; total: number }) => ({
           title: b.product__title_ar,
           quantity: b.total,
         })),
-        topCategories: data.top_categories.map((c: any) => ({
+        topCategories: data.top_categories.map((c: { product__genre__display_name_en: string; total: number }) => ({
           category: c.product__genre__display_name_en,
           quantity: c.total,
         })),
         dailySales: data.daily_sales,
+      })
+      setExportMeta({
+        warehouseName,
+        startDate: startDateStr,
+        endDate: endDateStr,
       })
     } catch (error) {
       // Handle AbortError silently
@@ -253,6 +385,7 @@ export default function WarehouseStats() {
       
       handleError(error, "Failed to fetch warehouse statistics")
       setStats(null)
+      setExportMeta(null)
       toast({
         title: "Error",
         description: "Failed to load warehouse statistics. Please try again.",
@@ -261,7 +394,7 @@ export default function WarehouseStats() {
     } finally {
       setIsLoading(false)
     }
-  }, [selectedWarehouse, dateRange, headers, fetchWithRetry, handleError])
+  }, [selectedWarehouse, dateRange, warehouses, headers, fetchWithRetry, handleError])
 
   // Cleanup: Cancel all pending requests on component unmount
   useEffect(() => {
@@ -312,10 +445,28 @@ export default function WarehouseStats() {
                 <DatePickerWithRange date={dateRange ?? {from: undefined, to: undefined}} onDateChange={range => setDateRange(range ?? null)} />
                 <Button
                   onClick={fetchStats}
-                  disabled={!selectedWarehouse || !dateRange?.from || !dateRange?.to || isLoading}
+                  disabled={!selectedWarehouse || !dateRange?.from || isLoading}
                 >
                   {isLoading ? 'Loading...' : 'Show Statistics'}
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" disabled={!stats || isLoading}>
+                      <Download className="mr-2 h-4 w-4" />
+                      Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={exportToCsv}>
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                      Download Excel (CSV)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={exportToPdf}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Download PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
             {/* Only show stats if user has searched and stats are available */}
@@ -329,7 +480,7 @@ export default function WarehouseStats() {
                       <DollarSign className="h-4 w-4 text-green-500" />
                     </CardHeader>
                     <CardContent>
-                      <div className="text-2xl font-bold">{stats?.totalIncome?.toLocaleString() ?? 0} OMR</div>
+                      <div className="text-2xl font-bold">{stats?.totalIncome?.toLocaleString() ?? 0} $</div>
                       <p className="text-xs text-muted-foreground">
                         {stats && stats.totalIncomeWithoutDiscount > 0 ? ((stats.totalIncome / stats.totalIncomeWithoutDiscount) * 100).toFixed(1) : 0}% of original
                       </p>
@@ -342,7 +493,7 @@ export default function WarehouseStats() {
                       <DollarSign className="h-4 w-4 text-gray-500" />
                     </CardHeader>
                     <CardContent>
-                      <div className="text-2xl font-bold">{stats?.totalIncomeWithoutDiscount?.toLocaleString() ?? 0} OMR</div>
+                      <div className="text-2xl font-bold">{stats?.totalIncomeWithoutDiscount?.toLocaleString() ?? 0} $</div>
                     </CardContent>
                   </Card>
                   {/* Total Books Sold */}
@@ -481,7 +632,7 @@ export default function WarehouseStats() {
             )}
             {/* Show nothing if not searched yet */}
             {!hasSearched && (
-              <div className="text-center text-muted-foreground py-12">Please select a warehouse and date range, then click "Show Statistics".</div>
+              <div className="text-center text-muted-foreground py-12">Please select a warehouse and a date (or range), then click &quot;Show Statistics&quot;.</div>
             )}
           </div>
         </div>
