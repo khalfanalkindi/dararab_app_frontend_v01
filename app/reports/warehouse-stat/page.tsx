@@ -21,6 +21,15 @@ import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -39,6 +48,7 @@ interface WarehouseStats {
   popularBooks: Array<{ title: string, quantity: number }>
   topCategories: Array<{ category: string, quantity: number }>
   dailySales: Array<{ date: string, sales: number, revenue: number }>
+  paidBooks: Array<{ title: string, quantity: number, totalPaid: number }>
 }
 
 interface Warehouse {
@@ -314,6 +324,98 @@ export default function WarehouseStats() {
     )
   }, [stats, exportMeta])
 
+  const paidBooksTotals = useMemo(() => {
+    if (!stats?.paidBooks.length) return { quantity: 0, totalPaid: 0 }
+    return stats.paidBooks.reduce(
+      (acc, row) => ({
+        quantity: acc.quantity + row.quantity,
+        totalPaid: acc.totalPaid + row.totalPaid,
+      }),
+      { quantity: 0, totalPaid: 0 }
+    )
+  }, [stats?.paidBooks])
+
+  const downloadFile = useCallback((filename: string, content: string, mime: string) => {
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+  }, [])
+
+  const exportPaidBooksCsv = useCallback(() => {
+    if (!stats?.paidBooks.length || !exportMeta) return
+
+    const periodLabel =
+      exportMeta.startDate === exportMeta.endDate
+        ? exportMeta.startDate
+        : `${exportMeta.startDate} to ${exportMeta.endDate}`
+
+    const escape = (value: string | number) =>
+      `"${String(value).replace(/"/g, '""')}"`
+
+    const rows: (string | number)[][] = [
+      ["Paid Books Report"],
+      ["Warehouse", exportMeta.warehouseName],
+      ["Period", periodLabel],
+      [],
+      ["Book Title", "Quantity", "Total Paid ($)"],
+      ...stats.paidBooks.map((b) => [b.title, b.quantity, b.totalPaid]),
+      [],
+      ["Total", paidBooksTotals.quantity, paidBooksTotals.totalPaid],
+    ]
+
+    const csv = rows.map((row) => row.map(escape).join(",")).join("\n")
+    const suffix =
+      exportMeta.endDate !== exportMeta.startDate
+        ? `_to_${exportMeta.endDate}`
+        : ""
+    downloadFile(`warehouse-paid-books-${exportMeta.startDate}${suffix}.csv`, "\uFEFF" + csv, "text/csv;charset=utf-8;")
+  }, [stats, exportMeta, paidBooksTotals, downloadFile])
+
+  const exportPaidBooksPdf = useCallback(() => {
+    if (!stats?.paidBooks.length || !exportMeta) return
+
+    const periodLabel =
+      exportMeta.startDate === exportMeta.endDate
+        ? exportMeta.startDate
+        : `${exportMeta.startDate} to ${exportMeta.endDate}`
+
+    const doc = new jsPDF()
+    let y = 14
+    const line = (text: string, size = 10) => {
+      doc.setFontSize(size)
+      const lines = doc.splitTextToSize(text, 180)
+      doc.text(lines, 14, y)
+      y += lines.length * (size * 0.45) + 2
+      if (y > 270) {
+        doc.addPage()
+        y = 14
+      }
+    }
+
+    line("Paid Books Report", 14)
+    line(`Warehouse: ${exportMeta.warehouseName}`)
+    line(`Period: ${periodLabel}`)
+    y += 4
+    line("Book Title | Qty | Total Paid ($)", 11)
+    stats.paidBooks.forEach((b) => {
+      line(`${b.title} | ${b.quantity} | $${Number(b.totalPaid).toLocaleString()}`)
+    })
+    y += 2
+    line(
+      `Total: ${paidBooksTotals.quantity} units, $${paidBooksTotals.totalPaid.toLocaleString()}`
+    )
+
+    const suffix =
+      exportMeta.endDate !== exportMeta.startDate
+        ? `_to_${exportMeta.endDate}`
+        : ""
+    doc.save(`warehouse-paid-books-${exportMeta.startDate}${suffix}.pdf`)
+  }, [stats, exportMeta, paidBooksTotals])
+
   // Fetch stats only after user clicks button
   const fetchStats = useCallback(async () => {
     if (!selectedWarehouse || !dateRange?.from) return
@@ -371,6 +473,13 @@ export default function WarehouseStats() {
           quantity: c.total,
         })),
         dailySales: data.daily_sales,
+        paidBooks: (data.paid_books ?? []).map(
+          (b: { product__title_ar: string; quantity: number; total_paid: number }) => ({
+            title: b.product__title_ar ?? "Unknown",
+            quantity: b.quantity ?? 0,
+            totalPaid: Number(b.total_paid ?? 0),
+          })
+        ),
       })
       setExportMeta({
         warehouseName,
@@ -628,6 +737,84 @@ export default function WarehouseStats() {
                     </CardContent>
                   </Card>
                 </div>
+
+                <Card className="mt-8">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                    <div>
+                      <CardTitle>Paid Books</CardTitle>
+                      <CardDescription>
+                        Books with payment in this period (per title: quantity and total paid amount)
+                      </CardDescription>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={!stats.paidBooks.length}
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          Export Paid Books
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={exportPaidBooksCsv}>
+                          <FileSpreadsheet className="mr-2 h-4 w-4" />
+                          Download Excel (CSV)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={exportPaidBooksPdf}>
+                          <FileText className="mr-2 h-4 w-4" />
+                          Download PDF
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </CardHeader>
+                  <CardContent>
+                    {stats.paidBooks.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[50%]">Book Title</TableHead>
+                            <TableHead className="text-right">Quantity</TableHead>
+                            <TableHead className="text-right">Total Paid ($)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {stats.paidBooks.map((book, index) => (
+                            <TableRow key={`${book.title}-${index}`}>
+                              <TableCell className="font-medium">{book.title}</TableCell>
+                              <TableCell className="text-right">{book.quantity.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">
+                                {book.totalPaid.toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 3,
+                                })}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                        <TableFooter>
+                          <TableRow>
+                            <TableCell className="font-semibold">Total</TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {paidBooksTotals.quantity.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {paidBooksTotals.totalPaid.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 3,
+                              })}
+                            </TableCell>
+                          </TableRow>
+                        </TableFooter>
+                      </Table>
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-6 text-center">
+                        No paid books in this period.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
               </>
             )}
             {/* Show nothing if not searched yet */}
