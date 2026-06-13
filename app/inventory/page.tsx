@@ -469,6 +469,47 @@ export default function InventoryManagementPage() {
     }
   }
 
+  const fetchAllPaginated = async (
+    initialUrl: string,
+    headers: Record<string, string>,
+    signal?: AbortSignal
+  ): Promise<any[]> => {
+    const ensureJson = async (res: Response) => {
+      const ct = res.headers.get("content-type") || ""
+      if (!ct.includes("application/json")) {
+        const text = await res.text()
+        throw new Error(`Lookup request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
+      }
+      return res.json()
+    }
+    const normalizeList = (payload: any) => {
+      if (!payload) return []
+      if (Array.isArray(payload)) return payload
+      if (Array.isArray(payload.results)) return payload.results
+      if (Array.isArray(payload.data)) return payload.data
+      if (Array.isArray(payload.items)) return payload.items
+      return []
+    }
+
+    const allItems: any[] = []
+    let nextUrl: string | null = initialUrl
+
+    while (nextUrl) {
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError")
+      }
+      const res = await fetchWithRetry(nextUrl, {
+        headers,
+        signal: signal || abortControllerRef.current?.signal,
+      })
+      const data = await ensureJson(res)
+      allItems.push(...normalizeList(data))
+      nextUrl = typeof data?.next === "string" && data.next ? data.next : null
+    }
+
+    return allItems
+  }
+
   const fetchLookups = async (signal?: AbortSignal, forceRefresh: boolean = false) => {
     try {
       // Check cache first (unless force refresh)
@@ -521,30 +562,11 @@ export default function InventoryManagementPage() {
         Authorization: `Bearer ${token}`,
       }
       
-      // Fetch fresh data from API - back to original page_size for compatibility
-      const [pRes, wRes] = await Promise.all([
-        fetchWithRetry(`${API_URL}/inventory/products/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
-        fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
+      // Fetch all pages so every product/warehouse appears in dropdowns
+      const [pList, wList] = await Promise.all([
+        fetchAllPaginated(`${API_URL}/inventory/products/?page_size=1000`, headers, signal),
+        fetchAllPaginated(`${API_URL}/inventory/warehouses/?page_size=1000`, headers, signal),
       ])
-      const ensureJson = async (res: Response) => {
-        const ct = res.headers.get("content-type") || ""
-        if (!ct.includes("application/json")) {
-          const text = await res.text()
-          throw new Error(`Lookup request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
-        }
-        return res.json()
-      }
-      const [pData, wData] = await Promise.all([ensureJson(pRes), ensureJson(wRes)])
-      const normalizeList = (payload: any) => {
-        if (!payload) return []
-        if (Array.isArray(payload)) return payload
-        if (Array.isArray(payload.results)) return payload.results
-        if (Array.isArray(payload.data)) return payload.data
-        if (Array.isArray(payload.items)) return payload.items
-        return []
-      }
-      const pList = normalizeList(pData)
-      const wList = normalizeList(wData)
       
       // Update state
       setProducts(pList)
@@ -570,8 +592,8 @@ export default function InventoryManagementPage() {
       
       // Debug in dev only
       if (process.env.NODE_ENV !== "production") {
-        console.info("Products fetched:", pList.length, Array.isArray(pData?.results) ? "results" : Array.isArray(pData) ? "array" : Object.keys(pData || {}))
-        console.info("Warehouses fetched:", wList.length, Array.isArray(wData?.results) ? "results" : Array.isArray(wData) ? "array" : Object.keys(wData || {}))
+        console.info("Products fetched:", pList.length)
+        console.info("Warehouses fetched:", wList.length)
       }
     } catch (e) {
       // Ignore abort errors
@@ -1563,11 +1585,10 @@ export default function InventoryManagementPage() {
       item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
     )
 
-    const selectedItems = items.filter((item) => selectedIds.includes(item.id))
-
   return (
       <div className="space-y-2">
         <Popover
+          modal={false}
           open={open}
           onOpenChange={(next) => {
             setOpen(next)
@@ -1586,25 +1607,24 @@ export default function InventoryManagementPage() {
             </Button>
           </PopoverTrigger>
           <PopoverContent 
-            className="p-0 w-[400px] max-h-[400px] flex flex-col overflow-hidden"
+            className="p-0 w-[400px] z-[60]"
             onOpenAutoFocus={(e) => e.preventDefault()}
-            onEscapeKeyDown={(e) => {
-              // Allow closing with Escape key
+            onEscapeKeyDown={() => {
               setOpen(false)
             }}
           >
-            <Command shouldFilter={false} className="flex flex-col h-full">
-              <div className="flex-shrink-0 border-b">
-                <CommandInput
-                  placeholder="Search products..."
-                  value={searchQuery}
-                  onValueChange={setSearchQuery}
-                />
-              </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <CommandList className="h-full overflow-y-auto overflow-x-hidden">
-                  <CommandEmpty>No products found.</CommandEmpty>
-                  <CommandGroup>
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Search products..."
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+              />
+              <CommandList
+                className="max-h-[300px] overflow-y-auto overscroll-contain"
+                onWheel={(e) => e.stopPropagation()}
+              >
+                <CommandEmpty>No products found.</CommandEmpty>
+                <CommandGroup className="overflow-visible">
                   {filteredItems.map((item) => {
                     const isSelected = selectedIds.includes(item.id)
                     return (
@@ -1642,9 +1662,8 @@ export default function InventoryManagementPage() {
                       </CommandItem>
                     )
                   })}
-                  </CommandGroup>
-                </CommandList>
-              </div>
+                </CommandGroup>
+              </CommandList>
             </Command>
           </PopoverContent>
         </Popover>
@@ -1738,7 +1757,7 @@ export default function InventoryManagementPage() {
                         onSelectionChange={setSelectedProducts}
                         items={productOptions}
                         placeholder="Select products..."
-                        onOpen={() => { if (!products.length) void fetchLookups() }}
+                        onOpen={() => void fetchLookups()}
                       />
                       {selectedProducts.length > 0 && (
                         <p className="text-xs text-muted-foreground">
