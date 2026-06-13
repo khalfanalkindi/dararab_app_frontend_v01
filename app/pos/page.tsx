@@ -690,6 +690,12 @@ export default function POSPage() {
     return priceValue * item.quantity;
   }, []);
 
+  const getLineGrossOmr = useCallback((item: CartItem) => {
+    const price = item.product.price_omr || item.product.latest_price_omr;
+    const priceValue = price ? parseFloat(price) : 0;
+    return priceValue * item.quantity;
+  }, []);
+
   const appliesGlobalDiscountPerLine = useMemo(() => {
     if (!discountPercentage || !selectedCustomer?.customer_type) return false;
     const customerType = customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value;
@@ -701,6 +707,11 @@ export default function POSPage() {
   const calculateItemSubtotal = useCallback(
     (item: CartItem) => getLineGross(item),
     [getLineGross],
+  );
+
+  const calculateItemDisplaySubtotal = useCallback(
+    (item: CartItem) => getLineGrossOmr(item),
+    [getLineGrossOmr],
   );
 
   const calculateItemTotal = useCallback(
@@ -738,6 +749,41 @@ export default function POSPage() {
     [cart, discountPercentage, getLineGross, selectedCustomer, customerTypes],
   );
 
+  const calculateItemDisplayTotal = useCallback(
+    (item: CartItem, currentCart?: CartItem[]) => {
+      const gross = getLineGrossOmr(item);
+      const cartToUse = currentCart ?? cart;
+
+      const customerTypeValue = selectedCustomer?.customer_type
+        ? customerTypes.find((ct) => ct.id === selectedCustomer.customer_type)?.value
+        : null;
+
+      const globalPct = Math.max(0, Math.min(100, discountPercentage || 0));
+
+      if (customerTypeValue === "store") {
+        const hasItemDiscount = cartToUse.some((i) => i.discount_percent > 0);
+        if (hasItemDiscount) {
+          const lineDisc = Math.max(0, Math.min(100, item.discount_percent)) / 100;
+          return Number((gross * (1 - lineDisc)).toFixed(3));
+        }
+        if (globalPct > 0) {
+          return Number((gross * (1 - globalPct / 100)).toFixed(3));
+        }
+        return Number(gross.toFixed(3));
+      }
+
+      if (customerTypeValue === "individual") {
+        if (globalPct > 0) {
+          return Number((gross * (1 - globalPct / 100)).toFixed(3));
+        }
+        return Number(gross.toFixed(3));
+      }
+
+      return Number(gross.toFixed(3));
+    },
+    [cart, discountPercentage, getLineGrossOmr, selectedCustomer, customerTypes],
+  );
+
   const getEffectiveLineDiscountPercent = useCallback(
     (item: CartItem, cartOverride?: CartItem[]) => {
       const gross = getLineGross(item);
@@ -768,6 +814,13 @@ export default function POSPage() {
     hasPartialPayment,
   } = useCartCalculations(cart, discountPercentage, taxPercentage, calculateItemTotal, calculateItemSubtotal);
 
+  const displayCartCalcs = useCartCalculations(
+    cart,
+    discountPercentage,
+    taxPercentage,
+    calculateItemDisplayTotal,
+    calculateItemDisplaySubtotal,
+  );
 
   // Helper function to update a cart item, reducing repetition
   // FIXED: Passes current cart to updater to avoid stale closures
@@ -912,6 +965,77 @@ export default function POSPage() {
   const getCurrencyLabel = useCallback((): string => {
     return isMuscatWarehouse ? 'OMR' : '$';
   }, [isMuscatWarehouse]);
+
+  /** Convert a USD line amount to OMR for on-screen display (Muscat only). */
+  const usdToDisplayForLine = useCallback(
+    (usdAmount: number, item: CartItem) => {
+      if (!isMuscatWarehouse) return usdAmount;
+      const usdTotal = calculateItemTotal(item);
+      const displayTotal = calculateItemDisplayTotal(item);
+      if (usdTotal <= 1e-9) return 0;
+      return Number(((usdAmount / usdTotal) * displayTotal).toFixed(3));
+    },
+    [isMuscatWarehouse, calculateItemTotal, calculateItemDisplayTotal],
+  );
+
+  /** Convert an on-screen OMR amount back to USD for storage/API (Muscat only). */
+  const displayToUsdForLine = useCallback(
+    (displayAmount: number, item: CartItem) => {
+      if (!isMuscatWarehouse) return displayAmount;
+      const usdTotal = calculateItemTotal(item);
+      const displayTotal = calculateItemDisplayTotal(item);
+      if (displayTotal <= 1e-9) return 0;
+      return Number(((displayAmount / displayTotal) * usdTotal).toFixed(3));
+    },
+    [isMuscatWarehouse, calculateItemTotal, calculateItemDisplayTotal],
+  );
+
+  const getLineTotalForDisplay = useCallback(
+    (item: CartItem) =>
+      isMuscatWarehouse ? calculateItemDisplayTotal(item) : calculateItemTotal(item),
+    [isMuscatWarehouse, calculateItemDisplayTotal, calculateItemTotal],
+  );
+
+  const uiSubtotal = isMuscatWarehouse ? displayCartCalcs.subtotal : subtotal;
+  const uiGlobalDiscountAmount = isMuscatWarehouse ? displayCartCalcs.globalDiscountAmount : globalDiscountAmount;
+  const uiTax = isMuscatWarehouse ? displayCartCalcs.tax : tax;
+  const uiTotal = isMuscatWarehouse ? displayCartCalcs.total : total;
+  const uiTotalPaidAmount = useMemo(() => {
+    if (!isMuscatWarehouse) return totalPaidAmount;
+    return Number(
+      cart.reduce((sum, item) => sum + usdToDisplayForLine(item.paid_amount, item), 0).toFixed(3),
+    );
+  }, [isMuscatWarehouse, cart, totalPaidAmount, usdToDisplayForLine]);
+  const uiTotalUnpaidAmount = useMemo(() => {
+    if (!isMuscatWarehouse) return totalUnpaidAmount;
+    return Number(Math.max(0, uiTotal - uiTotalPaidAmount).toFixed(3));
+  }, [isMuscatWarehouse, totalUnpaidAmount, uiTotal, uiTotalPaidAmount]);
+
+  const uiTodaySales = useMemo(() => {
+    if (!isMuscatWarehouse || todaySales <= 0) return todaySales;
+    const rateProduct =
+      cart.find((item) => {
+        const usd = parseFloat(item.product.price || item.product.latest_price || "0");
+        const omr = parseFloat(item.product.price_omr || item.product.latest_price_omr || "0");
+        return usd > 0 && omr > 0;
+      })?.product ||
+      products.find((product) => {
+        const usd = parseFloat(product.price || product.latest_price || "0");
+        const omr = parseFloat(product.price_omr || product.latest_price_omr || "0");
+        return usd > 0 && omr > 0;
+      });
+    if (rateProduct) {
+      const usd = parseFloat(rateProduct.price || rateProduct.latest_price || "0");
+      const omr = parseFloat(rateProduct.price_omr || rateProduct.latest_price_omr || "0");
+      if (usd > 0) return Number((todaySales * (omr / usd)).toFixed(3));
+    }
+    return todaySales;
+  }, [isMuscatWarehouse, todaySales, cart, products]);
+
+  const formatMoney = useCallback(
+    (amount: number) => `${amount.toFixed(3)} ${getCurrencyLabel()}`,
+    [getCurrencyLabel],
+  );
 
   // Allocate payments for cash transactions - items should be fully paid at their individual totals
   // Check if selected customer is Individual type (using value "individual" instead of ID)
@@ -1499,11 +1623,15 @@ export default function POSPage() {
       createdPaymentId = payment.id
 
       const remainingAmount = roundedTotal - finalPaidAmount;
+      const displayRemaining =
+        isMuscatWarehouse && roundedTotal > 0
+          ? Number(((remainingAmount / roundedTotal) * displayCartCalcs.total).toFixed(3))
+          : remainingAmount;
       toast({
         title: "Success",
         description: Math.abs(remainingAmount) < 0.001
           ? "Sale completed successfully - Fully Paid" 
-          : `Sale completed successfully - ${remainingAmount.toFixed(3)} ${getCurrencyLabel()} remaining`,
+          : `Sale completed successfully - ${displayRemaining.toFixed(3)} ${getCurrencyLabel()} remaining`,
       })
 
       // Fetch invoice summary for receipt
@@ -2212,12 +2340,13 @@ export default function POSPage() {
                       ) : (
                         cart.map((item) => {
                           const lineTotal = calculateItemTotal(item);
-                          const remainingAmount = Math.max(0, lineTotal - item.paid_amount);
-                          const paidAmount = item.paid_amount;
-                          const difference = Math.abs(paidAmount - lineTotal);
+                          const lineTotalDisplay = getLineTotalForDisplay(item);
+                          const paidAmountDisplay = usdToDisplayForLine(item.paid_amount, item);
+                          const remainingAmountDisplay = Math.max(0, lineTotalDisplay - paidAmountDisplay);
+                          const difference = Math.abs(item.paid_amount - lineTotal);
                           // Use tolerance check to handle floating point precision
-                          const isFullyPaid = difference < 0.001 || paidAmount >= lineTotal;
-                          const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
+                          const isFullyPaid = difference < 0.001 || item.paid_amount >= lineTotal;
+                          const isPartiallyPaid = item.paid_amount > 0.001 && !isFullyPaid;
                           
                           return (
                             <div key={item.product.id} className={`space-y-2 p-3 rounded-lg border relative ${
@@ -2316,7 +2445,7 @@ export default function POSPage() {
                                   </SelectContent>
                                 </Select>
                                 <span className="text-xs ml-auto">
-                                  Total: {lineTotal.toFixed(3)} {getCurrencyLabel()}
+                                  Total: {formatMoney(lineTotalDisplay)}
                                 </span>
                               </div>
 
@@ -2327,14 +2456,21 @@ export default function POSPage() {
                                     type="number"
                                     step="0.001"
                                     min="0"
-                                    max={lineTotal}
-                                    value={item.paid_amount}
-                                    onChange={(e) => updateItemPaidAmount(item.product.id, parseFloat(e.target.value) || 0)}
+                                    max={lineTotalDisplay}
+                                    value={paidAmountDisplay}
+                                    onChange={(e) =>
+                                      updateItemPaidAmount(
+                                        item.product.id,
+                                        displayToUsdForLine(parseFloat(e.target.value) || 0, item),
+                                      )
+                                    }
                                     className="h-7 text-xs w-24"
                                     placeholder="0.000"
                                   />
                                   <span className="text-xs text-muted-foreground">
-                                    {remainingAmount > 0 ? `Remaining: ${remainingAmount.toFixed(3)} ${getCurrencyLabel()}` : "Fully Paid"}
+                                    {remainingAmountDisplay > 0
+                                      ? `Remaining: ${formatMoney(remainingAmountDisplay)}`
+                                      : "Fully Paid"}
                                   </span>
                                 </div>
                               )}
@@ -2357,7 +2493,7 @@ export default function POSPage() {
                   <div className="space-y-2 bg-muted p-4 rounded-lg">
                     <div className="flex justify-between">
                       <span>Subtotal</span>
-                      <span>{subtotal.toFixed(3)} {getCurrencyLabel()}</span>
+                      <span>{formatMoney(uiSubtotal)}</span>
                     </div>
 
                     <div className="flex justify-between items-center">
@@ -2400,7 +2536,7 @@ export default function POSPage() {
                           </SelectContent>
                         </Select>
                         <span className="min-w-[60px] text-right">
-                          {globalDiscountAmount > 0 ? `-${globalDiscountAmount.toFixed(3)}` : "0.000"} {getCurrencyLabel()}
+                          {uiGlobalDiscountAmount > 0 ? `-${uiGlobalDiscountAmount.toFixed(3)}` : "0.000"} {getCurrencyLabel()}
                         </span>
                       </div>
                     </div>
@@ -2423,14 +2559,14 @@ export default function POSPage() {
                             <SelectItem value="15">15%</SelectItem>
                           </SelectContent>
                         </Select>
-                        <span className="min-w-[60px] text-right">{tax.toFixed(3)} {getCurrencyLabel()}</span>
+                        <span className="min-w-[60px] text-right">{formatMoney(uiTax)}</span>
                       </div>
                     </div>
 
                     <Separator />
                     <div className="flex justify-between font-bold text-lg">
                       <span>Total</span>
-                      <span>{total.toFixed(3)} {getCurrencyLabel()}</span>
+                      <span>{formatMoney(uiTotal)}</span>
                     </div>
 
                     {/* Payment Summary Section */}
@@ -2449,7 +2585,7 @@ export default function POSPage() {
                                 Paid Items ({paidItems.length})
                               </span>
                               <span className="text-green-600 font-medium">
-                                {total.toFixed(3)} {getCurrencyLabel()}
+                                {formatMoney(uiTotalPaidAmount)}
                               </span>
                             </div>
                           )}
@@ -2461,7 +2597,7 @@ export default function POSPage() {
                                 Unpaid Items ({unpaidItems.length})
                               </span>
                               <span className="text-red-600 font-medium">
-                                {totalUnpaidAmount.toFixed(3)} {getCurrencyLabel()}
+                                {formatMoney(uiTotalUnpaidAmount)}
                               </span>
                             </div>
                           )}
@@ -2489,8 +2625,8 @@ export default function POSPage() {
                     <Separator />
                     <div className="flex justify-between font-bold text-lg">
                       <span>Amount Due</span>
-                      <span className={totalUnpaidAmount > 0 ? "text-red-600" : "text-green-600"}>
-                        {totalUnpaidAmount.toFixed(3)} {getCurrencyLabel()}
+                      <span className={uiTotalUnpaidAmount > 0 ? "text-red-600" : "text-green-600"}>
+                        {formatMoney(uiTotalUnpaidAmount)}
                       </span>
                     </div>
                   </div>
@@ -2516,7 +2652,7 @@ export default function POSPage() {
                       <div className="flex items-center justify-between w-full">
                         <span>Complete Sale</span>
                         <span className="text-sm">
-                          {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} ${getCurrencyLabel()}` : "Fully Paid"}
+                          {uiTotalUnpaidAmount > 0 ? `Pay ${formatMoney(uiTotalUnpaidAmount)}` : "Fully Paid"}
                         </span>
                       </div>
                     )}
@@ -2557,7 +2693,7 @@ export default function POSPage() {
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-sm text-muted-foreground">Today's Sales</p>
-                      <h3 className="text-2xl font-bold">{todaySales.toFixed(3)} {getCurrencyLabel()}</h3>
+                      <h3 className="text-2xl font-bold">{formatMoney(uiTodaySales)}</h3>
                     </div>
                     <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                       <DollarSign className="h-6 w-6 text-primary" />
@@ -2875,24 +3011,24 @@ export default function POSPage() {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Subtotal</span>
-                  <span className="font-medium">{subtotal.toFixed(3)} {getCurrencyLabel()}</span>
+                  <span className="font-medium">{formatMoney(uiSubtotal)}</span>
                 </div>
                 {discountPercentage > 0 && (
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-muted-foreground">Discount</span>
                     <span className="font-medium text-green-600">
-                      -{globalDiscountAmount.toFixed(3)} {getCurrencyLabel()}
+                      -{uiGlobalDiscountAmount.toFixed(3)} {getCurrencyLabel()}
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Tax</span>
-                  <span className="font-medium">{tax.toFixed(3)} {getCurrencyLabel()}</span>
+                  <span className="font-medium">{formatMoney(uiTax)}</span>
                 </div>
                 <Separator />
                 <div className="flex justify-between items-center">
                   <span className="font-semibold">Total</span>
-                  <span className="font-bold text-lg">{total.toFixed(3)} {getCurrencyLabel()}</span>
+                  <span className="font-bold text-lg">{formatMoney(uiTotal)}</span>
                 </div>
                 
                 {/* Payment Summary */}
@@ -2902,11 +3038,11 @@ export default function POSPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-muted-foreground">Amount Paid</span>
-                        <span className="font-medium text-green-600">{total.toFixed(3)} {getCurrencyLabel()}</span>
+                        <span className="font-medium text-green-600">{formatMoney(uiTotalPaidAmount)}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-muted-foreground">Amount Due</span>
-                        <span className="font-medium text-red-600">{totalUnpaidAmount.toFixed(3)} {getCurrencyLabel()}</span>
+                        <span className="font-medium text-red-600">{formatMoney(uiTotalUnpaidAmount)}</span>
                       </div>
                     </div>
                   </>
@@ -2939,7 +3075,7 @@ export default function POSPage() {
                   <div className="flex items-center justify-between w-full">
                     <span>Confirm Sale</span>
                     <span className="text-sm">
-                      {totalUnpaidAmount > 0 ? `Pay ${totalUnpaidAmount.toFixed(3)} ${getCurrencyLabel()}` : "Fully Paid"}
+                      {uiTotalUnpaidAmount > 0 ? `Pay ${formatMoney(uiTotalUnpaidAmount)}` : "Fully Paid"}
                     </span>
                   </div>
                 )}
@@ -2994,27 +3130,35 @@ export default function POSPage() {
                   },
                   quantity: item.quantity,
                   unit_price: (() => {
+                    if (isMuscatWarehouse) {
+                      const displayPrice = getDisplayPrice(item.product);
+                      return displayPrice ? parseFloat(displayPrice) : 0;
+                    }
                     const price = item.product.price || item.product.latest_price;
                     return price ? parseFloat(price) : 0;
                   })(),
                   discount_percent: getEffectiveLineDiscountPercent(item),
-                  total_price: calculateItemTotal(item),
-                  paid_amount: item.paid_amount,
+                  total_price: isMuscatWarehouse
+                    ? calculateItemDisplayTotal(item)
+                    : calculateItemTotal(item),
+                  paid_amount: isMuscatWarehouse
+                    ? usdToDisplayForLine(item.paid_amount, item)
+                    : item.paid_amount,
                   is_paid: item.is_paid,
                 })),
-                total_amount: total,
-                total_paid: totalPaidAmount,
-                remaining_amount: totalUnpaidAmount,
+                total_amount: uiTotal,
+                total_paid: uiTotalPaidAmount,
+                remaining_amount: uiTotalUnpaidAmount,
                 notes: receiptData.notes || invoiceNotes,
                 created_at_formatted: receiptData.created_at_formatted || format(new Date(), "PPP"),
                 global_discount_percent: appliesGlobalDiscountPerLine ? 0 : discountPercentage,
                 tax_percent: taxPercentage,
-                // Pass POS-specific calculated values
-                subtotal,
-                globalDiscountAmount,
-                tax,
-                total,
-                totalUnpaidAmount,
+                // Pass POS-specific calculated values (OMR for Muscat display, USD saved to API)
+                subtotal: uiSubtotal,
+                globalDiscountAmount: uiGlobalDiscountAmount,
+                tax: uiTax,
+                total: uiTotal,
+                totalUnpaidAmount: uiTotalUnpaidAmount,
                 hasPartialPayment,
               }}
               currencyLabel={getCurrencyLabel()}
