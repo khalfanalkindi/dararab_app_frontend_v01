@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "@/hooks/use-toast"
 import { API_URL } from "@/lib/config"
-import { ReceiptContent, toNum } from "@/components/receipt/ReceiptContent"
+import { ReceiptContent } from "@/components/receipt/ReceiptContent"
+import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface InvoiceItem {
@@ -256,52 +257,10 @@ export default function ReceiptPage() {
     window.history.back()
   }
 
-  const lineItemTotal = useCallback((item: InvoiceItem) => {
-    const price = toNum(item.unit_price)
-    const quantity = toNum(item.quantity)
-    const discount = toNum(item.discount_percent) / 100
-    const raw = price * quantity * (1 - discount)
-    return Number.isFinite(raw) ? Math.max(0, raw) : 0
-  }, [])
-
   const receiptPayload = useMemo((): ReceiptData | null => {
     if (!invoiceData) return null
-    const items = invoiceData.items || []
-    const hasPartialPayment = items.some((item) => {
-      const t = lineItemTotal(item)
-      const p = toNum(item.paid_amount)
-      return p > 0.001 && p < t - 0.001
-    })
-    return {
-      id: invoiceData.id,
-      composite_id: invoiceData.composite_id,
-      customer_name: invoiceData.customer_name,
-      customer_contact: invoiceData.customer_contact,
-      warehouse_name: invoiceData.warehouse_name,
-      invoice_type_name: invoiceData.invoice_type_name,
-      payment_method_name: invoiceData.payment_method_name,
-      items: items.map((it) => ({
-        id: it.id,
-        product_name: it.product_name,
-        product: it.product,
-        quantity: toNum(it.quantity),
-        unit_price: toNum(it.unit_price),
-        discount_percent: toNum(it.discount_percent),
-        total_price: toNum(it.total_price),
-        paid_amount: toNum(it.paid_amount),
-        is_paid: it.is_paid,
-      })),
-      total_amount: toNum(invoiceData.total_amount),
-      total_paid: toNum(invoiceData.total_paid),
-      remaining_amount: toNum(invoiceData.remaining_amount),
-      notes: invoiceData.notes,
-      created_at_formatted: invoiceData.created_at_formatted,
-      global_discount_percent: toNum(invoiceData.global_discount_percent),
-      tax_percent: toNum(invoiceData.tax_percent),
-      totalUnpaidAmount: toNum(invoiceData.remaining_amount),
-      hasPartialPayment,
-    }
-  }, [invoiceData, lineItemTotal])
+    return buildReceiptPayloadFromSummary(invoiceData)
+  }, [invoiceData])
 
   if (isLoading) {
   return (

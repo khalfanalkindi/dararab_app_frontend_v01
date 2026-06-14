@@ -30,6 +30,9 @@ import { format } from "date-fns"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 import { API_URL } from "@/lib/config"
+import { ReceiptContent } from "@/components/receipt/ReceiptContent"
+import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
+import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface Invoice {
   id: number
@@ -168,14 +171,17 @@ export default function InvoicesPage() {
   const [isDeletingInvoice, setIsDeletingInvoice] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = 'view' | 'delete' | null
+  type DialogType = 'view' | 'delete' | 'receipt' | null
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
+  const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
+  const [isLoadingReceipt, setIsLoadingReceipt] = useState(false)
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
   const customersAbortControllerRef = useRef<AbortController | null>(null)
   const invoicesAbortControllerRef = useRef<AbortController | null>(null)
   const invoiceDetailsAbortControllerRef = useRef<AbortController | null>(null)
+  const receiptAbortControllerRef = useRef<AbortController | null>(null)
   const deleteAbortControllerRef = useRef<AbortController | null>(null)
 
   // Memoize headers to prevent recreation on every render
@@ -972,12 +978,33 @@ export default function InvoicesPage() {
     }
   }
 
-  const handleViewReceipt = (invoice: Invoice) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log("Opening receipt for invoice:", invoice);
+  const handleViewReceipt = async (invoice: Invoice) => {
+    receiptAbortControllerRef.current?.abort()
+    receiptAbortControllerRef.current = new AbortController()
+
+    setIsLoadingReceipt(true)
+    setReceiptPayload(null)
+    setActiveDialog('receipt')
+
+    try {
+      const res = await fetchWithRetry(
+        `${API_URL}/sales/invoices/${invoice.id}/summary/`,
+        { headers, signal: receiptAbortControllerRef.current.signal }
+      )
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      const data = await res.json()
+      setReceiptPayload(buildReceiptPayloadFromSummary(data))
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to load receipt")
+      setActiveDialog(null)
+    } finally {
+      setIsLoadingReceipt(false)
     }
-    // Navigate to receipt page with invoice ID
-    window.open(`/receipt?id=${invoice.id}`, '_blank')
   }
 
   return (
@@ -1422,6 +1449,44 @@ export default function InvoicesPage() {
                 "Delete Invoice"
               )}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Receipt Dialog */}
+      <Dialog
+        open={activeDialog === 'receipt'}
+        onOpenChange={(open) => {
+          if (!open) {
+            receiptAbortControllerRef.current?.abort()
+            setActiveDialog(null)
+            setReceiptPayload(null)
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
+          <DialogHeader className="shrink-0 space-y-1 pb-2">
+            <DialogTitle>Receipt</DialogTitle>
+            <DialogDescription>View, print, or download your receipt.</DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {isLoadingReceipt ? (
+              <div className="flex flex-1 items-center justify-center gap-2 py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+                <span>Loading receipt...</span>
+              </div>
+            ) : receiptPayload ? (
+              <ReceiptContent
+                receiptData={receiptPayload}
+                currencyLabel="$"
+                getDisplayPrice={() => null}
+                onClose={() => {
+                  receiptAbortControllerRef.current?.abort()
+                  setActiveDialog(null)
+                  setReceiptPayload(null)
+                }}
+              />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

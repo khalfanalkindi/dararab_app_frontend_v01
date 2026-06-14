@@ -41,6 +41,7 @@ function PaymentStatusText({
   return (
     <span
       className="receipt-payment-status"
+      data-status={status}
       style={{ fontWeight: 700, color: labels.color }}
     >
       {labels.ar} — {labels.en}
@@ -48,6 +49,16 @@ function PaymentStatusText({
     </span>
   )
 }
+
+const PAYMENT_STATUS_PRINT_CSS = `
+  .receipt-payment-status[data-status="Paid"] { color: #15803d !important; }
+  .receipt-payment-status[data-status="Partial"] { color: #c2410c !important; }
+  .receipt-payment-status[data-status="Due"] { color: #b91c1c !important; }
+  .receipt-payment-status {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+`
 
 export interface ReceiptItem {
   id?: number
@@ -278,10 +289,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   color-adjust: exact !important;
                   print-color-adjust: exact !important;
                 }
-                .receipt-payment-status {
-                  -webkit-print-color-adjust: exact !important;
-                  print-color-adjust: exact !important;
-                }
+                ${PAYMENT_STATUS_PRINT_CSS}
               }
               body { 
                 font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
@@ -474,10 +482,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
           gap: 6px;
           color: #000000;
         }
-        .receipt-payment-status {
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
+        ${PAYMENT_STATUS_PRINT_CSS}
       `,
           }}
         />
