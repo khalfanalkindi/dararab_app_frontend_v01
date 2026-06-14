@@ -19,6 +19,47 @@ export function toNum(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback
 }
 
+type ReceiptPaymentStatus = "Paid" | "Partial" | "Due"
+
+const PAYMENT_STATUS_LABELS: Record<
+  ReceiptPaymentStatus,
+  { en: string; ar: string; color: string }
+> = {
+  Paid: { en: "Paid", ar: "مدفوع", color: "#15803d" },
+  Partial: { en: "Partial", ar: "مدفوع جزئياً", color: "#c2410c" },
+  Due: { en: "Unpaid", ar: "غير مدفوع", color: "#b91c1c" },
+}
+
+function PaymentStatusText({
+  status,
+  showPartialMarker = false,
+}: {
+  status: ReceiptPaymentStatus
+  showPartialMarker?: boolean
+}) {
+  const labels = PAYMENT_STATUS_LABELS[status]
+  return (
+    <span
+      className="receipt-payment-status"
+      data-status={status}
+      style={{ fontWeight: 700, color: labels.color }}
+    >
+      {labels.ar} — {labels.en}
+      {status === "Partial" && showPartialMarker ? " *" : ""}
+    </span>
+  )
+}
+
+const PAYMENT_STATUS_PRINT_CSS = `
+  .receipt-payment-status[data-status="Paid"] { color: #15803d !important; }
+  .receipt-payment-status[data-status="Partial"] { color: #c2410c !important; }
+  .receipt-payment-status[data-status="Due"] { color: #b91c1c !important; }
+  .receipt-payment-status {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+`
+
 export interface ReceiptItem {
   id?: number
   product_name?: string
@@ -183,6 +224,22 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
   // Determine payment status for items
   const isFullyPaid = Math.abs(toNum(financials.totalPaid) - toNum(financials.total)) < 0.001
 
+  const invoicePaymentStatus: ReceiptPaymentStatus = isFullyPaid
+    ? "Paid"
+    : financials.totalPaid > 0.001
+      ? "Partial"
+      : "Due"
+
+  const resolveItemPaymentStatus = (item: ReceiptItem): ReceiptPaymentStatus => {
+    const itemTotal = getItemLineTotal(item)
+    if (isFullyPaid) return "Paid"
+    if (item.is_paid || toNum(item.paid_amount) > 0) {
+      return toNum(item.paid_amount) >= itemTotal ? "Paid" : "Partial"
+    }
+    if (financials.totalPaid > 0) return "Partial"
+    return "Due"
+  }
+
   const handlePrint = () => {
     if (printRef.current) {
       try {
@@ -232,6 +289,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                   color-adjust: exact !important;
                   print-color-adjust: exact !important;
                 }
+                ${PAYMENT_STATUS_PRINT_CSS}
               }
               body { 
                 font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
@@ -424,6 +482,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
           gap: 6px;
           color: #000000;
         }
+        ${PAYMENT_STATUS_PRINT_CSS}
       `,
           }}
         />
@@ -543,21 +602,7 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
               const itemTotal = getItemLineTotal(item)
               const itemDiscountPercent = getItemEffectiveDiscountPercent(item)
               const lineGross = getItemLineGross(item)
-
-              let status = "Due"
-
-              if (isFullyPaid) {
-                status = "Paid"
-              } else if (item.is_paid || toNum(item.paid_amount) > 0) {
-                const itemPaid = toNum(item.paid_amount)
-                if (itemPaid >= itemTotal) {
-                  status = "Paid"
-                } else {
-                  status = "Partial"
-                }
-              } else if (financials.totalPaid > 0) {
-                status = "Partial"
-              }
+              const status = resolveItemPaymentStatus(item)
 
               const displayPrice = item.product ? getDisplayPrice(item) : null
               const displayPriceValue = displayPrice ? toNum(parseFloat(displayPrice)) : toNum(item.unit_price)
@@ -595,10 +640,8 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
                     </span>
                   </div>
                   <div className="receipt-item-row" style={{ marginTop: "4px" }}>
-                    <span>Status</span>
-                    <span style={{ fontWeight: 700, color: "#000" }}>
-                      {status === "Partial" ? `${status} *` : status}
-                    </span>
+                    <span>Status / الحالة</span>
+                    <PaymentStatusText status={status} showPartialMarker />
                   </div>
                 </div>
               )
@@ -638,14 +681,26 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
               </div>
             </div>
             <div className="receipt-kv-block">
+              <div className="receipt-kv-label">Payment status / حالة الدفع</div>
+              <div className="receipt-kv-value">
+                <PaymentStatusText status={invoicePaymentStatus} />
+              </div>
+            </div>
+            <div className="receipt-kv-block">
               <div className="receipt-kv-label">Total paid</div>
-              <div className="receipt-kv-value" style={{ fontWeight: 600, color: "#000" }}>
+              <div className="receipt-kv-value" style={{ fontWeight: 600, color: "#15803d" }}>
                 {financials.totalPaid.toFixed(3)} {currencyLabel}
               </div>
             </div>
             <div className="receipt-kv-block">
               <div className="receipt-kv-label">Amount due</div>
-              <div className="receipt-kv-value" style={{ fontWeight: 700, color: "#000" }}>
+              <div
+                className="receipt-kv-value"
+                style={{
+                  fontWeight: 700,
+                  color: financials.totalUnpaid > 0.001 ? "#b91c1c" : "#15803d",
+                }}
+              >
                 {financials.totalUnpaid.toFixed(3)} {currencyLabel}
                 {financials.totalUnpaid > 0.001 ? " (balance)" : " (clear)"}
               </div>

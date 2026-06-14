@@ -30,6 +30,9 @@ import { format } from "date-fns"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 import { API_URL } from "@/lib/config"
+import { ReceiptContent } from "@/components/receipt/ReceiptContent"
+import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
+import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface Invoice {
   id: number
@@ -81,6 +84,12 @@ interface Warehouse {
   id: number
   name_en: string
   name_ar: string
+}
+
+interface CustomerOption {
+  id: number
+  institution_name: string
+  contact_person?: string
 }
 
 // API Response Types
@@ -144,9 +153,12 @@ const calculateInvoiceStatus = (
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [customers, setCustomers] = useState<CustomerOption[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<number | null>(null)
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null)
   const [dateRange, setDateRange] = useState<DateRange | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
@@ -159,13 +171,17 @@ export default function InvoicesPage() {
   const [isDeletingInvoice, setIsDeletingInvoice] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = 'view' | 'delete' | null
+  type DialogType = 'view' | 'delete' | 'receipt' | null
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
+  const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
+  const [isLoadingReceipt, setIsLoadingReceipt] = useState(false)
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
+  const customersAbortControllerRef = useRef<AbortController | null>(null)
   const invoicesAbortControllerRef = useRef<AbortController | null>(null)
   const invoiceDetailsAbortControllerRef = useRef<AbortController | null>(null)
+  const receiptAbortControllerRef = useRef<AbortController | null>(null)
   const deleteAbortControllerRef = useRef<AbortController | null>(null)
 
   // Memoize headers to prevent recreation on every render
@@ -272,10 +288,12 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     fetchWarehouses()
-    
+    fetchCustomers()
+
     // Cleanup: abort pending requests on unmount
     return () => {
       warehousesAbortControllerRef.current?.abort()
+      customersAbortControllerRef.current?.abort()
       invoicesAbortControllerRef.current?.abort()
       invoiceDetailsAbortControllerRef.current?.abort()
       deleteAbortControllerRef.current?.abort()
@@ -290,6 +308,42 @@ export default function InvoicesPage() {
 
     return () => clearTimeout(timer)
   }, [searchQuery])
+
+  const fetchAllPaginated = async <T,>(initialUrl: string, signal: AbortSignal): Promise<T[]> => {
+    const normalizeList = (payload: unknown): T[] => {
+      if (!payload) return []
+      if (Array.isArray(payload)) return payload as T[]
+      if (typeof payload === "object" && payload !== null && "results" in payload) {
+        const results = (payload as { results?: unknown }).results
+        if (Array.isArray(results)) return results as T[]
+      }
+      return []
+    }
+
+    const allItems: T[] = []
+    let nextUrl: string | null = initialUrl
+
+    while (nextUrl) {
+      if (signal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError")
+      }
+      const res = await fetchWithRetry(nextUrl, { headers, signal })
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}) for ${nextUrl}`)
+      }
+      const data = await res.json()
+      allItems.push(...normalizeList(data))
+      nextUrl =
+        typeof data === "object" &&
+        data !== null &&
+        typeof (data as { next?: unknown }).next === "string" &&
+        (data as { next: string }).next
+          ? (data as { next: string }).next
+          : null
+    }
+
+    return allItems
+  }
 
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
@@ -308,7 +362,32 @@ export default function InvoicesPage() {
     }
   }
 
-  const fetchInvoices = async (searchOverride?: string) => {
+  const fetchCustomers = async () => {
+    customersAbortControllerRef.current?.abort()
+    customersAbortControllerRef.current = new AbortController()
+
+    setIsLoadingCustomers(true)
+    try {
+      const customersData = await fetchAllPaginated<CustomerOption>(
+        `${API_URL}/sales/customers/?page_size=1000`,
+        customersAbortControllerRef.current.signal,
+      )
+      const sorted = [...customersData].sort((a, b) =>
+        (a.institution_name || "").localeCompare(b.institution_name || "", undefined, {
+          sensitivity: "base",
+        }),
+      )
+      setCustomers(sorted)
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return
+      handleError(error, "Failed to fetch customers")
+      setCustomers([])
+    } finally {
+      setIsLoadingCustomers(false)
+    }
+  }
+
+  const fetchInvoices = async (options?: { search?: string; customerId?: number | null }) => {
     // Abort previous request if still pending
     invoicesAbortControllerRef.current?.abort()
     invoicesAbortControllerRef.current = new AbortController()
@@ -327,10 +406,14 @@ export default function InvoicesPage() {
       if (dateRange?.to) {
         params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
       }
-      // Use searchOverride if provided (from button click), otherwise use debounced value (for auto-search)
-      const searchValue = searchOverride !== undefined ? searchOverride : debouncedSearchQuery
+      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
       if (searchValue) {
         params.append("search", searchValue)
+      }
+      if (customerId) {
+        params.append("customer_id", customerId.toString())
       }
       params.append("page_size", "1000")
       params.append("ordering", "-created_at") // Order by created_at in descending order
@@ -348,11 +431,15 @@ export default function InvoicesPage() {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
       const data = await res.json()
-      const invoicesData = Array.isArray(data)
+      let invoicesData: Invoice[] = Array.isArray(data)
         ? data
         : Array.isArray(data.results)
         ? data.results
         : []
+
+      if (customerId) {
+        invoicesData = invoicesData.filter((invoice) => invoice.customer?.id === customerId)
+      }
 
       setInvoices(invoicesData)
       setHasSearched(true)
@@ -454,6 +541,7 @@ export default function InvoicesPage() {
 
   const handleResetFilters = () => {
     setSelectedWarehouse(null)
+    setSelectedCustomerId(null)
     setDateRange(null)
     setSearchQuery("")
     setInvoices([])
@@ -522,9 +610,7 @@ export default function InvoicesPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    // Use current searchQuery value immediately when user clicks search button
-    // This bypasses debounce for manual searches
-    fetchInvoices(searchQuery)
+    fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
   }
 
   const fetchInvoiceItems = async (invoiceId: number, signal?: AbortSignal): Promise<InvoiceSummaryItemResponse[]> => {
@@ -892,12 +978,33 @@ export default function InvoicesPage() {
     }
   }
 
-  const handleViewReceipt = (invoice: Invoice) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log("Opening receipt for invoice:", invoice);
+  const handleViewReceipt = async (invoice: Invoice) => {
+    receiptAbortControllerRef.current?.abort()
+    receiptAbortControllerRef.current = new AbortController()
+
+    setIsLoadingReceipt(true)
+    setReceiptPayload(null)
+    setActiveDialog('receipt')
+
+    try {
+      const res = await fetchWithRetry(
+        `${API_URL}/sales/invoices/${invoice.id}/summary/`,
+        { headers, signal: receiptAbortControllerRef.current.signal }
+      )
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      const data = await res.json()
+      setReceiptPayload(buildReceiptPayloadFromSummary(data))
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      handleError(error, "Failed to load receipt")
+      setActiveDialog(null)
+    } finally {
+      setIsLoadingReceipt(false)
     }
-    // Navigate to receipt page with invoice ID
-    window.open(`/receipt?id=${invoice.id}`, '_blank')
   }
 
   return (
@@ -963,27 +1070,60 @@ export default function InvoicesPage() {
 
                 <form onSubmit={handleSearch} className="space-y-2 flex-1 min-w-0">
                   <Label>Invoice/Composite ID</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      className="flex-1 w-full"
-                      placeholder="Search by invoice number or composite ID..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                    <div className="flex gap-2 shrink-0">
-                      <Button 
-                        type="submit"
-                        disabled={!selectedWarehouse && !dateRange?.from && !searchQuery}
-                      >
-                        <Search className="h-4 w-4 mr-2" />
-                        Search
-                      </Button>
-                      <Button variant="outline" onClick={handleResetFilters}>
-                        Reset
-                      </Button>
-                    </div>
-                  </div>
+                  <Input
+                    className="w-full"
+                    placeholder="Search by invoice number or composite ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
                 </form>
+
+                <div className="space-y-2 flex-1 min-w-0">
+                  <Label>Customer</Label>
+                  <Select
+                    value={selectedCustomerId?.toString() || "all"}
+                    onValueChange={(value) =>
+                      setSelectedCustomerId(value === "all" ? null : Number(value))
+                    }
+                    disabled={isLoadingCustomers}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue
+                        placeholder={isLoadingCustomers ? "Loading customers..." : "All Customers"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      <SelectItem value="all">All Customers</SelectItem>
+                      {customers.map((customer) => (
+                        <SelectItem key={customer.id} value={customer.id.toString()}>
+                          {customer.institution_name}
+                          {customer.contact_person ? ` (${customer.contact_person})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex gap-2 shrink-0 items-end">
+                  <Button
+                    type="button"
+                    disabled={
+                      !selectedWarehouse &&
+                      !dateRange?.from &&
+                      !searchQuery &&
+                      !selectedCustomerId
+                    }
+                    onClick={() =>
+                      fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
+                    }
+                  >
+                    <Search className="h-4 w-4 mr-2" />
+                    Search
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleResetFilters}>
+                    Reset
+                  </Button>
+                </div>
             </div>
 
             {/* Selected Total Display */}
@@ -998,7 +1138,7 @@ export default function InvoicesPage() {
             {/* Invoices Table */}
             {!hasSearched ? (
               <div className="text-center text-muted-foreground py-12">
-                Please select at least one filter (Warehouse, Date Range, or Invoice/Composite ID) to view invoices.
+                Please select at least one filter (Warehouse, Date Range, Invoice/Composite ID, or Customer) to view invoices.
               </div>
             ) : (
               <div className="border rounded-md">
@@ -1309,6 +1449,44 @@ export default function InvoicesPage() {
                 "Delete Invoice"
               )}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Receipt Dialog */}
+      <Dialog
+        open={activeDialog === 'receipt'}
+        onOpenChange={(open) => {
+          if (!open) {
+            receiptAbortControllerRef.current?.abort()
+            setActiveDialog(null)
+            setReceiptPayload(null)
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
+          <DialogHeader className="shrink-0 space-y-1 pb-2">
+            <DialogTitle>Receipt</DialogTitle>
+            <DialogDescription>View, print, or download your receipt.</DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {isLoadingReceipt ? (
+              <div className="flex flex-1 items-center justify-center gap-2 py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+                <span>Loading receipt...</span>
+              </div>
+            ) : receiptPayload ? (
+              <ReceiptContent
+                receiptData={receiptPayload}
+                currencyLabel="$"
+                getDisplayPrice={() => null}
+                onClose={() => {
+                  receiptAbortControllerRef.current?.abort()
+                  setActiveDialog(null)
+                  setReceiptPayload(null)
+                }}
+              />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
