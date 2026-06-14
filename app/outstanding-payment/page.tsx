@@ -236,8 +236,9 @@ export default function OutstandingPaymentPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
-  const [customerSearchQuery, setCustomerSearchQuery] = useState("")
-  const [debouncedCustomerSearchQuery, setDebouncedCustomerSearchQuery] = useState("")
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null)
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [selectedItems, setSelectedItems] = useState<InvoiceItem[]>([])
   const [isLoadingItems, setIsLoadingItems] = useState(false)
@@ -253,6 +254,7 @@ export default function OutstandingPaymentPage() {
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
+  const customersAbortControllerRef = useRef<AbortController | null>(null)
   const invoicesAbortControllerRef = useRef<AbortController | null>(null)
   const invoiceDetailsAbortControllerRef = useRef<AbortController | null>(null)
   const billCreationAbortControllerRef = useRef<AbortController | null>(null)
@@ -361,10 +363,12 @@ export default function OutstandingPaymentPage() {
 
   useEffect(() => {
     fetchWarehouses()
+    fetchCustomers()
     
     // Cleanup: abort pending requests on unmount
     return () => {
       warehousesAbortControllerRef.current?.abort()
+      customersAbortControllerRef.current?.abort()
       invoicesAbortControllerRef.current?.abort()
       invoiceDetailsAbortControllerRef.current?.abort()
       billCreationAbortControllerRef.current?.abort()
@@ -380,28 +384,44 @@ export default function OutstandingPaymentPage() {
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedCustomerSearchQuery(customerSearchQuery)
-    }, 300)
+  const fetchAllPaginated = useCallback(async <T,>(
+    initialUrl: string,
+    signal: AbortSignal,
+  ): Promise<T[]> => {
+    const normalizeList = (payload: unknown): T[] => {
+      if (!payload) return []
+      if (Array.isArray(payload)) return payload as T[]
+      if (typeof payload === "object" && payload !== null && "results" in payload) {
+        const results = (payload as { results?: unknown }).results
+        if (Array.isArray(results)) return results as T[]
+      }
+      return []
+    }
 
-    return () => clearTimeout(timer)
-  }, [customerSearchQuery])
+    const allItems: T[] = []
+    let nextUrl: string | null = initialUrl
 
-  const matchesCustomerSearch = (invoice: Invoice, query: string) => {
-    const q = query.toLowerCase().trim()
-    if (!q) return true
-    const name = invoice.customer_name?.toLowerCase() || ""
-    const contact = invoice.customer_contact?.toLowerCase() || ""
-    const institution = invoice.customer?.institution_name?.toLowerCase() || ""
-    const contactPerson = invoice.customer?.contact_person?.toLowerCase() || ""
-    return (
-      name.includes(q) ||
-      contact.includes(q) ||
-      institution.includes(q) ||
-      contactPerson.includes(q)
-    )
-  }
+    while (nextUrl) {
+      if (signal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError")
+      }
+      const res = await fetchWithRetry(nextUrl, { headers, signal })
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}) for ${nextUrl}`)
+      }
+      const data = await res.json()
+      allItems.push(...normalizeList(data))
+      nextUrl =
+        typeof data === "object" &&
+        data !== null &&
+        typeof (data as { next?: unknown }).next === "string" &&
+        (data as { next: string }).next
+          ? (data as { next: string }).next
+          : null
+    }
+
+    return allItems
+  }, [headers, fetchWithRetry])
 
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
@@ -423,7 +443,34 @@ export default function OutstandingPaymentPage() {
     }
   }
 
-  const fetchInvoices = async (options?: { search?: string; customerName?: string }) => {
+  const fetchCustomers = async () => {
+    customersAbortControllerRef.current?.abort()
+    customersAbortControllerRef.current = new AbortController()
+
+    setIsLoadingCustomers(true)
+    try {
+      const customersData = await fetchAllPaginated<Customer>(
+        `${API_URL}/sales/customers/?page_size=1000`,
+        customersAbortControllerRef.current.signal,
+      )
+      const sorted = [...customersData].sort((a, b) =>
+        (a.institution_name || a.name_en || "").localeCompare(
+          b.institution_name || b.name_en || "",
+          undefined,
+          { sensitivity: "base" },
+        ),
+      )
+      setCustomers(sorted)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return
+      handleError(error, "Failed to fetch customers")
+      setCustomers([])
+    } finally {
+      setIsLoadingCustomers(false)
+    }
+  }
+
+  const fetchInvoices = async (options?: { search?: string; customerId?: number | null }) => {
     // Abort previous request if still pending
     invoicesAbortControllerRef.current?.abort()
     invoicesAbortControllerRef.current = new AbortController()
@@ -446,13 +493,13 @@ export default function OutstandingPaymentPage() {
       }
       
       const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
-      const customerValue =
-        options?.customerName !== undefined ? options.customerName : debouncedCustomerSearchQuery
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
       if (searchValue) {
         params.append('search', searchValue)
       }
-      if (customerValue) {
-        params.append('customer_name', customerValue)
+      if (customerId) {
+        params.append('customer_id', customerId.toString())
       }
 
       // Use the new outstanding payments endpoint
@@ -622,8 +669,12 @@ export default function OutstandingPaymentPage() {
       
       // The outstanding-payments endpoint already returns only invoices where is_fully_paid = False
       // No need for additional filtering since the endpoint handles this logic
-      const filteredInvoices = customerValue.trim()
-        ? mappedInvoices.filter((invoice: Invoice) => matchesCustomerSearch(invoice, customerValue))
+      const filteredInvoices = customerId
+        ? mappedInvoices.filter(
+            (invoice: Invoice) =>
+              invoice.customer?.id === customerId ||
+              customers.find((c) => c.id === customerId)?.institution_name === invoice.customer_name,
+          )
         : mappedInvoices
       setInvoices(filteredInvoices)
       setHasSearched(true)
@@ -930,9 +981,9 @@ export default function OutstandingPaymentPage() {
 
   const handleResetFilters = () => {
     setSelectedWarehouse(null)
+    setSelectedCustomerId(null)
     setDateRange(null)
     setSearchQuery("")
-    setCustomerSearchQuery("")
     setInvoices([])
     setHasSearched(false)
   }
@@ -953,7 +1004,7 @@ export default function OutstandingPaymentPage() {
   }, [invoices])
 
   const handleSearch = () => {
-    fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
+    fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
   }
 
   const handleItemSelect = (itemIndex: number) => {
@@ -1809,21 +1860,31 @@ export default function OutstandingPaymentPage() {
                     />
               </div>
 
-              {/* Customer Name Filter */}
+              {/* Customer Filter */}
               <div className="space-y-2">
-                  <Label>Customer Name</Label>
-                    <Input
-                  className="w-full h-10"
-                      placeholder="Search by customer or contact name..."
-                      value={customerSearchQuery}
-                      onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          handleSearch()
-                        }
-                      }}
-                    />
+                  <Label>Customer</Label>
+                  <Select
+                    value={selectedCustomerId?.toString() || "all"}
+                    onValueChange={(value) =>
+                      setSelectedCustomerId(value === "all" ? null : Number(value))
+                    }
+                    disabled={isLoadingCustomers}
+                  >
+                    <SelectTrigger className="w-full h-10">
+                      <SelectValue
+                        placeholder={isLoadingCustomers ? "Loading customers..." : "All Customers"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      <SelectItem value="all">All Customers</SelectItem>
+                      {customers.map((customer) => (
+                        <SelectItem key={customer.id} value={customer.id.toString()}>
+                          {customer.institution_name || customer.name_en || `Customer #${customer.id}`}
+                          {customer.contact_person ? ` (${customer.contact_person})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
               </div>
             </div>
 
@@ -1843,7 +1904,7 @@ export default function OutstandingPaymentPage() {
                         setSelectedWarehouse(null)
                         setDateRange(null)
                         setSearchQuery("")
-                        setCustomerSearchQuery("")
+                        setSelectedCustomerId(null)
                         fetchInvoices()
               }} disabled={isLoading}>
                 {isLoading ? "Loading..." : "Load Outstanding"}
@@ -1863,7 +1924,7 @@ export default function OutstandingPaymentPage() {
             {!hasSearched ? (
               <div className="text-center text-muted-foreground py-12">
                 <p>Click "Search" to view all outstanding invoices (unpaid and partially paid) or use filters to narrow down results.</p>
-                <p className="text-sm mt-2">You can search by invoice ID (e.g., &quot;121&quot; or &quot;121_223&quot;), customer name, or use date/warehouse filters.</p>
+                <p className="text-sm mt-2">You can filter by invoice ID (e.g., &quot;121&quot; or &quot;121_223&quot;), select a customer from the list, or use date/warehouse filters.</p>
               </div>
             ) : (
               <div className="border rounded-md">

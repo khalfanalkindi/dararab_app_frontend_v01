@@ -83,6 +83,12 @@ interface Warehouse {
   name_ar: string
 }
 
+interface CustomerOption {
+  id: number
+  institution_name: string
+  contact_person?: string
+}
+
 // API Response Types
 interface InvoiceSummaryItemResponse {
   id: number
@@ -144,14 +150,15 @@ const calculateInvoiceStatus = (
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [customers, setCustomers] = useState<CustomerOption[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<number | null>(null)
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null)
   const [dateRange, setDateRange] = useState<DateRange | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
-  const [customerSearchQuery, setCustomerSearchQuery] = useState("")
-  const [debouncedCustomerSearchQuery, setDebouncedCustomerSearchQuery] = useState("")
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
@@ -166,6 +173,7 @@ export default function InvoicesPage() {
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
+  const customersAbortControllerRef = useRef<AbortController | null>(null)
   const invoicesAbortControllerRef = useRef<AbortController | null>(null)
   const invoiceDetailsAbortControllerRef = useRef<AbortController | null>(null)
   const deleteAbortControllerRef = useRef<AbortController | null>(null)
@@ -274,10 +282,12 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     fetchWarehouses()
-    
+    fetchCustomers()
+
     // Cleanup: abort pending requests on unmount
     return () => {
       warehousesAbortControllerRef.current?.abort()
+      customersAbortControllerRef.current?.abort()
       invoicesAbortControllerRef.current?.abort()
       invoiceDetailsAbortControllerRef.current?.abort()
       deleteAbortControllerRef.current?.abort()
@@ -293,20 +303,40 @@ export default function InvoicesPage() {
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedCustomerSearchQuery(customerSearchQuery)
-    }, 300)
+  const fetchAllPaginated = async <T,>(initialUrl: string, signal: AbortSignal): Promise<T[]> => {
+    const normalizeList = (payload: unknown): T[] => {
+      if (!payload) return []
+      if (Array.isArray(payload)) return payload as T[]
+      if (typeof payload === "object" && payload !== null && "results" in payload) {
+        const results = (payload as { results?: unknown }).results
+        if (Array.isArray(results)) return results as T[]
+      }
+      return []
+    }
 
-    return () => clearTimeout(timer)
-  }, [customerSearchQuery])
+    const allItems: T[] = []
+    let nextUrl: string | null = initialUrl
 
-  const matchesCustomerSearch = (invoice: Invoice, query: string) => {
-    const q = query.toLowerCase().trim()
-    if (!q) return true
-    const institution = invoice.customer?.institution_name?.toLowerCase() || ""
-    const contact = invoice.customer?.contact_person?.toLowerCase() || ""
-    return institution.includes(q) || contact.includes(q)
+    while (nextUrl) {
+      if (signal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError")
+      }
+      const res = await fetchWithRetry(nextUrl, { headers, signal })
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}) for ${nextUrl}`)
+      }
+      const data = await res.json()
+      allItems.push(...normalizeList(data))
+      nextUrl =
+        typeof data === "object" &&
+        data !== null &&
+        typeof (data as { next?: unknown }).next === "string" &&
+        (data as { next: string }).next
+          ? (data as { next: string }).next
+          : null
+    }
+
+    return allItems
   }
 
   const fetchWarehouses = async () => {
@@ -326,7 +356,32 @@ export default function InvoicesPage() {
     }
   }
 
-  const fetchInvoices = async (options?: { search?: string; customerName?: string }) => {
+  const fetchCustomers = async () => {
+    customersAbortControllerRef.current?.abort()
+    customersAbortControllerRef.current = new AbortController()
+
+    setIsLoadingCustomers(true)
+    try {
+      const customersData = await fetchAllPaginated<CustomerOption>(
+        `${API_URL}/sales/customers/?page_size=1000`,
+        customersAbortControllerRef.current.signal,
+      )
+      const sorted = [...customersData].sort((a, b) =>
+        (a.institution_name || "").localeCompare(b.institution_name || "", undefined, {
+          sensitivity: "base",
+        }),
+      )
+      setCustomers(sorted)
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return
+      handleError(error, "Failed to fetch customers")
+      setCustomers([])
+    } finally {
+      setIsLoadingCustomers(false)
+    }
+  }
+
+  const fetchInvoices = async (options?: { search?: string; customerId?: number | null }) => {
     // Abort previous request if still pending
     invoicesAbortControllerRef.current?.abort()
     invoicesAbortControllerRef.current = new AbortController()
@@ -346,13 +401,13 @@ export default function InvoicesPage() {
         params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
       }
       const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
-      const customerValue =
-        options?.customerName !== undefined ? options.customerName : debouncedCustomerSearchQuery
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
       if (searchValue) {
         params.append("search", searchValue)
       }
-      if (customerValue) {
-        params.append("customer_name", customerValue)
+      if (customerId) {
+        params.append("customer_id", customerId.toString())
       }
       params.append("page_size", "1000")
       params.append("ordering", "-created_at") // Order by created_at in descending order
@@ -376,8 +431,8 @@ export default function InvoicesPage() {
         ? data.results
         : []
 
-      if (customerValue.trim()) {
-        invoicesData = invoicesData.filter((invoice) => matchesCustomerSearch(invoice, customerValue))
+      if (customerId) {
+        invoicesData = invoicesData.filter((invoice) => invoice.customer?.id === customerId)
       }
 
       setInvoices(invoicesData)
@@ -480,9 +535,9 @@ export default function InvoicesPage() {
 
   const handleResetFilters = () => {
     setSelectedWarehouse(null)
+    setSelectedCustomerId(null)
     setDateRange(null)
     setSearchQuery("")
-    setCustomerSearchQuery("")
     setInvoices([])
     setHasSearched(false)
   }
@@ -549,7 +604,7 @@ export default function InvoicesPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
+    fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
   }
 
   const fetchInvoiceItems = async (invoiceId: number, signal?: AbortSignal): Promise<InvoiceSummaryItemResponse[]> => {
@@ -997,19 +1052,29 @@ export default function InvoicesPage() {
                 </form>
 
                 <div className="space-y-2 flex-1 min-w-0">
-                  <Label>Customer Name</Label>
-                  <Input
-                    className="w-full"
-                    placeholder="Search by customer or contact name..."
-                    value={customerSearchQuery}
-                    onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault()
-                        fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
-                      }
-                    }}
-                  />
+                  <Label>Customer</Label>
+                  <Select
+                    value={selectedCustomerId?.toString() || "all"}
+                    onValueChange={(value) =>
+                      setSelectedCustomerId(value === "all" ? null : Number(value))
+                    }
+                    disabled={isLoadingCustomers}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue
+                        placeholder={isLoadingCustomers ? "Loading customers..." : "All Customers"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      <SelectItem value="all">All Customers</SelectItem>
+                      {customers.map((customer) => (
+                        <SelectItem key={customer.id} value={customer.id.toString()}>
+                          {customer.institution_name}
+                          {customer.contact_person ? ` (${customer.contact_person})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="flex gap-2 shrink-0 items-end">
@@ -1019,10 +1084,10 @@ export default function InvoicesPage() {
                       !selectedWarehouse &&
                       !dateRange?.from &&
                       !searchQuery &&
-                      !customerSearchQuery
+                      !selectedCustomerId
                     }
                     onClick={() =>
-                      fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
+                      fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
                     }
                   >
                     <Search className="h-4 w-4 mr-2" />
@@ -1046,7 +1111,7 @@ export default function InvoicesPage() {
             {/* Invoices Table */}
             {!hasSearched ? (
               <div className="text-center text-muted-foreground py-12">
-                Please select at least one filter (Warehouse, Date Range, Invoice/Composite ID, or Customer Name) to view invoices.
+                Please select at least one filter (Warehouse, Date Range, Invoice/Composite ID, or Customer) to view invoices.
               </div>
             ) : (
               <div className="border rounded-md">
