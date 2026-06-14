@@ -167,6 +167,48 @@ export default function RoyaltiesReport() {
     throw lastError || new Error('Request failed after retries')
   }, [])
 
+  const fetchAllPaginated = useCallback(async <T,>(
+    initialUrl: string,
+    signal: AbortSignal,
+  ): Promise<T[]> => {
+    const normalizeList = (payload: unknown): T[] => {
+      if (!payload) return []
+      if (Array.isArray(payload)) return payload as T[]
+      if (typeof payload === "object" && payload !== null && "results" in payload) {
+        const results = (payload as { results?: unknown }).results
+        if (Array.isArray(results)) return results as T[]
+      }
+      return []
+    }
+
+    const allItems: T[] = []
+    let nextUrl: string | null = initialUrl
+
+    while (nextUrl) {
+      if (signal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError")
+      }
+
+      const res = await fetchWithRetry(nextUrl, { headers, signal })
+
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}) for ${nextUrl}`)
+      }
+
+      const data = await res.json()
+      allItems.push(...normalizeList(data))
+      nextUrl =
+        typeof data === "object" &&
+        data !== null &&
+        typeof (data as { next?: unknown }).next === "string" &&
+        (data as { next: string }).next
+          ? (data as { next: string }).next
+          : null
+    }
+
+    return allItems
+  }, [headers, fetchWithRetry])
+
   // Fetch projects on mount
   const fetchProjects = useCallback(async () => {
     // Cancel previous request if still pending
@@ -180,17 +222,10 @@ export default function RoyaltiesReport() {
     
     setIsLoadingProjects(true)
     try {
-      const res = await fetchWithRetry(`${API_URL}/inventory/projects/`, { 
-        headers,
-        signal: abortController.signal
-      })
-      
-      if (!res.ok) {
-        throw new Error(`Failed to fetch projects: ${res.status} ${res.statusText}`)
-      }
-      
-      const data = await res.json()
-      const projectsData = Array.isArray(data) ? data : data.results || []
+      const projectsData = await fetchAllPaginated<Project>(
+        `${API_URL}/inventory/projects/?page_size=1000`,
+        abortController.signal,
+      )
       setProjects(projectsData)
     } catch (error) {
       // Handle AbortError silently
@@ -208,7 +243,7 @@ export default function RoyaltiesReport() {
     } finally {
       setIsLoadingProjects(false)
     }
-  }, [headers, fetchWithRetry, handleError])
+  }, [fetchAllPaginated, handleError])
 
   // Fetch contracts for selected project
   const fetchContracts = useCallback(async (projectId: number) => {
@@ -223,17 +258,10 @@ export default function RoyaltiesReport() {
     
     setIsLoadingContracts(true)
     try {
-      const res = await fetchWithRetry(`${API_URL}/inventory/contracts/?project_id=${projectId}`, { 
-        headers,
-        signal: abortController.signal
-      })
-      
-      if (!res.ok) {
-        throw new Error(`Failed to fetch contracts: ${res.status} ${res.statusText}`)
-      }
-      
-      const data = await res.json()
-      const contractsData = Array.isArray(data) ? data : data.results || []
+      const contractsData = await fetchAllPaginated<Contract>(
+        `${API_URL}/inventory/contracts/?project_id=${projectId}&page_size=1000`,
+        abortController.signal,
+      )
       setContracts(contractsData)
     } catch (error) {
       // Handle AbortError silently
@@ -251,7 +279,7 @@ export default function RoyaltiesReport() {
     } finally {
       setIsLoadingContracts(false)
     }
-  }, [headers, fetchWithRetry, handleError])
+  }, [fetchAllPaginated, handleError])
 
   // Calculate royalties
   const calculateRoyalties = useCallback(async () => {
@@ -450,7 +478,7 @@ export default function RoyaltiesReport() {
                         <SelectTrigger>
                           <SelectValue placeholder={isLoadingProjects ? "Loading projects..." : "Select a project"} />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-h-[300px]">
                           {projects.map((project) => (
                             <SelectItem key={project.id} value={project.id.toString()}>
                               {project.title_ar || project.title_original || `Project #${project.id}`}
@@ -478,7 +506,7 @@ export default function RoyaltiesReport() {
                             } 
                           />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-[300px]">
                           {contracts.map((contract) => (
                             <SelectItem key={contract.id} value={contract.id.toString()}>
                               {contract.title || `Contract #${contract.id}`}
