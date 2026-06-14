@@ -90,7 +90,7 @@ export function buildReceiptPayloadFromSummary(invoice: InvoiceSummaryLike): Rec
 
   return {
     id: invoice.id,
-    composite_id: invoice.compposite_id,
+    composite_id: invoice.composite_id,
     customer_name: invoice.customer_name || "Walk-in Customer",
     customer_contact: invoice.customer_contact,
     warehouse_name: invoice.warehouse_name || "N/A",
