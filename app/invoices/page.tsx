@@ -150,6 +150,8 @@ export default function InvoicesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+  const [customerSearchQuery, setCustomerSearchQuery] = useState("")
+  const [debouncedCustomerSearchQuery, setDebouncedCustomerSearchQuery] = useState("")
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
@@ -291,6 +293,22 @@ export default function InvoicesPage() {
     return () => clearTimeout(timer)
   }, [searchQuery])
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCustomerSearchQuery(customerSearchQuery)
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [customerSearchQuery])
+
+  const matchesCustomerSearch = (invoice: Invoice, query: string) => {
+    const q = query.toLowerCase().trim()
+    if (!q) return true
+    const institution = invoice.customer?.institution_name?.toLowerCase() || ""
+    const contact = invoice.customer?.contact_person?.toLowerCase() || ""
+    return institution.includes(q) || contact.includes(q)
+  }
+
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
     warehousesAbortControllerRef.current?.abort()
@@ -308,7 +326,7 @@ export default function InvoicesPage() {
     }
   }
 
-  const fetchInvoices = async (searchOverride?: string) => {
+  const fetchInvoices = async (options?: { search?: string; customerName?: string }) => {
     // Abort previous request if still pending
     invoicesAbortControllerRef.current?.abort()
     invoicesAbortControllerRef.current = new AbortController()
@@ -327,10 +345,14 @@ export default function InvoicesPage() {
       if (dateRange?.to) {
         params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
       }
-      // Use searchOverride if provided (from button click), otherwise use debounced value (for auto-search)
-      const searchValue = searchOverride !== undefined ? searchOverride : debouncedSearchQuery
+      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
+      const customerValue =
+        options?.customerName !== undefined ? options.customerName : debouncedCustomerSearchQuery
       if (searchValue) {
         params.append("search", searchValue)
+      }
+      if (customerValue) {
+        params.append("customer_name", customerValue)
       }
       params.append("page_size", "1000")
       params.append("ordering", "-created_at") // Order by created_at in descending order
@@ -348,11 +370,15 @@ export default function InvoicesPage() {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
       const data = await res.json()
-      const invoicesData = Array.isArray(data)
+      let invoicesData: Invoice[] = Array.isArray(data)
         ? data
         : Array.isArray(data.results)
         ? data.results
         : []
+
+      if (customerValue.trim()) {
+        invoicesData = invoicesData.filter((invoice) => matchesCustomerSearch(invoice, customerValue))
+      }
 
       setInvoices(invoicesData)
       setHasSearched(true)
@@ -456,6 +482,7 @@ export default function InvoicesPage() {
     setSelectedWarehouse(null)
     setDateRange(null)
     setSearchQuery("")
+    setCustomerSearchQuery("")
     setInvoices([])
     setHasSearched(false)
   }
@@ -522,9 +549,7 @@ export default function InvoicesPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    // Use current searchQuery value immediately when user clicks search button
-    // This bypasses debounce for manual searches
-    fetchInvoices(searchQuery)
+    fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
   }
 
   const fetchInvoiceItems = async (invoiceId: number, signal?: AbortSignal): Promise<InvoiceSummaryItemResponse[]> => {
@@ -963,27 +988,50 @@ export default function InvoicesPage() {
 
                 <form onSubmit={handleSearch} className="space-y-2 flex-1 min-w-0">
                   <Label>Invoice/Composite ID</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      className="flex-1 w-full"
-                      placeholder="Search by invoice number or composite ID..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                    <div className="flex gap-2 shrink-0">
-                      <Button 
-                        type="submit"
-                        disabled={!selectedWarehouse && !dateRange?.from && !searchQuery}
-                      >
-                        <Search className="h-4 w-4 mr-2" />
-                        Search
-                      </Button>
-                      <Button variant="outline" onClick={handleResetFilters}>
-                        Reset
-                      </Button>
-                    </div>
-                  </div>
+                  <Input
+                    className="w-full"
+                    placeholder="Search by invoice number or composite ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
                 </form>
+
+                <div className="space-y-2 flex-1 min-w-0">
+                  <Label>Customer Name</Label>
+                  <Input
+                    className="w-full"
+                    placeholder="Search by customer or contact name..."
+                    value={customerSearchQuery}
+                    onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
+                      }
+                    }}
+                  />
+                </div>
+
+                <div className="flex gap-2 shrink-0 items-end">
+                  <Button
+                    type="button"
+                    disabled={
+                      !selectedWarehouse &&
+                      !dateRange?.from &&
+                      !searchQuery &&
+                      !customerSearchQuery
+                    }
+                    onClick={() =>
+                      fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
+                    }
+                  >
+                    <Search className="h-4 w-4 mr-2" />
+                    Search
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleResetFilters}>
+                    Reset
+                  </Button>
+                </div>
             </div>
 
             {/* Selected Total Display */}
@@ -998,7 +1046,7 @@ export default function InvoicesPage() {
             {/* Invoices Table */}
             {!hasSearched ? (
               <div className="text-center text-muted-foreground py-12">
-                Please select at least one filter (Warehouse, Date Range, or Invoice/Composite ID) to view invoices.
+                Please select at least one filter (Warehouse, Date Range, Invoice/Composite ID, or Customer Name) to view invoices.
               </div>
             ) : (
               <div className="border rounded-md">

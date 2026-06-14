@@ -236,6 +236,8 @@ export default function OutstandingPaymentPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+  const [customerSearchQuery, setCustomerSearchQuery] = useState("")
+  const [debouncedCustomerSearchQuery, setDebouncedCustomerSearchQuery] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
   const [selectedItems, setSelectedItems] = useState<InvoiceItem[]>([])
   const [isLoadingItems, setIsLoadingItems] = useState(false)
@@ -378,6 +380,29 @@ export default function OutstandingPaymentPage() {
     return () => clearTimeout(timer)
   }, [searchQuery])
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCustomerSearchQuery(customerSearchQuery)
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [customerSearchQuery])
+
+  const matchesCustomerSearch = (invoice: Invoice, query: string) => {
+    const q = query.toLowerCase().trim()
+    if (!q) return true
+    const name = invoice.customer_name?.toLowerCase() || ""
+    const contact = invoice.customer_contact?.toLowerCase() || ""
+    const institution = invoice.customer?.institution_name?.toLowerCase() || ""
+    const contactPerson = invoice.customer?.contact_person?.toLowerCase() || ""
+    return (
+      name.includes(q) ||
+      contact.includes(q) ||
+      institution.includes(q) ||
+      contactPerson.includes(q)
+    )
+  }
+
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
     warehousesAbortControllerRef.current?.abort()
@@ -398,7 +423,7 @@ export default function OutstandingPaymentPage() {
     }
   }
 
-  const fetchInvoices = async (searchOverride?: string) => {
+  const fetchInvoices = async (options?: { search?: string; customerName?: string }) => {
     // Abort previous request if still pending
     invoicesAbortControllerRef.current?.abort()
     invoicesAbortControllerRef.current = new AbortController()
@@ -420,10 +445,14 @@ export default function OutstandingPaymentPage() {
         params.append('end_date', dateRange.to.toISOString().split('T')[0])
       }
       
-      // Use searchOverride if provided (from button click), otherwise use debounced value (for auto-search)
-      const searchValue = searchOverride !== undefined ? searchOverride : debouncedSearchQuery
+      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
+      const customerValue =
+        options?.customerName !== undefined ? options.customerName : debouncedCustomerSearchQuery
       if (searchValue) {
         params.append('search', searchValue)
+      }
+      if (customerValue) {
+        params.append('customer_name', customerValue)
       }
 
       // Use the new outstanding payments endpoint
@@ -593,7 +622,10 @@ export default function OutstandingPaymentPage() {
       
       // The outstanding-payments endpoint already returns only invoices where is_fully_paid = False
       // No need for additional filtering since the endpoint handles this logic
-      setInvoices(mappedInvoices)
+      const filteredInvoices = customerValue.trim()
+        ? mappedInvoices.filter((invoice: Invoice) => matchesCustomerSearch(invoice, customerValue))
+        : mappedInvoices
+      setInvoices(filteredInvoices)
       setHasSearched(true)
     } catch (error) {
       handleError(error, "Failed to fetch invoices")
@@ -900,6 +932,7 @@ export default function OutstandingPaymentPage() {
     setSelectedWarehouse(null)
     setDateRange(null)
     setSearchQuery("")
+    setCustomerSearchQuery("")
     setInvoices([])
     setHasSearched(false)
   }
@@ -919,10 +952,8 @@ export default function OutstandingPaymentPage() {
       .reduce((sum, invoice) => sum + (invoice.remaining_amount || 0), 0)
   }, [invoices])
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    // Pass current searchQuery as override for immediate search on button click
-    fetchInvoices(searchQuery)
+  const handleSearch = () => {
+    fetchInvoices({ search: searchQuery, customerName: customerSearchQuery })
   }
 
   const handleItemSelect = (itemIndex: number) => {
@@ -1728,7 +1759,7 @@ export default function OutstandingPaymentPage() {
 
 
             {/* Filters Section */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               {/* Warehouse Filter */}
               <div className="space-y-2">
                   <Label>Warehouse</Label>
@@ -1761,14 +1792,37 @@ export default function OutstandingPaymentPage() {
                   </div>
                 </div>
 
-              {/* Search Filter */}
+              {/* Invoice Search Filter */}
               <div className="space-y-2">
-                  <Label>Search</Label>
+                  <Label>Invoice/Composite ID</Label>
                     <Input
                   className="w-full h-10"
-                      placeholder="Search by invoice ID (e.g., 121 or 121_223) or customer..."
+                      placeholder="Search by invoice ID (e.g., 121 or 121_223)..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          handleSearch()
+                        }
+                      }}
+                    />
+              </div>
+
+              {/* Customer Name Filter */}
+              <div className="space-y-2">
+                  <Label>Customer Name</Label>
+                    <Input
+                  className="w-full h-10"
+                      placeholder="Search by customer or contact name..."
+                      value={customerSearchQuery}
+                      onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          handleSearch()
+                        }
+                      }}
                     />
               </div>
             </div>
@@ -1789,6 +1843,7 @@ export default function OutstandingPaymentPage() {
                         setSelectedWarehouse(null)
                         setDateRange(null)
                         setSearchQuery("")
+                        setCustomerSearchQuery("")
                         fetchInvoices()
               }} disabled={isLoading}>
                 {isLoading ? "Loading..." : "Load Outstanding"}
@@ -1808,7 +1863,7 @@ export default function OutstandingPaymentPage() {
             {!hasSearched ? (
               <div className="text-center text-muted-foreground py-12">
                 <p>Click "Search" to view all outstanding invoices (unpaid and partially paid) or use filters to narrow down results.</p>
-                <p className="text-sm mt-2">You can search by invoice ID (e.g., "121" or "121_223"), customer name, or use date/warehouse filters.</p>
+                <p className="text-sm mt-2">You can search by invoice ID (e.g., &quot;121&quot; or &quot;121_223&quot;), customer name, or use date/warehouse filters.</p>
               </div>
             ) : (
               <div className="border rounded-md">
