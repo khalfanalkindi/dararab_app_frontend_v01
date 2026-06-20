@@ -43,7 +43,7 @@ export interface InvoiceSummaryLike {
 type SourceItemLike = {
   id?: number
   product_name?: string
-  product?: unknown
+  product?: ReceiptItem["product"]
   quantity?: unknown
   unit_price?: unknown
   discount_percent?: unknown
