@@ -1741,9 +1741,20 @@ export default function OutstandingPaymentPage() {
         )
         if (verifyResponse.ok) {
           const childSummary = await verifyResponse.json()
+          const receiptWarehouse =
+            childSummary.warehouse ??
+            originalInvoice.warehouse ??
+            warehouses.find(
+              (w) =>
+                w.id === originalInvoice.warehouse?.id ||
+                (!!childSummary.warehouse_name &&
+                  (w.name_en === childSummary.warehouse_name ||
+                    childSummary.warehouse_name.includes(w.name_en || ""))),
+            ) ??
+            null
           const { payload, currencyLabel } = await buildReceiptPayloadForDisplayAsync(
             childSummary,
-            originalInvoice.warehouse,
+            receiptWarehouse,
             warehouses,
             receiptSourceItems,
             token ?? "",
