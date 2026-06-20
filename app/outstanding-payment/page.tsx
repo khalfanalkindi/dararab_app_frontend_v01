@@ -37,6 +37,9 @@ import {
   formatLineUsdAmount,
   sumSelectedOutstandingDisplay,
 } from "@/lib/muscatCurrency"
+import { ReceiptContent } from "@/components/receipt/ReceiptContent"
+import { buildReceiptPayloadForDisplay } from "@/components/receipt/buildReceiptPayload"
+import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface Customer {
   id: number
@@ -259,8 +262,11 @@ export default function OutstandingPaymentPage() {
   const [isCreatingBill, setIsCreatingBill] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = 'view' | 'generate' | 'confirm' | null
+  type DialogType = 'view' | 'generate' | 'confirm' | 'receipt' | null
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
+  const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
+  const [receiptCurrencyLabel, setReceiptCurrencyLabel] = useState("$")
+  const [reopenMainInvoiceAfterReceipt, setReopenMainInvoiceAfterReceipt] = useState(false)
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
@@ -695,7 +701,11 @@ export default function OutstandingPaymentPage() {
     }
   }
 
-  const handleViewInvoice = async (invoice: Invoice) => {
+  const handleViewInvoice = async (
+    invoice: Invoice,
+    options?: { openDialog?: boolean },
+  ) => {
+    const openDialog = options?.openDialog !== false
     // Abort previous request if still pending
     invoiceDetailsAbortControllerRef.current?.abort()
     invoiceDetailsAbortControllerRef.current = new AbortController()
@@ -986,7 +996,21 @@ export default function OutstandingPaymentPage() {
     // Note: We now always fetch complete invoice details above, so this section is no longer needed
     
     setShowOnlyUnpaid(false) // Reset filter when opening new invoice
-    setActiveDialog('view')
+    if (openDialog) {
+      setActiveDialog('view')
+    }
+  }
+
+  const handleCloseReceipt = () => {
+    setReceiptPayload(null)
+    setReceiptCurrencyLabel("$")
+    if (reopenMainInvoiceAfterReceipt) {
+      setReopenMainInvoiceAfterReceipt(false)
+      setActiveDialog("view")
+    } else {
+      setActiveDialog(null)
+      setSelectedInvoice(null)
+    }
   }
 
   const handleResetFilters = () => {
@@ -1683,53 +1707,67 @@ export default function OutstandingPaymentPage() {
         ? `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} is now fully paid and will no longer appear in outstanding payments.`
         : `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} updated with ${remainingItems.length} remaining items.`
 
-    toast({
+      toast({
         title: "New Bill Generated Successfully",
         description: successMessage,
-      variant: "default",
-    })
-
-      toast({
-        title: "Child Bill Details",
-        description: `Child Bill ID: ${invoiceId}, Composite ID: ${composedId}, Main Invoice: ${originalInvoice.composite_id || originalInvoiceId}. View all invoices to see the new child bill.`,
         variant: "default",
-        action: (
-          <Link href="/invoices" className="text-primary hover:underline">
-            View All Invoices
-          </Link>
-        ),
       })
 
-      // Close dialogs and refresh data
-    setActiveDialog(null)
-    setSelectedItems([])
-    setSelectedInvoice(null)
+      setSelectedItems([])
+      setReopenMainInvoiceAfterReceipt(!isInvoiceFullyPaid)
 
-      // Refresh the invoices list
       await fetchInvoices()
 
-      // Verify the new bill was created
+      // Refresh main invoice data in background so it stays available after receipt closes
+      if (!isInvoiceFullyPaid) {
+        await handleViewInvoice(
+          { ...(originalInvoice as Invoice), id: originalInvoiceId },
+          { openDialog: false },
+        )
+      } else {
+        setSelectedInvoice(null)
+      }
+
+      // Fetch child bill summary and show receipt (same as POS complete sale)
       try {
         const verifyResponse = await fetchWithRetry(
           `${API_URL}/sales/invoices/${invoiceId}/summary/`,
           {
             headers,
-            signal: billCreationAbortControllerRef.current.signal
-          }
+            signal: billCreationAbortControllerRef.current.signal,
+          },
         )
         if (verifyResponse.ok) {
-          const verifiedInvoice = await verifyResponse.json()
-          if (process.env.NODE_ENV !== 'production') {
-            console.log("Verified new bill exists:", verifiedInvoice)
-          }
+          const childSummary = await verifyResponse.json()
+          const { payload, currencyLabel } = buildReceiptPayloadForDisplay(
+            childSummary,
+            originalInvoice.warehouse,
+            warehouses,
+          )
+          setReceiptPayload(payload)
+          setReceiptCurrencyLabel(currencyLabel)
+          setActiveDialog("receipt")
         } else {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn("Could not verify new bill creation")
+          toast({
+            title: "Child Bill Created",
+            description: "Bill was created but the receipt could not be loaded. View it from Invoices.",
+            variant: "default",
+          })
+          if (!isInvoiceFullyPaid) {
+            setActiveDialog("view")
           }
         }
       } catch (error) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn("Error verifying new bill:", error)
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Error loading child bill receipt:", error)
+        }
+        toast({
+          title: "Child Bill Created",
+          description: "Bill was created but the receipt could not be loaded. View it from Invoices.",
+          variant: "default",
+        })
+        if (!isInvoiceFullyPaid) {
+          setActiveDialog("view")
         }
       }
 
@@ -2422,6 +2460,31 @@ export default function OutstandingPaymentPage() {
                 )}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Child Bill Receipt Dialog */}
+      <Dialog
+        open={activeDialog === "receipt"}
+        onOpenChange={(open) => {
+          if (!open) handleCloseReceipt()
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
+          <DialogHeader className="shrink-0 space-y-1 pb-2">
+            <DialogTitle>Child Bill Receipt</DialogTitle>
+            <DialogDescription>View, print, or download the new child bill.</DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {receiptPayload ? (
+              <ReceiptContent
+                receiptData={receiptPayload}
+                currencyLabel={receiptCurrencyLabel}
+                getDisplayPrice={() => null}
+                onClose={handleCloseReceipt}
+              />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
