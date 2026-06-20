@@ -1585,6 +1585,20 @@ export default function InventoryManagementPage() {
       item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
     )
 
+    const allFilteredSelected =
+      filteredItems.length > 0 && filteredItems.every((item) => selectedIds.includes(item.id))
+    const someFilteredSelected = filteredItems.some((item) => selectedIds.includes(item.id))
+
+    const handleSelectAllFiltered = () => {
+      const filteredIds = filteredItems.map((item) => item.id)
+      onSelectionChange([...new Set([...selectedIds, ...filteredIds])])
+    }
+
+    const handleDeselectAllFiltered = () => {
+      const filteredIdSet = new Set(filteredItems.map((item) => item.id))
+      onSelectionChange(selectedIds.filter((id) => !filteredIdSet.has(id)))
+    }
+
   return (
       <div className="space-y-2">
         <Popover
@@ -1624,6 +1638,40 @@ export default function InventoryManagementPage() {
                 onWheel={(e) => e.stopPropagation()}
               >
                 <CommandEmpty>No products found.</CommandEmpty>
+                {filteredItems.length > 0 && (
+                  <div className="sticky top-0 z-10 border-b bg-muted/50 px-2 py-1.5">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-primary hover:underline disabled:opacity-50"
+                        disabled={allFilteredSelected}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleSelectAllFiltered()
+                        }}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-muted-foreground hover:underline disabled:opacity-50"
+                        disabled={!someFilteredSelected}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeselectAllFiltered()
+                        }}
+                      >
+                        Deselect All
+                      </button>
+                      {someFilteredSelected && !allFilteredSelected && (
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {filteredItems.filter((item) => selectedIds.includes(item.id)).length} of{" "}
+                          {filteredItems.length}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <CommandGroup className="overflow-visible">
                   {filteredItems.map((item) => {
                     const isSelected = selectedIds.includes(item.id)
@@ -1871,6 +1919,15 @@ export default function InventoryManagementPage() {
                     <Label className="text-sm font-medium">
                       Selected Products ({selectedProductIds.length})
                     </Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setSelectedProductIds([])}
+                    >
+                      Deselect All
+                    </Button>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {(showAllSelected ? productOptions.filter(p => selectedProductIds.includes(p.id)) : productOptions.filter(p => selectedProductIds.includes(p.id)).slice(0, MAX_VISIBLE_ITEMS)).map((item) => (

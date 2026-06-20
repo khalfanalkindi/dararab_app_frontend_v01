@@ -845,8 +845,6 @@ export default function ProductTransferPage() {
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
-    const [showAllSelected, setShowAllSelected] = useState(false)
-    const MAX_VISIBLE_ITEMS = 3 // Show first 3 items by default
 
     useEffect(() => {
       const timer = setTimeout(() => {
@@ -867,27 +865,24 @@ export default function ProductTransferPage() {
       item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
     )
 
-    const selectedItems = items.filter((item) => selectedIds.includes(item.id))
-    
-    // Check if all filtered items are selected
-    const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedIds.includes(item.id))
-    const someFilteredSelected = filteredItems.some(item => selectedIds.includes(item.id))
-    
-    const handleSelectAll = () => {
-      const filteredIds = filteredItems.map(item => item.id)
-      if (allFilteredSelected) {
-        // Deselect all filtered items
-        onSelectionChange(selectedIds.filter(id => !filteredIds.includes(id)))
-      } else {
-        // Select all filtered items (merge with existing selections)
-        const newSelection = [...new Set([...selectedIds, ...filteredIds])]
-        onSelectionChange(newSelection)
-      }
+    const allFilteredSelected =
+      filteredItems.length > 0 && filteredItems.every((item) => selectedIds.includes(item.id))
+    const someFilteredSelected = filteredItems.some((item) => selectedIds.includes(item.id))
+
+    const handleSelectAllFiltered = () => {
+      const filteredIds = filteredItems.map((item) => item.id)
+      onSelectionChange([...new Set([...selectedIds, ...filteredIds])])
+    }
+
+    const handleDeselectAllFiltered = () => {
+      const filteredIdSet = new Set(filteredItems.map((item) => item.id))
+      onSelectionChange(selectedIds.filter((id) => !filteredIdSet.has(id)))
     }
 
   return (
       <div className="space-y-2">
         <Popover
+          modal={false}
           open={open}
           onOpenChange={(next) => {
             setOpen(next)
@@ -895,7 +890,6 @@ export default function ProductTransferPage() {
             if (!next) {
               setSearchQuery("")
               setDebouncedSearchQuery("")
-              setShowAllSelected(false) // Reset show all when closing
             }
           }}
         >
@@ -907,47 +901,58 @@ export default function ProductTransferPage() {
             </Button>
           </PopoverTrigger>
           <PopoverContent 
-            className="p-0 w-[400px] max-h-[400px] flex flex-col overflow-hidden"
+            className="p-0 w-[400px] z-[60]"
             onOpenAutoFocus={(e) => e.preventDefault()}
+            onEscapeKeyDown={() => {
+              setOpen(false)
+            }}
           >
-            <Command shouldFilter={false} className="flex flex-col h-full">
-              <div className="flex-shrink-0 border-b">
-                <CommandInput
-                  placeholder="Search products..."
-                  value={searchQuery}
-                  onValueChange={setSearchQuery}
-                />
-              </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <CommandList className="h-full overflow-y-auto overflow-x-hidden">
-                  <CommandEmpty>No products found.</CommandEmpty>
-                  {filteredItems.length > 0 && (
-                    <div className="border-b px-2 py-1.5 bg-muted/50">
-                      <div
-                        className="flex items-center space-x-2 w-full cursor-pointer hover:bg-muted rounded px-2 py-1.5 -mx-2 -my-1.5"
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Search products..."
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+              />
+              <CommandList
+                className="max-h-[300px] overflow-y-auto overscroll-contain"
+                onWheel={(e) => e.stopPropagation()}
+              >
+                <CommandEmpty>No products found.</CommandEmpty>
+                {filteredItems.length > 0 && (
+                  <div className="sticky top-0 z-10 border-b bg-muted/50 px-2 py-1.5">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-primary hover:underline disabled:opacity-50"
+                        disabled={allFilteredSelected}
                         onClick={(e) => {
                           e.stopPropagation()
-                          handleSelectAll()
+                          handleSelectAllFiltered()
                         }}
                       >
-                        <Checkbox
-                          checked={allFilteredSelected}
-                          className="h-4 w-4"
-                          onChange={handleSelectAll}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <span className="text-sm font-medium flex-1">
-                          {allFilteredSelected ? "Deselect All" : "Select All"}
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-muted-foreground hover:underline disabled:opacity-50"
+                        disabled={!someFilteredSelected}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeselectAllFiltered()
+                        }}
+                      >
+                        Deselect All
+                      </button>
+                      {someFilteredSelected && !allFilteredSelected && (
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {filteredItems.filter((item) => selectedIds.includes(item.id)).length} of{" "}
+                          {filteredItems.length}
                         </span>
-                        {someFilteredSelected && !allFilteredSelected && (
-                          <span className="text-xs text-muted-foreground">
-                            ({filteredItems.filter(item => selectedIds.includes(item.id)).length} of {filteredItems.length})
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
-                  )}
-                  <CommandGroup>
+                  </div>
+                )}
+                <CommandGroup className="overflow-visible">
                   {filteredItems.map((item) => {
                     const isSelected = selectedIds.includes(item.id)
                     return (
@@ -980,9 +985,8 @@ export default function ProductTransferPage() {
                       </CommandItem>
                     )
                   })}
-                  </CommandGroup>
-                </CommandList>
-              </div>
+                </CommandGroup>
+              </CommandList>
             </Command>
           </PopoverContent>
         </Popover>
@@ -1143,6 +1147,15 @@ export default function ProductTransferPage() {
                     <Label className="text-sm font-medium">
                       Selected Products ({selectedProductIds.length})
                     </Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setSelectedProductIds([])}
+                    >
+                      Deselect All
+                    </Button>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {(showAllSelected ? productOptions.filter(p => selectedProductIds.includes(p.id)) : productOptions.filter(p => selectedProductIds.includes(p.id)).slice(0, MAX_VISIBLE_ITEMS)).map((item) => (

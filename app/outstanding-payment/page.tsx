@@ -32,6 +32,11 @@ import { DateRange } from "react-day-picker"
 import { Checkbox } from "@/components/ui/checkbox"
 
 import { API_URL } from "@/lib/config"
+import {
+  formatInvoiceUsdAmount,
+  formatLineUsdAmount,
+  sumSelectedOutstandingDisplay,
+} from "@/lib/muscatCurrency"
 
 interface Customer {
   id: number
@@ -48,6 +53,7 @@ interface Warehouse {
   name_en?: string
   name_ar?: string
   name?: string
+  location?: string
 }
 
 interface Product {
@@ -56,6 +62,10 @@ interface Product {
   name_ar: string
   title?: string
   title_ar?: string
+  price?: string | null
+  price_omr?: string | null
+  latest_price?: string | null
+  latest_price_omr?: string | null
 }
 
 interface Invoice {
@@ -996,12 +1006,17 @@ export default function OutstandingPaymentPage() {
     ))
   }
 
-  // Calculate selected total using useMemo for efficiency
+  // Calculate selected total using useMemo for efficiency (USD for logic)
   const selectedTotal = useMemo(() => {
     return invoices
       .filter(invoice => invoice.selected)
       .reduce((sum, invoice) => sum + (invoice.remaining_amount || 0), 0)
   }, [invoices])
+
+  const selectedTotalDisplay = useMemo(
+    () => sumSelectedOutstandingDisplay(invoices, warehouses),
+    [invoices, warehouses],
+  )
 
   const handleSearch = () => {
     fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
@@ -1915,7 +1930,7 @@ export default function OutstandingPaymentPage() {
             {selectedTotal > 0 && (
               <div className="mb-4 p-4 bg-primary/10 rounded-md">
                 <p className="text-lg font-semibold">
-                  Selected Outstanding Total: {selectedTotal.toFixed(3)} $
+                  Selected Outstanding Total: {selectedTotalDisplay}
                 </p>
               </div>
             )}
@@ -1984,10 +1999,14 @@ export default function OutstandingPaymentPage() {
                             <td className="p-2">{invoice.customer_name || 'No Customer'}</td>
                             <td className="p-2">{invoice.warehouse_name || 'No Warehouse'}</td>
                             <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
-                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} $</td>
-                            <td className="p-2 text-right">{(invoice.total_paid || 0).toFixed(3)} $</td>
+                            <td className="p-2 text-right">
+                              {formatInvoiceUsdAmount(invoice.total_amount || 0, invoice, warehouses)}
+                            </td>
+                            <td className="p-2 text-right">
+                              {formatInvoiceUsdAmount(invoice.total_paid || 0, invoice, warehouses)}
+                            </td>
                             <td className="p-2 text-right font-semibold text-red-600">
-                              {(invoice.remaining_amount || 0).toFixed(3)} $
+                              {formatInvoiceUsdAmount(invoice.remaining_amount || 0, invoice, warehouses)}
                             </td>
                             <td className="p-2 text-right">
                               <Button
@@ -2063,15 +2082,21 @@ export default function OutstandingPaymentPage() {
               <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold">{(selectedInvoice.total_amount || 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold">
+                    {formatInvoiceUsdAmount(selectedInvoice.total_amount || 0, selectedInvoice, warehouses)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Paid Amount</p>
-                  <p className="text-lg font-semibold text-green-600">{(selectedInvoice.total_paid || 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold text-green-600">
+                    {formatInvoiceUsdAmount(selectedInvoice.total_paid || 0, selectedInvoice, warehouses)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Outstanding</p>
-                  <p className="text-lg font-semibold text-red-600">{(selectedInvoice.remaining_amount || 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold text-red-600">
+                    {formatInvoiceUsdAmount(selectedInvoice.remaining_amount || 0, selectedInvoice, warehouses)}
+                  </p>
                 </div>
               </div>
 
@@ -2189,11 +2214,13 @@ export default function OutstandingPaymentPage() {
                               </div>
                             </td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.quantity) || 0}</td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{(Number(item.unit_price) || 0).toFixed(3)} $</td>
+                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>
+                                {formatLineUsdAmount(Number(item.unit_price) || 0, item, selectedInvoice, warehouses)}
+                              </td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.discount_percent) || 0}%</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.tax_percent) || 0}%</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700 font-semibold' : ''}`}>
-                                {(Number(item.total_price) || 0).toFixed(3)} $
+                                {formatLineUsdAmount(Number(item.total_price) || 0, item, selectedInvoice, warehouses)}
                                 {isPaid && <span className="ml-1 text-xs text-green-600">✓</span>}
                               </td>
                           </tr>
@@ -2267,7 +2294,15 @@ export default function OutstandingPaymentPage() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold text-green-600">{selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold text-green-600">
+                    {selectedInvoice
+                      ? formatInvoiceUsdAmount(
+                          selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0),
+                          selectedInvoice,
+                          warehouses,
+                        )
+                      : "0.000 $"}
+                  </p>
                 </div>
               </div>
 
@@ -2296,10 +2331,18 @@ export default function OutstandingPaymentPage() {
                             </div>
                           </td>
                           <td className="p-2 text-right">{Number(item.quantity) || 0}</td>
-                          <td className="p-2 text-right">{(Number(item.unit_price) || 0).toFixed(3)} $</td>
+                          <td className="p-2 text-right">
+                            {selectedInvoice
+                              ? formatLineUsdAmount(Number(item.unit_price) || 0, item, selectedInvoice, warehouses)
+                              : `${(Number(item.unit_price) || 0).toFixed(3)} $`}
+                          </td>
                           <td className="text-right">{Number(item.discount_percent) || 0}%</td>
                           <td className="p-2 text-right">{Number(item.tax_percent) || 0}%</td>
-                          <td className="p-2 text-right">{(Number(item.total_price) || 0).toFixed(3)} $</td>
+                          <td className="p-2 text-right">
+                            {selectedInvoice
+                              ? formatLineUsdAmount(Number(item.total_price) || 0, item, selectedInvoice, warehouses)
+                              : `${(Number(item.total_price) || 0).toFixed(3)} $`}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2309,7 +2352,13 @@ export default function OutstandingPaymentPage() {
                           Total Amount:
                         </td>
                         <td className="p-2 text-right font-medium">
-                          {selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} $
+                          {selectedInvoice
+                            ? formatInvoiceUsdAmount(
+                                selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0),
+                                selectedInvoice,
+                                warehouses,
+                              )
+                            : "0.000 $"}
                         </td>
                       </tr>
                     </tfoot>
