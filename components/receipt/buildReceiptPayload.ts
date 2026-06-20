@@ -43,7 +43,7 @@ export interface InvoiceSummaryLike {
 type SourceItemLike = {
   id?: number
   product_name?: string
-  product?: ReceiptItem["product"]
+  product?: unknown
   quantity?: unknown
   unit_price?: unknown
   discount_percent?: unknown
@@ -219,7 +219,7 @@ function buildReceiptFromSourceItemsOnly(
     return {
       id: source.id,
       product_name: source.product_name,
-      product: catalogProduct ?? source.product,
+      product: (catalogProduct ?? source.product) as ReceiptItem["product"],
       quantity: source.quantity,
       unit_price: source.unit_price,
       discount_percent: source.discount_percent,
@@ -275,11 +275,12 @@ function mergeInvoiceWithSourceItems(
             getItemProductId(item) ?? getItemProductId(source ?? {})
           const catalogProduct =
             productId != null ? catalog.get(productId) : undefined
-          const resolvedProduct =
+          const resolvedProduct = (
             catalogProduct ??
             (typeof source?.product === "object" ? source.product : undefined) ??
             item.product ??
             (productId != null ? productId : undefined)
+          ) as ReceiptItem["product"]
 
           return {
             ...item,
@@ -299,7 +300,7 @@ function mergeInvoiceWithSourceItems(
           return {
             id: source.id,
             product_name: source.product_name,
-            product: catalogProduct ?? source.product,
+            product: (catalogProduct ?? source.product) as ReceiptItem["product"],
             quantity: source.quantity,
             unit_price: source.unit_price,
             discount_percent: source.discount_percent,
