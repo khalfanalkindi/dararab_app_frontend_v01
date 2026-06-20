@@ -1,7 +1,12 @@
 import { toNum, type ReceiptData, type ReceiptItem } from "./ReceiptContent"
+import { API_URL } from "@/lib/config"
 import {
+  getLineUsdToOmrRatio,
+  getProductId,
   getProductUsdToOmrRatio,
-  isMuscatWarehouse,
+  isMuscatWarehouseContext,
+  resolveProductForOmr,
+  type ProductCatalog,
   type WarehouseLike,
 } from "@/lib/muscatCurrency"
 
@@ -123,14 +128,104 @@ function scaleUsdToOmr(usdAmount: number, ratio: number): number {
   return Number((usdAmount * ratio).toFixed(3))
 }
 
+export function buildProductCatalogFromItems(
+  items: Array<{ product?: unknown }>,
+): ProductCatalog {
+  const catalog: ProductCatalog = new Map()
+  for (const item of items) {
+    const product = item.product
+    if (typeof product === "object" && product !== null) {
+      const id = getProductId(product)
+      if (id != null) catalog.set(id, product as Record<string, unknown>)
+    }
+  }
+  return catalog
+}
+
+function collectProductIdsNeedingOmr(
+  items: ReceiptItem[],
+  catalog: ProductCatalog,
+): number[] {
+  const ids = new Set<number>()
+  for (const item of items) {
+    if (getLineUsdToOmrRatio(item, catalog)) continue
+    const id =
+      getProductId(item.product) ??
+      getProductId(resolveProductForOmr(item.product, catalog))
+    if (id != null) ids.add(id)
+  }
+  return [...ids]
+}
+
+function productRecordFromAggregated(
+  productId: number,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const product = (data.product ?? data) as Record<string, unknown>
+  const printRun = Array.isArray(data.print_runs)
+    ? (data.print_runs[0] as Record<string, unknown> | undefined)
+    : undefined
+
+  return {
+    id: productId,
+    price: product.price ?? product.latest_price ?? printRun?.price,
+    price_omr: product.price_omr ?? product.latest_price_omr ?? printRun?.price_omr,
+    latest_price: product.latest_price ?? printRun?.price,
+    latest_price_omr: product.latest_price_omr ?? printRun?.price_omr,
+  }
+}
+
+export async function enrichProductCatalogFromApi(
+  catalog: ProductCatalog,
+  productIds: number[],
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<ProductCatalog> {
+  const enriched: ProductCatalog = new Map(catalog)
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
+  }
+
+  await Promise.all(
+    productIds.map(async (productId) => {
+      if (enriched.has(productId) && getProductUsdToOmrRatio(enriched.get(productId))) {
+        return
+      }
+      try {
+        const response = await fetch(
+          `${API_URL}/inventory/products/${productId}/aggregated/`,
+          { headers, signal },
+        )
+        if (!response.ok) return
+        const data = (await response.json()) as Record<string, unknown>
+        enriched.set(productId, productRecordFromAggregated(productId, data))
+      } catch {
+        // Keep USD fallback when product OMR data is unavailable
+      }
+    }),
+  )
+
+  return enriched
+}
+
 /** Build receipt payload with Muscat OMR on screen (USD from API), discount-aware per line totals. */
 export function buildReceiptPayloadForDisplay(
   invoice: InvoiceSummaryLike,
   warehouse?: WarehouseLike | null,
   warehouses: WarehouseLike[] = [],
+  productCatalog?: ProductCatalog,
 ): { payload: ReceiptData; currencyLabel: string } {
   const payload = buildReceiptPayloadFromSummary(invoice)
-  const isMuscat = isMuscatWarehouse(warehouse?.id, warehouse ?? undefined, warehouses)
+  const isMuscat = isMuscatWarehouseContext(
+    warehouse?.id,
+    warehouse ?? undefined,
+    warehouses,
+    {
+      warehouse_name: invoice.warehouse_name,
+      warehouse_location: invoice.warehouse_location,
+    },
+  )
   const warehouseLocation =
     invoice.warehouse_location ||
     warehouse?.location ||
@@ -146,7 +241,7 @@ export function buildReceiptPayloadForDisplay(
 
   let convertedLines = 0
   const items = payload.items.map((item) => {
-    const ratio = getProductUsdToOmrRatio(item.product)
+    const ratio = getLineUsdToOmrRatio(item, productCatalog)
     if (!ratio) return item
     convertedLines += 1
     return {
@@ -188,4 +283,36 @@ export function buildReceiptPayloadForDisplay(
     },
     currencyLabel: "OMR",
   }
+}
+
+export async function buildReceiptPayloadForDisplayAsync(
+  invoice: InvoiceSummaryLike,
+  warehouse?: WarehouseLike | null,
+  warehouses: WarehouseLike[] = [],
+  sourceItems: Array<{ product?: unknown }> = [],
+  accessToken = "",
+  signal?: AbortSignal,
+): Promise<{ payload: ReceiptData; currencyLabel: string }> {
+  const basePayload = buildReceiptPayloadFromSummary(invoice)
+  const isMuscat = isMuscatWarehouseContext(
+    warehouse?.id,
+    warehouse ?? undefined,
+    warehouses,
+    {
+      warehouse_name: invoice.warehouse_name,
+      warehouse_location: invoice.warehouse_location,
+    },
+  )
+
+  if (!isMuscat) {
+    return buildReceiptPayloadForDisplay(invoice, warehouse, warehouses)
+  }
+
+  let catalog = buildProductCatalogFromItems(sourceItems)
+  const missingIds = collectProductIdsNeedingOmr(basePayload.items, catalog)
+  if (missingIds.length > 0 && accessToken) {
+    catalog = await enrichProductCatalogFromApi(catalog, missingIds, accessToken, signal)
+  }
+
+  return buildReceiptPayloadForDisplay(invoice, warehouse, warehouses, catalog)
 }

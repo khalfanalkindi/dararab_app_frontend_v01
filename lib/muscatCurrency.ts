@@ -3,7 +3,11 @@
 export interface WarehouseLike {
   id?: number
   location?: string
+  name_en?: string
+  name?: string
 }
+
+export type ProductCatalog = Map<number, Record<string, unknown>>
 
 export interface InvoiceLineLike {
   total_price?: number | string
@@ -32,6 +36,53 @@ export function isMuscatWarehouse(
   return false
 }
 
+export function isMuscatWarehouseContext(
+  warehouseId: number | null | undefined,
+  warehouse: WarehouseLike | null | undefined,
+  warehouses: WarehouseLike[] = [],
+  hints?: { warehouse_name?: string; warehouse_location?: string },
+): boolean {
+  if (isMuscatWarehouse(warehouseId, warehouse ?? undefined, warehouses)) return true
+  const location = hints?.warehouse_location || warehouse?.location || ""
+  if (/muscat/i.test(String(location))) return true
+  const name = hints?.warehouse_name || warehouse?.name_en || warehouse?.name || ""
+  if (/muscat/i.test(String(name))) return true
+  return false
+}
+
+export function getProductId(product: unknown): number | null {
+  if (typeof product === "number" && Number.isFinite(product)) return product
+  if (product && typeof product === "object") {
+    const id = (product as Record<string, unknown>).id
+    if (typeof id === "number") return id
+  }
+  return null
+}
+
+export function resolveProductForOmr(
+  product: unknown,
+  catalog?: ProductCatalog,
+): unknown {
+  if (product && typeof product === "object") {
+    const record = product as Record<string, unknown>
+    if (getProductUsdToOmrRatio(record)) return record
+    const id = getProductId(record)
+    if (id != null && catalog?.has(id)) return catalog.get(id)
+    return record
+  }
+  if (typeof product === "number" && catalog?.has(product)) {
+    return catalog.get(product)
+  }
+  return product
+}
+
+export function getLineUsdToOmrRatio(
+  item: InvoiceLineLike,
+  catalog?: ProductCatalog,
+): number | null {
+  return getProductUsdToOmrRatio(resolveProductForOmr(item.product, catalog))
+}
+
 export function isMuscatInvoice(invoice: InvoiceLike, warehouses: WarehouseLike[] = []): boolean {
   return isMuscatWarehouse(invoice.warehouse?.id, invoice.warehouse ?? undefined, warehouses)
 }
@@ -55,8 +106,12 @@ export function getLineUsdTotal(item: InvoiceLineLike): number {
   return Number.isFinite(raw) ? Math.max(0, raw) : 0
 }
 
-export function convertUsdLineAmountToOmr(usdAmount: number, item: InvoiceLineLike): number | null {
-  const ratio = getProductUsdToOmrRatio(item.product)
+export function convertUsdLineAmountToOmr(
+  usdAmount: number,
+  item: InvoiceLineLike,
+  catalog?: ProductCatalog,
+): number | null {
+  const ratio = getLineUsdToOmrRatio(item, catalog)
   if (!ratio) return null
   return Number((usdAmount * ratio).toFixed(3))
 }
@@ -77,7 +132,7 @@ export function convertInvoiceUsdToDisplay(
 
   for (const item of items) {
     const lineUsd = getLineUsdTotal(item)
-    const ratio = getProductUsdToOmrRatio(item.product)
+    const ratio = getLineUsdToOmrRatio(item)
     usdSum += lineUsd
     if (ratio) {
       omrSum += lineUsd * ratio

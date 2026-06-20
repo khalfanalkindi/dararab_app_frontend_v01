@@ -38,7 +38,7 @@ import {
   sumSelectedOutstandingDisplay,
 } from "@/lib/muscatCurrency"
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
-import { buildReceiptPayloadForDisplay } from "@/components/receipt/buildReceiptPayload"
+import { buildReceiptPayloadForDisplayAsync } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface Customer {
@@ -1713,6 +1713,8 @@ export default function OutstandingPaymentPage() {
         variant: "default",
       })
 
+      const receiptSourceItems = [...selectedItems]
+
       setSelectedItems([])
       setReopenMainInvoiceAfterReceipt(!isInvoiceFullyPaid)
 
@@ -1739,10 +1741,13 @@ export default function OutstandingPaymentPage() {
         )
         if (verifyResponse.ok) {
           const childSummary = await verifyResponse.json()
-          const { payload, currencyLabel } = buildReceiptPayloadForDisplay(
+          const { payload, currencyLabel } = await buildReceiptPayloadForDisplayAsync(
             childSummary,
             originalInvoice.warehouse,
             warehouses,
+            receiptSourceItems,
+            token ?? "",
+            billCreationAbortControllerRef.current?.signal,
           )
           setReceiptPayload(payload)
           setReceiptCurrencyLabel(currencyLabel)
