@@ -16,6 +16,11 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FileText, CheckCircle2, AlertCircle, Clock, Users, DollarSign, Receipt, TrendingUp, BookOpen } from "lucide-react"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ResponsiveContainer } from "recharts"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { DatePickerWithRange } from "@/components/ui/date-range-picker"
+import { DateRange } from "react-day-picker"
+import { Button } from "@/components/ui/button"
+import { format } from "date-fns"
 
 interface DashboardStats {
   totalProjects: number
@@ -31,9 +36,11 @@ interface DashboardStats {
   totalRevenue: number
   monthlyRevenue: number
   booksSold: number
+  billsChangePercent: number
+  revenueChangePercent: number
+  booksSoldChangePercent: number
 }
 
-// Add mock sales data interface
 interface SalesData {
   month: string
   sales: number
@@ -51,6 +58,68 @@ interface ProjectStatusData {
   color: string
 }
 
+interface ProjectTrend {
+  month: string
+  projects: number
+}
+
+interface DashboardOverviewResponse {
+  filters: {
+    warehouse_id: number | null
+    start_date: string | null
+    end_date: string | null
+  }
+  projects: {
+    total: number
+    approved: number
+    pending: number
+    approved_percentage: number
+    pending_percentage: number
+  }
+  people: {
+    authors: number
+    translators: number
+    rights_owners: number
+    reviewers: number
+  }
+  sales: {
+    total_bills: number
+    total_revenue: number
+    monthly_revenue: number
+    books_sold: number
+    bills_change_percent: number
+    revenue_change_percent: number
+    books_sold_change_percent: number
+    comparison_mode: "previous_month" | "previous_period"
+  }
+  project_status: ProjectStatusData[]
+  project_trends: ProjectTrend[]
+  sales_trend: SalesData[]
+  sales_by_genre: SalesByCategory[]
+}
+
+interface Warehouse {
+  id: number
+  name_en: string
+  name_ar: string
+}
+
+function formatDateParam(date: Date): string {
+  return format(date, "yyyy-MM-dd")
+}
+
+function dateRangeKey(range: DateRange | null): string {
+  if (!range?.from) return ""
+  const to = range.to ?? range.from
+  return `${formatDateParam(range.from)}|${formatDateParam(to)}`
+}
+
+function formatChangePercent(value: number, mode: "previous_month" | "previous_period"): string {
+  const sign = value > 0 ? "+" : ""
+  const suffix = mode === "previous_period" ? "from previous period" : "from last month"
+  return `${sign}${value}% ${suffix}`
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats>({
     totalProjects: 0,
@@ -65,12 +134,27 @@ export default function Dashboard() {
     totalBills: 0,
     totalRevenue: 0,
     monthlyRevenue: 0,
-    booksSold: 0
+    booksSold: 0,
+    billsChangePercent: 0,
+    revenueChangePercent: 0,
+    booksSoldChangePercent: 0,
   })
+  const [projectStatusData, setProjectStatusData] = useState<ProjectStatusData[]>([])
+  const [projectTrends, setProjectTrends] = useState<ProjectTrend[]>([])
+  const [salesTrend, setSalesTrend] = useState<SalesData[]>([])
+  const [salesByGenre, setSalesByGenre] = useState<SalesByCategory[]>([])
+  const [comparisonMode, setComparisonMode] = useState<"previous_month" | "previous_period">("previous_month")
+  const [hasDateFilter, setHasDateFilter] = useState(false)
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>("all")
+  const [dateRange, setDateRange] = useState<DateRange | null>(null)
+  const [appliedWarehouse, setAppliedWarehouse] = useState<string>("all")
+  const [appliedDateRange, setAppliedDateRange] = useState<DateRange | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   // AbortController refs for request cancellation
   const fetchStatsAbortControllerRef = useRef<AbortController | null>(null)
+  const warehousesAbortControllerRef = useRef<AbortController | null>(null)
 
   // Memoized headers object
   const headers = useMemo(() => {
@@ -144,203 +228,135 @@ export default function Dashboard() {
     }
   }, [])
 
-  // Mock sales data
-  const salesData: SalesData[] = [
-    { month: 'Jan', sales: 45, revenue: 4500 },
-    { month: 'Feb', sales: 52, revenue: 5200 },
-    { month: 'Mar', sales: 48, revenue: 4800 },
-    { month: 'Apr', sales: 60, revenue: 6000 },
-  ]
-
-  // Mock sales data by genre
-  const salesByCategory: SalesByCategory[] = [
-    { category: 'Fiction', sales: 45 },
-    { category: 'Non-Fiction', sales: 35 },
-    { category: 'Biography', sales: 25 },
-    { category: 'History', sales: 30 },
-    { category: 'Science', sales: 20 },
-    { category: 'Poetry', sales: 15 },
-    { category: 'Children', sales: 40 },
-    { category: 'Religion', sales: 25 },
-  ]
-
-  // Project status data for pie chart
-  const projectStatusData: ProjectStatusData[] = [
-    { name: 'Approved', value: 0, color: '#10b981' },
-    { name: 'Pending', value: 0, color: '#f59e0b' },
-  ]
-
-  // Update project status data when stats change
-  const updatedProjectStatusData = [
-    { name: 'Approved', value: stats.approvedProjects, color: '#10b981' },
-    { name: 'Pending', value: stats.pendingProjects, color: '#f59e0b' },
-  ]
-
   useEffect(() => {
-    // Log the access token for debugging (kept for testing purposes)
-    const accessToken = localStorage.getItem("accessToken")
-    console.log("Access Token:", accessToken)
-    
-    // Cancel previous request if any
-    if (fetchStatsAbortControllerRef.current) {
-      fetchStatsAbortControllerRef.current.abort()
+    if (warehousesAbortControllerRef.current) {
+      warehousesAbortControllerRef.current.abort()
     }
-    
+
     const controller = new AbortController()
-    fetchStatsAbortControllerRef.current = controller
-    
-    const fetchStats = async () => {
+    warehousesAbortControllerRef.current = controller
+
+    const fetchWarehouses = async () => {
       try {
-        // Fetch all data in parallel
-        const [projectsRes, authorsRes, translatorsRes, rightsOwnersRes, reviewersRes] = await Promise.allSettled([
-          fetchWithRetry(`${API_URL}/inventory/projects/`, {
-            headers,
-            signal: controller.signal,
-          }),
-          fetchWithRetry(`${API_URL}/inventory/authors/`, {
-            headers,
-            signal: controller.signal,
-          }),
-          fetchWithRetry(`${API_URL}/inventory/translators/`, {
-            headers,
-            signal: controller.signal,
-          }),
-          fetchWithRetry(`${API_URL}/inventory/rights-owners/`, {
-            headers,
-            signal: controller.signal,
-          }),
-          fetchWithRetry(`${API_URL}/inventory/reviewers/`, {
-            headers,
-            signal: controller.signal,
-          }),
-        ])
-
-        // Process projects
-        let projects: any[] = []
-        if (projectsRes.status === 'fulfilled' && projectsRes.value.ok) {
-          const projectsData = await projectsRes.value.json()
-          projects = Array.isArray(projectsData) ? projectsData : projectsData.results || []
-        } else if (projectsRes.status === 'rejected') {
-          throw new Error(`Projects API error: ${projectsRes.reason}`)
-        } else if (projectsRes.status === 'fulfilled' && !projectsRes.value.ok) {
-          throw new Error(`Projects API error: ${projectsRes.value.status}`)
-        }
-
-        // Process authors
-        let authors: any[] = []
-        if (authorsRes.status === 'fulfilled' && authorsRes.value.ok) {
-          const authorsData = await authorsRes.value.json()
-          authors = Array.isArray(authorsData) ? authorsData : authorsData.results || []
-        } else if (authorsRes.status === 'rejected') {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('Authors API error:', authorsRes.reason)
-          }
-        } else if (authorsRes.status === 'fulfilled' && !authorsRes.value.ok) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn(`Authors API error: ${authorsRes.value.status}`)
-          }
-        }
-
-        // Process translators
-        let translators: any[] = []
-        if (translatorsRes.status === 'fulfilled' && translatorsRes.value.ok) {
-          const translatorsData = await translatorsRes.value.json()
-          translators = Array.isArray(translatorsData) ? translatorsData : translatorsData.results || []
-        } else if (translatorsRes.status === 'rejected') {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('Translators API error:', translatorsRes.reason)
-          }
-        } else if (translatorsRes.status === 'fulfilled' && !translatorsRes.value.ok) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn(`Translators API error: ${translatorsRes.value.status}`)
-          }
-        }
-
-        // Process rights owners
-        let rightsOwners: any[] = []
-        if (rightsOwnersRes.status === 'fulfilled' && rightsOwnersRes.value.ok) {
-          const rightsOwnersData = await rightsOwnersRes.value.json()
-          rightsOwners = Array.isArray(rightsOwnersData) ? rightsOwnersData : rightsOwnersData.results || []
-        } else if (rightsOwnersRes.status === 'rejected') {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('Rights Owners API error:', rightsOwnersRes.reason)
-          }
-        } else if (rightsOwnersRes.status === 'fulfilled' && !rightsOwnersRes.value.ok) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn(`Rights Owners API error: ${rightsOwnersRes.value.status}`)
-          }
-        }
-
-        // Process reviewers
-        let reviewers: any[] = []
-        if (reviewersRes.status === 'fulfilled' && reviewersRes.value.ok) {
-          const reviewersData = await reviewersRes.value.json()
-          reviewers = Array.isArray(reviewersData) ? reviewersData : reviewersData.results || []
-        } else if (reviewersRes.status === 'rejected') {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('Reviewers API error:', reviewersRes.reason)
-          }
-        } else if (reviewersRes.status === 'fulfilled' && !reviewersRes.value.ok) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn(`Reviewers API error: ${reviewersRes.value.status}`)
-          }
-        }
-
-        const approvedProjects = projects.filter((p: any) => p.approval_status === true).length
-
-        // Calculate percentages safely
-        const totalProjects = projects.length
-        const approvedPercentage = totalProjects > 0 ? ((approvedProjects / totalProjects) * 100).toFixed(1) : '0'
-        const pendingPercentage = totalProjects > 0 ? (((totalProjects - approvedProjects) / totalProjects) * 100).toFixed(1) : '0'
-
-        setStats({
-          totalProjects,
-          approvedProjects,
-          pendingProjects: totalProjects - approvedProjects,
-          totalAuthors: authors.length,
-          totalTranslators: translators.length,
-          totalRightsOwners: rightsOwners.length,
-          totalReviewers: reviewers.length,
-          approvedPercentage,
-          pendingPercentage,
-          totalBills: 156, // Mock data
-          totalRevenue: 24500, // Mock data
-          monthlyRevenue: 6000, // Mock data
-          booksSold: 180 // Mock data
+        const response = await fetchWithRetry(`${API_URL}/inventory/warehouses/`, {
+          headers,
+          signal: controller.signal,
         })
-
-        // Log the data for debugging (only in development)
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('Projects:', projects)
-          console.log('Authors:', authors)
-          console.log('Translators:', translators)
-          console.log('Rights Owners:', rightsOwners)
-          console.log('Reviewers:', reviewers)
+        if (!response.ok) {
+          throw new Error(`Warehouses API error: ${response.status}`)
         }
+        const data = await response.json()
+        const list = Array.isArray(data) ? data : data.results || []
+        setWarehouses(list)
       } catch (error) {
-        handleError(error, "Error fetching dashboard stats")
-        // Set default values in case of error
-        setStats({
-          totalProjects: 0,
-          approvedProjects: 0,
-          pendingProjects: 0,
-          totalAuthors: 0,
-          totalTranslators: 0,
-          totalRightsOwners: 0,
-          totalReviewers: 0,
-          approvedPercentage: '0',
-          pendingPercentage: '0',
-          totalBills: 0,
-          totalRevenue: 0,
-          monthlyRevenue: 0,
-          booksSold: 0
-        })
-      } finally {
-        setIsLoading(false)
+        handleError(error, "Error fetching warehouses")
       }
     }
 
-    fetchStats()
+    fetchWarehouses()
+
+    return () => {
+      if (warehousesAbortControllerRef.current) {
+        warehousesAbortControllerRef.current.abort()
+      }
+    }
+  }, [fetchWithRetry, handleError, headers])
+
+  const fetchStats = useCallback(async (
+    warehouse: string,
+    range: DateRange | null,
+  ) => {
+    if (fetchStatsAbortControllerRef.current) {
+      fetchStatsAbortControllerRef.current.abort()
+    }
+
+    const controller = new AbortController()
+    fetchStatsAbortControllerRef.current = controller
+    setIsLoading(true)
+
+    try {
+      const params = new URLSearchParams()
+      if (warehouse !== "all") {
+        params.set("warehouse_id", warehouse)
+      }
+      if (range?.from) {
+        params.set("start_date", formatDateParam(range.from))
+        params.set("end_date", formatDateParam(range.to ?? range.from))
+      }
+
+      const query = params.toString()
+      const url = query
+        ? `${API_URL}/sales/dashboard/?${query}`
+        : `${API_URL}/sales/dashboard/`
+
+      const response = await fetchWithRetry(url, {
+        headers,
+        signal: controller.signal,
+      })
+
+      if (!response.ok) {
+        throw new Error(`Dashboard API error: ${response.status}`)
+      }
+
+      const data: DashboardOverviewResponse = await response.json()
+
+      setStats({
+        totalProjects: data.projects.total,
+        approvedProjects: data.projects.approved,
+        pendingProjects: data.projects.pending,
+        totalAuthors: data.people.authors,
+        totalTranslators: data.people.translators,
+        totalRightsOwners: data.people.rights_owners,
+        totalReviewers: data.people.reviewers,
+        approvedPercentage: String(data.projects.approved_percentage),
+        pendingPercentage: String(data.projects.pending_percentage),
+        totalBills: data.sales.total_bills,
+        totalRevenue: data.sales.total_revenue,
+        monthlyRevenue: data.sales.monthly_revenue,
+        booksSold: data.sales.books_sold,
+        billsChangePercent: data.sales.bills_change_percent,
+        revenueChangePercent: data.sales.revenue_change_percent,
+        booksSoldChangePercent: data.sales.books_sold_change_percent,
+      })
+      setProjectStatusData(data.project_status)
+      setProjectTrends(data.project_trends)
+      setSalesTrend(data.sales_trend)
+      setSalesByGenre(data.sales_by_genre)
+      setComparisonMode(data.sales.comparison_mode)
+      setHasDateFilter(Boolean(data.filters.start_date && data.filters.end_date))
+    } catch (error) {
+      handleError(error, "Error fetching dashboard stats")
+      setStats({
+        totalProjects: 0,
+        approvedProjects: 0,
+        pendingProjects: 0,
+        totalAuthors: 0,
+        totalTranslators: 0,
+        totalRightsOwners: 0,
+        totalReviewers: 0,
+        approvedPercentage: '0',
+        pendingPercentage: '0',
+        totalBills: 0,
+        totalRevenue: 0,
+        monthlyRevenue: 0,
+        booksSold: 0,
+        billsChangePercent: 0,
+        revenueChangePercent: 0,
+        booksSoldChangePercent: 0,
+      })
+      setProjectStatusData([])
+      setProjectTrends([])
+      setSalesTrend([])
+      setSalesByGenre([])
+      setComparisonMode("previous_month")
+      setHasDateFilter(false)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [fetchWithRetry, handleError, headers])
+
+  useEffect(() => {
+    fetchStats(appliedWarehouse, appliedDateRange)
 
     // Cleanup: abort pending requests on unmount
     return () => {
@@ -348,7 +364,25 @@ export default function Dashboard() {
         fetchStatsAbortControllerRef.current.abort()
       }
     }
-  }, [fetchWithRetry, handleError, headers])
+  }, [fetchStats, appliedWarehouse, appliedDateRange])
+
+  const handleApplyFilters = () => {
+    setAppliedWarehouse(selectedWarehouse)
+    setAppliedDateRange(dateRange)
+  }
+
+  const handleClearFilters = () => {
+    setSelectedWarehouse("all")
+    setDateRange(null)
+    setAppliedWarehouse("all")
+    setAppliedDateRange(null)
+  }
+
+  const hasPendingFilterChanges =
+    selectedWarehouse !== appliedWarehouse ||
+    dateRangeKey(dateRange) !== dateRangeKey(appliedDateRange)
+
+  const hasActiveFilters = appliedWarehouse !== "all" || Boolean(appliedDateRange?.from)
 
   return (
     <SidebarProvider>
@@ -369,8 +403,41 @@ export default function Dashboard() {
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Dashboard</h2>
-            <p className="mb-6">Welcome to your project management dashboard.</p>
+            <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Dashboard</h2>
+                <p className="text-muted-foreground">Welcome to your project management dashboard.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="All warehouses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All warehouses</SelectItem>
+                    {warehouses.map((warehouse) => (
+                      <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
+                        {warehouse.name_en}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <DatePickerWithRange
+                  date={dateRange ?? { from: undefined, to: undefined }}
+                  onDateChange={(range) => setDateRange(range ?? null)}
+                />
+                <Button onClick={handleApplyFilters} disabled={isLoading}>
+                  {isLoading ? "Loading..." : "Apply Filters"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleClearFilters}
+                  disabled={isLoading || (!hasActiveFilters && !hasPendingFilterChanges)}
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
 
             {isLoading ? (
               <div className="py-8 text-center">Loading dashboard data...</div>
@@ -414,33 +481,38 @@ export default function Dashboard() {
                 </div>
 
                 {/* Sales Statistics */}
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+                <div className={`grid gap-4 md:grid-cols-2 ${hasDateFilter ? "lg:grid-cols-3" : "lg:grid-cols-4"} mb-8`}>
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Total Bills</CardTitle>
+                      <CardTitle className="text-sm font-medium">
+                        {hasDateFilter ? "Bills in Period" : "Total Bills"}
+                      </CardTitle>
                       <Receipt className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats.totalBills}</div>
                       <p className="text-xs text-muted-foreground">
-                        +12% from last month
+                        {formatChangePercent(stats.billsChangePercent, comparisonMode)}
                       </p>
                     </CardContent>
                   </Card>
 
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+                      <CardTitle className="text-sm font-medium">
+                        {hasDateFilter ? "Period Revenue" : "Total Revenue"}
+                      </CardTitle>
                       <DollarSign className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats.totalRevenue.toLocaleString()} OMR</div>
                       <p className="text-xs text-muted-foreground">
-                        +8% from last month
+                        {formatChangePercent(stats.revenueChangePercent, comparisonMode)}
                       </p>
                     </CardContent>
                   </Card>
 
+                  {!hasDateFilter && (
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">Monthly Revenue</CardTitle>
@@ -453,16 +525,19 @@ export default function Dashboard() {
                       </p>
                     </CardContent>
                   </Card>
+                  )}
 
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Books Sold</CardTitle>
+                      <CardTitle className="text-sm font-medium">
+                        {hasDateFilter ? "Books Sold in Period" : "Books Sold"}
+                      </CardTitle>
                       <BookOpen className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats.booksSold}</div>
                       <p className="text-xs text-muted-foreground">
-                        +15% from last month
+                        {formatChangePercent(stats.booksSoldChangePercent, comparisonMode)}
                       </p>
                     </CardContent>
                   </Card>
@@ -512,7 +587,7 @@ export default function Dashboard() {
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
                             <Pie
-                              data={updatedProjectStatusData}
+                              data={projectStatusData}
                               cx="50%"
                               cy="50%"
                               innerRadius={60}
@@ -520,7 +595,7 @@ export default function Dashboard() {
                               paddingAngle={5}
                               dataKey="value"
                             >
-                              {updatedProjectStatusData.map((entry, index) => (
+                              {projectStatusData.map((entry, index) => (
                                 <Cell key={`cell-${index}`} fill={entry.color} />
                               ))}
                             </Pie>
@@ -541,12 +616,7 @@ export default function Dashboard() {
                       <div className="h-[400px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart
-                            data={[
-                              { month: 'Jan', projects: 5 },
-                              { month: 'Feb', projects: 8 },
-                              { month: 'Mar', projects: 12 },
-                              { month: 'Apr', projects: stats.totalProjects },
-                            ]}
+                            data={projectTrends}
                             margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" />
@@ -569,7 +639,7 @@ export default function Dashboard() {
                       <div className="h-[400px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart
-                            data={salesData}
+                            data={salesTrend}
                             margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" />
@@ -609,7 +679,7 @@ export default function Dashboard() {
                       <div className="h-[400px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart
-                            data={salesByCategory}
+                            data={salesByGenre}
                             margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" />

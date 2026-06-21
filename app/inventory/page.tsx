@@ -59,6 +59,7 @@ import { API_URL } from "@/lib/config"
 type Product = {
   id: number
   title_en?: string
+  title_ar?: string
   name?: string
 }
 
@@ -100,6 +101,7 @@ export default function InventoryManagementPage() {
 
   // Filter states - using array for products (like transfer page)
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([])
+  const [productLabelById, setProductLabelById] = useState<Record<number, string>>({})
   const [filterWarehouseId, setFilterWarehouseId] = useState<string>("")
   const [showAllSelected, setShowAllSelected] = useState(false)
   const MAX_VISIBLE_ITEMS = 3 // Show first 3 items by default
@@ -125,8 +127,8 @@ export default function InventoryManagementPage() {
 
   // Cache keys for localStorage
   const CACHE_KEYS = {
-    LOOKUPS: 'inventory_lookups_data',
-    LOOKUPS_TIMESTAMP: 'inventory_lookups_timestamp',
+    WAREHOUSES: "inventory_warehouses_data",
+    WAREHOUSES_TIMESTAMP: "inventory_warehouses_timestamp",
   }
   const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes in milliseconds
 
@@ -376,7 +378,7 @@ export default function InventoryManagementPage() {
         params.append("search", search.trim())
       }
       
-      const res = await fetchWithRetry(`${API_URL}/inventory/products/?${params.toString()}`, { 
+      const res = await fetchWithRetry(`${API_URL}/inventory/product-summary/?${params.toString()}`, {
         headers, 
         signal: signal || abortControllerRef.current?.signal 
       })
@@ -469,85 +471,32 @@ export default function InventoryManagementPage() {
     }
   }
 
-  const fetchAllPaginated = async (
-    initialUrl: string,
-    headers: Record<string, string>,
-    signal?: AbortSignal
-  ): Promise<any[]> => {
-    const ensureJson = async (res: Response) => {
-      const ct = res.headers.get("content-type") || ""
-      if (!ct.includes("application/json")) {
-        const text = await res.text()
-        throw new Error(`Lookup request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
-      }
-      return res.json()
-    }
-    const normalizeList = (payload: any) => {
-      if (!payload) return []
-      if (Array.isArray(payload)) return payload
-      if (Array.isArray(payload.results)) return payload.results
-      if (Array.isArray(payload.data)) return payload.data
-      if (Array.isArray(payload.items)) return payload.items
-      return []
-    }
-
-    const allItems: any[] = []
-    let nextUrl: string | null = initialUrl
-
-    while (nextUrl) {
-      if (signal?.aborted) {
-        throw new DOMException("The operation was aborted.", "AbortError")
-      }
-      const res = await fetchWithRetry(nextUrl, {
-        headers,
-        signal: signal || abortControllerRef.current?.signal,
-      })
-      const data = await ensureJson(res)
-      allItems.push(...normalizeList(data))
-      nextUrl = typeof data?.next === "string" && data.next ? data.next : null
-    }
-
-    return allItems
-  }
-
   const fetchLookups = async (signal?: AbortSignal, forceRefresh: boolean = false) => {
     try {
-      // Check cache first (unless force refresh)
       if (!forceRefresh) {
-        const cachedData = localStorage.getItem(CACHE_KEYS.LOOKUPS)
-        const cachedTimestamp = localStorage.getItem(CACHE_KEYS.LOOKUPS_TIMESTAMP)
-        
+        const cachedData = localStorage.getItem(CACHE_KEYS.WAREHOUSES)
+        const cachedTimestamp = localStorage.getItem(CACHE_KEYS.WAREHOUSES_TIMESTAMP)
+
         if (cachedData && cachedTimestamp) {
           const timestamp = parseInt(cachedTimestamp, 10)
           const now = Date.now()
-          
-          // Use cached data if it's still valid (within cache duration)
+
           if (now - timestamp < CACHE_DURATION) {
             try {
-              const data = JSON.parse(cachedData)
-              setProducts(data.products || [])
-              setWarehouses(data.warehouses || [])
-              if (process.env.NODE_ENV !== "production") {
-                console.info("Using cached lookup data (products:", (data.products || []).length, ", warehouses:", (data.warehouses || []).length, ")")
-              }
+              const warehouses = JSON.parse(cachedData)
+              setWarehouses(Array.isArray(warehouses) ? warehouses : [])
               return
             } catch (parseError) {
               if (process.env.NODE_ENV !== "production") {
-                console.error("Error parsing cached lookup data:", parseError)
+                console.error("Error parsing cached warehouse data:", parseError)
               }
-              // Clear invalid cache and fetch fresh data
-              localStorage.removeItem(CACHE_KEYS.LOOKUPS)
-              localStorage.removeItem(CACHE_KEYS.LOOKUPS_TIMESTAMP)
-            }
-          } else {
-            if (process.env.NODE_ENV !== "production") {
-              console.info("Lookup cache expired, fetching fresh data")
+              localStorage.removeItem(CACHE_KEYS.WAREHOUSES)
+              localStorage.removeItem(CACHE_KEYS.WAREHOUSES_TIMESTAMP)
             }
           }
         }
       }
-      
-      // Get token directly from localStorage to ensure it's fresh
+
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
         if (process.env.NODE_ENV !== "production") {
@@ -556,54 +505,55 @@ export default function InventoryManagementPage() {
         toast({ title: "Error", description: "Authentication required. Please log in again.", variant: "destructive" })
         return
       }
-      
+
       const headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       }
-      
-      // Fetch all pages so every product/warehouse appears in dropdowns
-      const [pList, wList] = await Promise.all([
-        fetchAllPaginated(`${API_URL}/inventory/products/?page_size=1000`, headers, signal),
-        fetchAllPaginated(`${API_URL}/inventory/warehouses/?page_size=1000`, headers, signal),
-      ])
-      
-      // Update state
-      setProducts(pList)
+
+      const wRes = await fetchWithRetry(
+        `${API_URL}/inventory/warehouses/?page_size=1000`,
+        { headers, signal: signal || abortControllerRef.current?.signal },
+      )
+
+      const ensureJson = async (res: Response) => {
+        const ct = res.headers.get("content-type") || ""
+        if (!ct.includes("application/json")) {
+          const text = await res.text()
+          throw new Error(`Warehouse lookup failed (${res.status}): ${text.slice(0, 200)}`)
+        }
+        return res.json()
+      }
+
+      const wData = await ensureJson(wRes)
+      const normalizeList = (payload: any) => {
+        if (!payload) return []
+        if (Array.isArray(payload)) return payload
+        if (Array.isArray(payload.results)) return payload.results
+        if (Array.isArray(payload.data)) return payload.data
+        if (Array.isArray(payload.items)) return payload.items
+        return []
+      }
+
+      const wList = normalizeList(wData)
       setWarehouses(wList)
-      
-      // Cache the data
+
       try {
-        const cacheData = {
-          products: pList,
-          warehouses: wList,
-        }
-        localStorage.setItem(CACHE_KEYS.LOOKUPS, JSON.stringify(cacheData))
-        localStorage.setItem(CACHE_KEYS.LOOKUPS_TIMESTAMP, Date.now().toString())
-        if (process.env.NODE_ENV !== "production") {
-          console.info("Lookup data cached successfully (products:", pList.length, ", warehouses:", wList.length, ")")
-        }
+        localStorage.setItem(CACHE_KEYS.WAREHOUSES, JSON.stringify(wList))
+        localStorage.setItem(CACHE_KEYS.WAREHOUSES_TIMESTAMP, Date.now().toString())
       } catch (cacheError) {
         if (process.env.NODE_ENV !== "production") {
-          console.warn("Failed to cache lookup data:", cacheError)
+          console.warn("Failed to cache warehouse data:", cacheError)
         }
-        // Continue even if caching fails
-      }
-      
-      // Debug in dev only
-      if (process.env.NODE_ENV !== "production") {
-        console.info("Products fetched:", pList.length)
-        console.info("Warehouses fetched:", wList.length)
       }
     } catch (e) {
-      // Ignore abort errors
-      if (e instanceof Error && e.name === 'AbortError') {
+      if (e instanceof Error && e.name === "AbortError") {
         return
       }
       if (process.env.NODE_ENV !== "production") {
-      console.error("Lookup fetch failed", e)
+        console.error("Lookup fetch failed", e)
       }
-      toast({ title: "Error", description: "Failed to load products/warehouses", variant: "destructive" })
+      toast({ title: "Error", description: "Failed to load warehouses", variant: "destructive" })
     }
   }
 
@@ -968,9 +918,21 @@ export default function InventoryManagementPage() {
   }
 
 
-  const productOptions = useMemo(
-    () => products.map((p) => ({ id: p.id, name: p.title_en || (p as any).name || String(p.id) })),
-    [products]
+  const getProductDisplayName = useCallback((product: Product) => {
+    return product.title_en || product.title_ar || product.name || String(product.id)
+  }, [])
+
+  const handleProductSelected = useCallback((id: number, name: string) => {
+    setProductLabelById((prev) => ({ ...prev, [id]: name }))
+  }, [])
+
+  const selectedProductOptions = useMemo(
+    () =>
+      selectedProductIds.map((id) => ({
+        id,
+        name: productLabelById[id] || getProductDisplayName(products.find((p) => p.id === id) || { id }),
+      })),
+    [selectedProductIds, productLabelById, products, getProductDisplayName],
   )
 
   const warehouseOptions = useMemo(
@@ -1002,14 +964,14 @@ export default function InventoryManagementPage() {
     // First check cache
     const cached = productMap.get(id)
     if (cached) {
-      return cached.title_en || (cached as any).name || undefined
+      return cached.title_en || cached.title_ar || (cached as any).name || undefined
     }
     // If not in cache, fetch it
     try {
       const items = await fetchProductsSearch("", abortControllerRef.current?.signal)
       const found = items.find((p: Product) => p.id === id)
       if (found) {
-        return found.title_en || (found as any).name || undefined
+        return getProductDisplayName(found)
       }
     } catch (e) {
       if (process.env.NODE_ENV !== "production") {
@@ -1017,7 +979,7 @@ export default function InventoryManagementPage() {
       }
     }
     return undefined
-  }, [productMap])
+  }, [productMap, getProductDisplayName])
 
   const getWarehouseNameAsync = useCallback(async (id: number): Promise<string | undefined> => {
     // First check cache
@@ -1042,12 +1004,19 @@ export default function InventoryManagementPage() {
 
   // Wrapper functions for async dropdowns
   const fetchProductsForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
-    const products = await fetchProductsSearch(search, signal)
-    return products.map((p: Product) => ({
+    const fetchedProducts = await fetchProductsSearch(search, signal)
+    setProducts((prev) => {
+      const byId = new Map(prev.map((p) => [p.id, p]))
+      for (const product of fetchedProducts) {
+        byId.set(product.id, product)
+      }
+      return [...byId.values()]
+    })
+    return fetchedProducts.map((p: Product) => ({
       id: p.id,
-      name: p.title_en || (p as any).name || String(p.id)
+      name: getProductDisplayName(p),
     }))
-  }, [])
+  }, [getProductDisplayName])
 
   const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
     const warehouses = await fetchWarehousesSearch(search, signal)
@@ -1297,7 +1266,7 @@ export default function InventoryManagementPage() {
     const n = Number(id)
     if (isNaN(n)) return undefined
     const p = productMap.get(n)
-    return p?.title_en || (p as any)?.name || undefined
+    return p ? getProductDisplayName(p) : productLabelById[n]
   }
 
   const getWarehouseName = (id?: number | string) => {
@@ -1312,7 +1281,7 @@ export default function InventoryManagementPage() {
     const prod: any = (inv as any).product
     if (!prod) return "-"
     if (typeof prod === "number") return getProductName(prod) || "-"
-    return prod.title_en || prod.name || getProductName(prod.id) || "-"
+    return prod.title_en || prod.title_ar || prod.name || getProductName(prod.id) || "-"
   }
 
   const getInventoryWarehouseLabel = (inv: Inventory) => {
@@ -1546,56 +1515,91 @@ export default function InventoryManagementPage() {
     )
   }
 
-  // Multi-select component for products
+  // Multi-select component for products (server-side search)
   const MultiSelectProducts = ({
     selectedIds,
     onSelectionChange,
-    items,
+    fetchItems,
+    selectedLabels,
+    onProductSelected,
     placeholder,
-    onOpen,
   }: {
     selectedIds: number[]
     onSelectionChange: (ids: number[]) => void
-    items: { id: number; name: string }[]
+    fetchItems: (search: string, signal?: AbortSignal) => Promise<{ id: number; name: string }[]>
+    selectedLabels: Record<number, string>
+    onProductSelected: (id: number, name: string) => void
     placeholder: string
-    onOpen?: () => void
   }) => {
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+    const [dropdownItems, setDropdownItems] = useState<{ id: number; name: string }[]>([])
+    const [isSearching, setIsSearching] = useState(false)
+    const dropdownAbortRef = useRef<AbortController | null>(null)
 
-    // Debounce search query (300ms delay)
     useEffect(() => {
       const timer = setTimeout(() => {
         setDebouncedSearchQuery(searchQuery)
       }, 300)
-
       return () => clearTimeout(timer)
     }, [searchQuery])
 
-    const toggleProduct = (productId: number) => {
+    useEffect(() => {
+      if (!open) return
+
+      dropdownAbortRef.current?.abort()
+      dropdownAbortRef.current = new AbortController()
+      const signal = dropdownAbortRef.current.signal
+
+      setIsSearching(true)
+      void fetchItems(debouncedSearchQuery, signal)
+        .then((items) => {
+          if (!signal.aborted) setDropdownItems(items)
+        })
+        .finally(() => {
+          if (!signal.aborted) setIsSearching(false)
+        })
+
+      return () => {
+        dropdownAbortRef.current?.abort()
+      }
+    }, [open, debouncedSearchQuery, fetchItems])
+
+    const displayItems = useMemo(() => {
+      const byId = new Map(dropdownItems.map((item) => [item.id, item]))
+      for (const id of selectedIds) {
+        if (!byId.has(id)) {
+          byId.set(id, { id, name: selectedLabels[id] || `Product ${id}` })
+        }
+      }
+      return [...byId.values()]
+    }, [dropdownItems, selectedIds, selectedLabels])
+
+    const toggleProduct = (productId: number, productName: string) => {
       if (selectedIds.includes(productId)) {
         onSelectionChange(selectedIds.filter((id) => id !== productId))
       } else {
+        onProductSelected(productId, productName)
         onSelectionChange([...selectedIds, productId])
       }
     }
 
-    const filteredItems = items.filter((item) =>
-      item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
-    )
-
     const allFilteredSelected =
-      filteredItems.length > 0 && filteredItems.every((item) => selectedIds.includes(item.id))
-    const someFilteredSelected = filteredItems.some((item) => selectedIds.includes(item.id))
+      displayItems.length > 0 && displayItems.every((item) => selectedIds.includes(item.id))
+    const someFilteredSelected = displayItems.some((item) => selectedIds.includes(item.id))
 
     const handleSelectAllFiltered = () => {
-      const filteredIds = filteredItems.map((item) => item.id)
-      onSelectionChange([...new Set([...selectedIds, ...filteredIds])])
+      const nextIds = new Set(selectedIds)
+      for (const item of displayItems) {
+        nextIds.add(item.id)
+        onProductSelected(item.id, item.name)
+      }
+      onSelectionChange([...nextIds])
     }
 
     const handleDeselectAllFiltered = () => {
-      const filteredIdSet = new Set(filteredItems.map((item) => item.id))
+      const filteredIdSet = new Set(displayItems.map((item) => item.id))
       onSelectionChange(selectedIds.filter((id) => !filteredIdSet.has(id)))
     }
 
@@ -1606,10 +1610,10 @@ export default function InventoryManagementPage() {
           open={open}
           onOpenChange={(next) => {
             setOpen(next)
-            if (next && onOpen) onOpen()
             if (!next) {
               setSearchQuery("")
               setDebouncedSearchQuery("")
+              setDropdownItems([])
             }
           }}
         >
@@ -1637,8 +1641,8 @@ export default function InventoryManagementPage() {
                 className="max-h-[300px] overflow-y-auto overscroll-contain"
                 onWheel={(e) => e.stopPropagation()}
               >
-                <CommandEmpty>No products found.</CommandEmpty>
-                {filteredItems.length > 0 && (
+                <CommandEmpty>{isSearching ? "Searching..." : "No products found."}</CommandEmpty>
+                {displayItems.length > 0 && (
                   <div className="sticky top-0 z-10 border-b bg-muted/50 px-2 py-1.5">
                     <div className="flex items-center gap-3">
                       <button
@@ -1665,43 +1669,38 @@ export default function InventoryManagementPage() {
                       </button>
                       {someFilteredSelected && !allFilteredSelected && (
                         <span className="ml-auto text-xs text-muted-foreground">
-                          {filteredItems.filter((item) => selectedIds.includes(item.id)).length} of{" "}
-                          {filteredItems.length}
+                          {displayItems.filter((item) => selectedIds.includes(item.id)).length} of{" "}
+                          {displayItems.length}
                         </span>
                       )}
                     </div>
                   </div>
                 )}
                 <CommandGroup className="overflow-visible">
-                  {filteredItems.map((item) => {
+                  {displayItems.map((item) => {
                     const isSelected = selectedIds.includes(item.id)
                     return (
                       <CommandItem
                         key={item.id}
                         value={String(item.id)}
-                        onSelect={(value) => {
-                          // Prevent default closing behavior - just toggle selection
-                          // The popover will stay open for multi-select
-                          toggleProduct(item.id)
+                        onSelect={() => {
+                          toggleProduct(item.id, item.name)
                         }}
                         className="cursor-pointer"
                       >
                         <div 
                           className="flex items-center space-x-2 w-full"
                           onClick={(e) => {
-                            // Handle click on the row - toggle selection
                             e.stopPropagation()
-                            toggleProduct(item.id)
+                            toggleProduct(item.id, item.name)
                           }}
                         >
                           <Checkbox
                             checked={isSelected}
                             onChange={() => {
-                              // Toggle when checkbox changes
-                              toggleProduct(item.id)
+                              toggleProduct(item.id, item.name)
                             }}
                             onClick={(e) => {
-                              // Prevent event bubbling
                               e.stopPropagation()
                             }}
                           />
@@ -1803,9 +1802,10 @@ export default function InventoryManagementPage() {
                       <MultiSelectProducts
                         selectedIds={selectedProducts}
                         onSelectionChange={setSelectedProducts}
-                        items={productOptions}
+                        fetchItems={fetchProductsForDropdown}
+                        selectedLabels={productLabelById}
+                        onProductSelected={handleProductSelected}
                         placeholder="Select products..."
-                        onOpen={() => void fetchLookups()}
                       />
                       {selectedProducts.length > 0 && (
                         <p className="text-xs text-muted-foreground">
@@ -1869,9 +1869,10 @@ export default function InventoryManagementPage() {
                     <MultiSelectProducts
                       selectedIds={selectedProductIds}
                       onSelectionChange={setSelectedProductIds}
-                      items={productOptions}
+                      fetchItems={fetchProductsForDropdown}
+                      selectedLabels={productLabelById}
+                      onProductSelected={handleProductSelected}
                       placeholder="Select products..."
-                      onOpen={() => { if (!products.length) void fetchLookups() }}
                     />
                   </div>
                   <div className="grid gap-2">
@@ -1897,6 +1898,7 @@ export default function InventoryManagementPage() {
                     }}>Search</Button>
                     <Button variant="outline" disabled={isSavingAll} onClick={() => { 
                       setSelectedProductIds([])
+                      setProductLabelById({})
                       setFilterWarehouseId("")
                       setHasRequested(false)
                       setItems([])
@@ -1924,13 +1926,16 @@ export default function InventoryManagementPage() {
                       variant="ghost"
                       size="sm"
                       className="h-7 text-xs"
-                      onClick={() => setSelectedProductIds([])}
+                      onClick={() => {
+                        setSelectedProductIds([])
+                        setProductLabelById({})
+                      }}
                     >
                       Deselect All
                     </Button>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(showAllSelected ? productOptions.filter(p => selectedProductIds.includes(p.id)) : productOptions.filter(p => selectedProductIds.includes(p.id)).slice(0, MAX_VISIBLE_ITEMS)).map((item) => (
+                    {(showAllSelected ? selectedProductOptions : selectedProductOptions.slice(0, MAX_VISIBLE_ITEMS)).map((item) => (
                       <Badge key={item.id} variant="secondary" className="flex items-center gap-1">
                         <span className="max-w-[200px] truncate">{item.name}</span>
                         <button
@@ -2244,10 +2249,12 @@ export default function InventoryManagementPage() {
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
                 <Label>Product</Label>
-                <SearchableCombobox
+                <AsyncSearchableCombobox
                   value={(editItem.product?.id ?? editItem.product_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, product: { id: Number(v), name: getProductName(v) || "" } } : s))}
-                  items={productOptions}
+                  fetchItems={fetchProductsForDropdown}
+                  isLoading={isLoadingProducts}
+                  getItemName={getProductNameAsync}
                   placeholder="Select product"
                 />
               </div>

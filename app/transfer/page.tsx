@@ -29,7 +29,15 @@ import { API_URL } from "@/lib/config"
 type Product = {
   id: number
   title_en?: string
+  title_ar?: string
   name?: string
+}
+
+type TransferPreviewRow = {
+  product_id: number
+  product_name: string
+  from_quantity: number
+  to_quantity: number
 }
 
 type Warehouse = {
@@ -70,6 +78,7 @@ export default function ProductTransferPage() {
 
   // Filter states
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([])
+  const [selectedProductLabels, setSelectedProductLabels] = useState<Record<number, string>>({})
   const [fromWarehouseId, setFromWarehouseId] = useState<number | null>(null)
   const [toWarehouseId, setToWarehouseId] = useState<number | null>(null)
   const [showAllSelected, setShowAllSelected] = useState(false)
@@ -234,7 +243,7 @@ export default function ProductTransferPage() {
         params.append("search", search.trim())
       }
       
-      const res = await fetchWithRetry(`${API_URL}/inventory/products/?${params.toString()}`, { 
+      const res = await fetchWithRetry(`${API_URL}/inventory/product-summary/?${params.toString()}`, {
         headers, 
         signal: signal || abortControllerRef.current?.signal 
       })
@@ -326,7 +335,7 @@ export default function ProductTransferPage() {
     }
   }
 
-  const fetchLookups = async (signal?: AbortSignal, forceRefresh: boolean = false) => {
+  const fetchLookups = async (signal?: AbortSignal) => {
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
@@ -342,10 +351,10 @@ export default function ProductTransferPage() {
         Authorization: `Bearer ${token}`,
       }
       
-      const [pRes, wRes] = await Promise.all([
-        fetchWithRetry(`${API_URL}/inventory/products/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
-        fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
-      ])
+      const wRes = await fetchWithRetry(
+        `${API_URL}/inventory/warehouses/?page_size=1000`,
+        { headers, signal: signal || abortControllerRef.current?.signal },
+      )
       
       const ensureJson = async (res: Response) => {
         const ct = res.headers.get("content-type") || ""
@@ -356,7 +365,7 @@ export default function ProductTransferPage() {
         return res.json()
       }
       
-      const [pData, wData] = await Promise.all([ensureJson(pRes), ensureJson(wRes)])
+      const wData = await ensureJson(wRes)
       const normalizeList = (payload: any) => {
         if (!payload) return []
         if (Array.isArray(payload)) return payload
@@ -366,11 +375,7 @@ export default function ProductTransferPage() {
         return []
       }
       
-      const pList = normalizeList(pData)
-      const wList = normalizeList(wData)
-      
-      setProducts(pList)
-      setWarehouses(wList)
+      setWarehouses(normalizeList(wData))
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         return
@@ -378,7 +383,7 @@ export default function ProductTransferPage() {
       if (process.env.NODE_ENV !== "production") {
       console.error("Lookup fetch failed", e)
       }
-      toast({ title: "Error", description: "Failed to load products/warehouses", variant: "destructive" })
+      toast({ title: "Error", description: "Failed to load warehouses", variant: "destructive" })
     }
   }
 
@@ -402,59 +407,41 @@ export default function ProductTransferPage() {
     setHasRequested(true)
     
     try {
-      const rows: TransferRow[] = []
-      
-      // Fetch inventory for each product in both warehouses
-      for (const productId of selectedProductIds) {
-        const product = products.find(p => p.id === productId)
-        const productName = product?.title_en || product?.name || `Product ${productId}`
-        
-        // Fetch from warehouse inventory
-        let fromQuantity = 0
-        try {
-          const fromRes = await fetchWithRetry(
-            `${API_URL}/inventory/inventory/?product_id=${productId}&warehouse_id=${fromWarehouseId}`,
-            { headers: authHeaders, signal: abortControllerRef.current?.signal }
-          )
-          if (fromRes.ok) {
-            const fromData = await fromRes.json()
-            const fromList = fromData?.results ?? fromData ?? []
-            const fromInv = Array.isArray(fromList) ? fromList[0] : null
-            fromQuantity = fromInv?.quantity || 0
-          }
-        } catch (e) {
-          if (process.env.NODE_ENV !== "production") {
-            console.error(`Failed to fetch from warehouse inventory for product ${productId}:`, e)
-          }
-        }
-        
-        // Fetch to warehouse inventory
-        let toQuantity = 0
-        try {
-          const toRes = await fetchWithRetry(
-            `${API_URL}/inventory/inventory/?product_id=${productId}&warehouse_id=${toWarehouseId}`,
-            { headers: authHeaders, signal: abortControllerRef.current?.signal }
-          )
-          if (toRes.ok) {
-            const toData = await toRes.json()
-            const toList = toData?.results ?? toData ?? []
-            const toInv = Array.isArray(toList) ? toList[0] : null
-            toQuantity = toInv?.quantity || 0
-          }
-        } catch (e) {
-          if (process.env.NODE_ENV !== "production") {
-            console.error(`Failed to fetch to warehouse inventory for product ${productId}:`, e)
-          }
-        }
-        
-        rows.push({
-          productId,
-          productName,
-          fromQuantity,
-          toQuantity,
-          transferQuantity: transferQuantities[productId] || 0,
-        })
+      const params = new URLSearchParams()
+      selectedProductIds.forEach((productId) => {
+        params.append("product_id", String(productId))
+      })
+      params.append("from_warehouse_id", String(fromWarehouseId))
+      params.append("to_warehouse_id", String(toWarehouseId))
+
+      const response = await fetchWithRetry(
+        `${API_URL}/inventory/transfer-preview/?${params.toString()}`,
+        { headers: authHeaders, signal: abortControllerRef.current?.signal },
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText.slice(0, 200) || "Failed to load transfer preview")
       }
+
+      const data = await response.json()
+      const previewRows: TransferPreviewRow[] = Array.isArray(data.results) ? data.results : []
+
+      const rows: TransferRow[] = previewRows.map((row) => ({
+        productId: row.product_id,
+        productName: row.product_name,
+        fromQuantity: row.from_quantity ?? 0,
+        toQuantity: row.to_quantity ?? 0,
+        transferQuantity: transferQuantities[row.product_id] || 0,
+      }))
+
+      setSelectedProductLabels((prev) => {
+        const next = { ...prev }
+        for (const row of rows) {
+          next[row.productId] = row.productName
+        }
+        return next
+      })
       
       setTransferRows(rows)
     } catch (e) {
@@ -499,6 +486,7 @@ export default function ProductTransferPage() {
   // Handle reset button click
   const handleReset = () => {
     setSelectedProductIds([])
+    setSelectedProductLabels({})
     setFromWarehouseId(null)
     setToWarehouseId(null)
     setTransferRows([])
@@ -706,10 +694,17 @@ export default function ProductTransferPage() {
     }
   }
 
-  // Memoized product options
-  const productOptions = useMemo(
-    () => products.map((p) => ({ id: p.id, name: p.title_en || (p as any).name || String(p.id) })),
-    [products]
+  const getProductDisplayName = useCallback((product: Product) => {
+    return product.title_en || product.title_ar || product.name || String(product.id)
+  }, [])
+
+  const selectedProductOptions = useMemo(
+    () =>
+      selectedProductIds.map((id) => ({
+        id,
+        name: selectedProductLabels[id] || getProductDisplayName(products.find((p) => p.id === id) || { id }),
+      })),
+    [selectedProductIds, selectedProductLabels, products, getProductDisplayName],
   )
 
   // Memoized warehouse options
@@ -728,10 +723,17 @@ export default function ProductTransferPage() {
         return []
       }
       
-      const products = await fetchProductsSearch(search, signal)
-      return products.map((p: Product) => ({
+      const fetchedProducts = await fetchProductsSearch(search, signal)
+      setProducts((prev) => {
+        const byId = new Map(prev.map((p) => [p.id, p]))
+        for (const product of fetchedProducts) {
+          byId.set(product.id, product)
+        }
+        return [...byId.values()]
+      })
+      return fetchedProducts.map((p: Product) => ({
         id: p.id,
-        name: p.title_en || (p as any).name || String(p.id)
+        name: getProductDisplayName(p),
       }))
     } catch (e) {
       if (process.env.NODE_ENV !== "production") {
@@ -739,7 +741,7 @@ export default function ProductTransferPage() {
       }
       return []
     }
-  }, [])
+  }, [getProductDisplayName])
 
   const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
     try {
@@ -828,23 +830,32 @@ export default function ProductTransferPage() {
     )
   }
 
-  // Multi-select component for products
+  const handleProductSelected = useCallback((id: number, name: string) => {
+    setSelectedProductLabels((prev) => ({ ...prev, [id]: name }))
+  }, [])
+
+  // Multi-select component for products (server-side search)
   const MultiSelectProducts = ({
     selectedIds,
     onSelectionChange,
-    items,
+    fetchItems,
+    selectedLabels,
+    onProductSelected,
     placeholder,
-    onOpen,
   }: {
     selectedIds: number[]
     onSelectionChange: (ids: number[]) => void
-    items: { id: number; name: string }[]
+    fetchItems: (search: string, signal?: AbortSignal) => Promise<{ id: number; name: string }[]>
+    selectedLabels: Record<number, string>
+    onProductSelected: (id: number, name: string) => void
     placeholder: string
-    onOpen?: () => void
   }) => {
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+    const [dropdownItems, setDropdownItems] = useState<{ id: number; name: string }[]>([])
+    const [isSearching, setIsSearching] = useState(false)
+    const dropdownAbortRef = useRef<AbortController | null>(null)
 
     useEffect(() => {
       const timer = setTimeout(() => {
@@ -853,29 +864,61 @@ export default function ProductTransferPage() {
       return () => clearTimeout(timer)
     }, [searchQuery])
 
-    const toggleProduct = (productId: number) => {
+    useEffect(() => {
+      if (!open) return
+
+      dropdownAbortRef.current?.abort()
+      dropdownAbortRef.current = new AbortController()
+      const signal = dropdownAbortRef.current.signal
+
+      setIsSearching(true)
+      void fetchItems(debouncedSearchQuery, signal)
+        .then((items) => {
+          if (!signal.aborted) setDropdownItems(items)
+        })
+        .finally(() => {
+          if (!signal.aborted) setIsSearching(false)
+        })
+
+      return () => {
+        dropdownAbortRef.current?.abort()
+      }
+    }, [open, debouncedSearchQuery, fetchItems])
+
+    const displayItems = useMemo(() => {
+      const byId = new Map(dropdownItems.map((item) => [item.id, item]))
+      for (const id of selectedIds) {
+        if (!byId.has(id)) {
+          byId.set(id, { id, name: selectedLabels[id] || `Product ${id}` })
+        }
+      }
+      return [...byId.values()]
+    }, [dropdownItems, selectedIds, selectedLabels])
+
+    const toggleProduct = (productId: number, productName: string) => {
       if (selectedIds.includes(productId)) {
         onSelectionChange(selectedIds.filter((id) => id !== productId))
       } else {
+        onProductSelected(productId, productName)
         onSelectionChange([...selectedIds, productId])
       }
     }
 
-    const filteredItems = items.filter((item) =>
-      item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
-    )
-
     const allFilteredSelected =
-      filteredItems.length > 0 && filteredItems.every((item) => selectedIds.includes(item.id))
-    const someFilteredSelected = filteredItems.some((item) => selectedIds.includes(item.id))
+      displayItems.length > 0 && displayItems.every((item) => selectedIds.includes(item.id))
+    const someFilteredSelected = displayItems.some((item) => selectedIds.includes(item.id))
 
     const handleSelectAllFiltered = () => {
-      const filteredIds = filteredItems.map((item) => item.id)
-      onSelectionChange([...new Set([...selectedIds, ...filteredIds])])
+      const nextIds = new Set(selectedIds)
+      for (const item of displayItems) {
+        nextIds.add(item.id)
+        onProductSelected(item.id, item.name)
+      }
+      onSelectionChange([...nextIds])
     }
 
     const handleDeselectAllFiltered = () => {
-      const filteredIdSet = new Set(filteredItems.map((item) => item.id))
+      const filteredIdSet = new Set(displayItems.map((item) => item.id))
       onSelectionChange(selectedIds.filter((id) => !filteredIdSet.has(id)))
     }
 
@@ -886,10 +929,10 @@ export default function ProductTransferPage() {
           open={open}
           onOpenChange={(next) => {
             setOpen(next)
-            if (next && onOpen) onOpen()
             if (!next) {
               setSearchQuery("")
               setDebouncedSearchQuery("")
+              setDropdownItems([])
             }
           }}
         >
@@ -917,8 +960,8 @@ export default function ProductTransferPage() {
                 className="max-h-[300px] overflow-y-auto overscroll-contain"
                 onWheel={(e) => e.stopPropagation()}
               >
-                <CommandEmpty>No products found.</CommandEmpty>
-                {filteredItems.length > 0 && (
+                <CommandEmpty>{isSearching ? "Searching..." : "No products found."}</CommandEmpty>
+                {displayItems.length > 0 && (
                   <div className="sticky top-0 z-10 border-b bg-muted/50 px-2 py-1.5">
                     <div className="flex items-center gap-3">
                       <button
@@ -945,22 +988,22 @@ export default function ProductTransferPage() {
                       </button>
                       {someFilteredSelected && !allFilteredSelected && (
                         <span className="ml-auto text-xs text-muted-foreground">
-                          {filteredItems.filter((item) => selectedIds.includes(item.id)).length} of{" "}
-                          {filteredItems.length}
+                          {displayItems.filter((item) => selectedIds.includes(item.id)).length} of{" "}
+                          {displayItems.length}
                         </span>
                       )}
                     </div>
                   </div>
                 )}
                 <CommandGroup className="overflow-visible">
-                  {filteredItems.map((item) => {
+                  {displayItems.map((item) => {
                     const isSelected = selectedIds.includes(item.id)
                     return (
                       <CommandItem
                         key={item.id}
                         value={String(item.id)}
                           onSelect={() => {
-                          toggleProduct(item.id)
+                          toggleProduct(item.id, item.name)
                         }}
                         className="cursor-pointer"
                       >
@@ -968,13 +1011,13 @@ export default function ProductTransferPage() {
                           className="flex items-center space-x-2 w-full"
                           onClick={(e) => {
                             e.stopPropagation()
-                            toggleProduct(item.id)
+                            toggleProduct(item.id, item.name)
                           }}
                         >
                           <Checkbox
                             checked={isSelected}
                             onChange={() => {
-                              toggleProduct(item.id)
+                              toggleProduct(item.id, item.name)
                             }}
                             onClick={(e) => {
                               e.stopPropagation()
@@ -1071,9 +1114,10 @@ export default function ProductTransferPage() {
                       <MultiSelectProducts
                         selectedIds={selectedProductIds}
                         onSelectionChange={setSelectedProductIds}
-                        items={productOptions}
+                        fetchItems={fetchProductsForDropdown}
+                        selectedLabels={selectedProductLabels}
+                        onProductSelected={handleProductSelected}
                         placeholder="Select products..."
-                        onOpen={() => { if (!products.length) void fetchLookups() }}
                       />
                     </div>
                     <div className="grid gap-2">
@@ -1152,13 +1196,16 @@ export default function ProductTransferPage() {
                       variant="ghost"
                       size="sm"
                       className="h-7 text-xs"
-                      onClick={() => setSelectedProductIds([])}
+                      onClick={() => {
+                        setSelectedProductIds([])
+                        setSelectedProductLabels({})
+                      }}
                     >
                       Deselect All
                     </Button>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(showAllSelected ? productOptions.filter(p => selectedProductIds.includes(p.id)) : productOptions.filter(p => selectedProductIds.includes(p.id)).slice(0, MAX_VISIBLE_ITEMS)).map((item) => (
+                    {(showAllSelected ? selectedProductOptions : selectedProductOptions.slice(0, MAX_VISIBLE_ITEMS)).map((item) => (
                       <Badge key={item.id} variant="secondary" className="flex items-center gap-1">
                         <span className="max-w-[200px] truncate">{item.name}</span>
                         <button
