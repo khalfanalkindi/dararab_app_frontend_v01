@@ -16,11 +16,11 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Checkbox } from "@/components/ui/checkbox"
 import { X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { MultiSelectProducts } from "@/components/multi-select-products"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/hooks/use-toast"
@@ -29,7 +29,15 @@ import { API_URL } from "@/lib/config"
 type Product = {
   id: number
   title_en?: string
+  title_ar?: string
   name?: string
+}
+
+type TransferPreviewRow = {
+  product_id: number
+  product_name: string
+  from_quantity: number
+  to_quantity: number
 }
 
 type Warehouse = {
@@ -70,6 +78,7 @@ export default function ProductTransferPage() {
 
   // Filter states
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([])
+  const [selectedProductLabels, setSelectedProductLabels] = useState<Record<number, string>>({})
   const [fromWarehouseId, setFromWarehouseId] = useState<number | null>(null)
   const [toWarehouseId, setToWarehouseId] = useState<number | null>(null)
   const [showAllSelected, setShowAllSelected] = useState(false)
@@ -219,8 +228,13 @@ export default function ProductTransferPage() {
   }, [])
 
   // Fetch products with server-side search
-  const fetchProductsSearch = async (search: string = "", signal?: AbortSignal): Promise<Product[]> => {
-    setIsLoadingProducts(true)
+  const fetchProductsSearch = async (
+    search: string = "",
+    signal?: AbortSignal,
+    options?: { trackLoading?: boolean },
+  ): Promise<Product[]> => {
+    const trackLoading = options?.trackLoading !== false
+    if (trackLoading) setIsLoadingProducts(true)
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       const headers = {
@@ -234,7 +248,7 @@ export default function ProductTransferPage() {
         params.append("search", search.trim())
       }
       
-      const res = await fetchWithRetry(`${API_URL}/inventory/products/?${params.toString()}`, { 
+      const res = await fetchWithRetry(`${API_URL}/inventory/product-summary/?${params.toString()}`, {
         headers, 
         signal: signal || abortControllerRef.current?.signal 
       })
@@ -268,7 +282,7 @@ export default function ProductTransferPage() {
       }
       return []
     } finally {
-      setIsLoadingProducts(false)
+      if (trackLoading) setIsLoadingProducts(false)
     }
   }
 
@@ -326,7 +340,7 @@ export default function ProductTransferPage() {
     }
   }
 
-  const fetchLookups = async (signal?: AbortSignal, forceRefresh: boolean = false) => {
+  const fetchLookups = async (signal?: AbortSignal) => {
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
@@ -342,10 +356,10 @@ export default function ProductTransferPage() {
         Authorization: `Bearer ${token}`,
       }
       
-      const [pRes, wRes] = await Promise.all([
-        fetchWithRetry(`${API_URL}/inventory/products/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
-        fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=1000`, { headers, signal: signal || abortControllerRef.current?.signal }),
-      ])
+      const wRes = await fetchWithRetry(
+        `${API_URL}/inventory/warehouses/?page_size=1000`,
+        { headers, signal: signal || abortControllerRef.current?.signal },
+      )
       
       const ensureJson = async (res: Response) => {
         const ct = res.headers.get("content-type") || ""
@@ -356,7 +370,7 @@ export default function ProductTransferPage() {
         return res.json()
       }
       
-      const [pData, wData] = await Promise.all([ensureJson(pRes), ensureJson(wRes)])
+      const wData = await ensureJson(wRes)
       const normalizeList = (payload: any) => {
         if (!payload) return []
         if (Array.isArray(payload)) return payload
@@ -366,11 +380,7 @@ export default function ProductTransferPage() {
         return []
       }
       
-      const pList = normalizeList(pData)
-      const wList = normalizeList(wData)
-      
-      setProducts(pList)
-      setWarehouses(wList)
+      setWarehouses(normalizeList(wData))
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         return
@@ -378,7 +388,7 @@ export default function ProductTransferPage() {
       if (process.env.NODE_ENV !== "production") {
       console.error("Lookup fetch failed", e)
       }
-      toast({ title: "Error", description: "Failed to load products/warehouses", variant: "destructive" })
+      toast({ title: "Error", description: "Failed to load warehouses", variant: "destructive" })
     }
   }
 
@@ -402,59 +412,41 @@ export default function ProductTransferPage() {
     setHasRequested(true)
     
     try {
-      const rows: TransferRow[] = []
-      
-      // Fetch inventory for each product in both warehouses
-      for (const productId of selectedProductIds) {
-        const product = products.find(p => p.id === productId)
-        const productName = product?.title_en || product?.name || `Product ${productId}`
-        
-        // Fetch from warehouse inventory
-        let fromQuantity = 0
-        try {
-          const fromRes = await fetchWithRetry(
-            `${API_URL}/inventory/inventory/?product_id=${productId}&warehouse_id=${fromWarehouseId}`,
-            { headers: authHeaders, signal: abortControllerRef.current?.signal }
-          )
-          if (fromRes.ok) {
-            const fromData = await fromRes.json()
-            const fromList = fromData?.results ?? fromData ?? []
-            const fromInv = Array.isArray(fromList) ? fromList[0] : null
-            fromQuantity = fromInv?.quantity || 0
-          }
-        } catch (e) {
-          if (process.env.NODE_ENV !== "production") {
-            console.error(`Failed to fetch from warehouse inventory for product ${productId}:`, e)
-          }
-        }
-        
-        // Fetch to warehouse inventory
-        let toQuantity = 0
-        try {
-          const toRes = await fetchWithRetry(
-            `${API_URL}/inventory/inventory/?product_id=${productId}&warehouse_id=${toWarehouseId}`,
-            { headers: authHeaders, signal: abortControllerRef.current?.signal }
-          )
-          if (toRes.ok) {
-            const toData = await toRes.json()
-            const toList = toData?.results ?? toData ?? []
-            const toInv = Array.isArray(toList) ? toList[0] : null
-            toQuantity = toInv?.quantity || 0
-          }
-        } catch (e) {
-          if (process.env.NODE_ENV !== "production") {
-            console.error(`Failed to fetch to warehouse inventory for product ${productId}:`, e)
-          }
-        }
-        
-        rows.push({
-          productId,
-          productName,
-          fromQuantity,
-          toQuantity,
-          transferQuantity: transferQuantities[productId] || 0,
-        })
+      const params = new URLSearchParams()
+      selectedProductIds.forEach((productId) => {
+        params.append("product_id", String(productId))
+      })
+      params.append("from_warehouse_id", String(fromWarehouseId))
+      params.append("to_warehouse_id", String(toWarehouseId))
+
+      const response = await fetchWithRetry(
+        `${API_URL}/inventory/transfer-preview/?${params.toString()}`,
+        { headers: authHeaders, signal: abortControllerRef.current?.signal },
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText.slice(0, 200) || "Failed to load transfer preview")
       }
+
+      const data = await response.json()
+      const previewRows: TransferPreviewRow[] = Array.isArray(data.results) ? data.results : []
+
+      const rows: TransferRow[] = previewRows.map((row) => ({
+        productId: row.product_id,
+        productName: row.product_name,
+        fromQuantity: row.from_quantity ?? 0,
+        toQuantity: row.to_quantity ?? 0,
+        transferQuantity: transferQuantities[row.product_id] || 0,
+      }))
+
+      setSelectedProductLabels((prev) => {
+        const next = { ...prev }
+        for (const row of rows) {
+          next[row.productId] = row.productName
+        }
+        return next
+      })
       
       setTransferRows(rows)
     } catch (e) {
@@ -499,6 +491,7 @@ export default function ProductTransferPage() {
   // Handle reset button click
   const handleReset = () => {
     setSelectedProductIds([])
+    setSelectedProductLabels({})
     setFromWarehouseId(null)
     setToWarehouseId(null)
     setTransferRows([])
@@ -706,10 +699,17 @@ export default function ProductTransferPage() {
     }
   }
 
-  // Memoized product options
-  const productOptions = useMemo(
-    () => products.map((p) => ({ id: p.id, name: p.title_en || (p as any).name || String(p.id) })),
-    [products]
+  const getProductDisplayName = useCallback((product: Product) => {
+    return product.title_en || product.title_ar || product.name || String(product.id)
+  }, [])
+
+  const selectedProductOptions = useMemo(
+    () =>
+      selectedProductIds.map((id) => ({
+        id,
+        name: selectedProductLabels[id] || getProductDisplayName(products.find((p) => p.id === id) || { id }),
+      })),
+    [selectedProductIds, selectedProductLabels, products, getProductDisplayName],
   )
 
   // Memoized warehouse options
@@ -728,10 +728,17 @@ export default function ProductTransferPage() {
         return []
       }
       
-      const products = await fetchProductsSearch(search, signal)
-      return products.map((p: Product) => ({
+      const fetchedProducts = await fetchProductsSearch(search, signal, { trackLoading: false })
+      setProducts((prev) => {
+        const byId = new Map(prev.map((p) => [p.id, p]))
+        for (const product of fetchedProducts) {
+          byId.set(product.id, product)
+        }
+        return [...byId.values()]
+      })
+      return fetchedProducts.map((p: Product) => ({
         id: p.id,
-        name: p.title_en || (p as any).name || String(p.id)
+        name: getProductDisplayName(p),
       }))
     } catch (e) {
       if (process.env.NODE_ENV !== "production") {
@@ -739,7 +746,7 @@ export default function ProductTransferPage() {
       }
       return []
     }
-  }, [])
+  }, [getProductDisplayName])
 
   const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
     try {
@@ -828,167 +835,9 @@ export default function ProductTransferPage() {
     )
   }
 
-  // Multi-select component for products
-  const MultiSelectProducts = ({
-    selectedIds,
-    onSelectionChange,
-    items,
-    placeholder,
-    onOpen,
-  }: {
-    selectedIds: number[]
-    onSelectionChange: (ids: number[]) => void
-    items: { id: number; name: string }[]
-    placeholder: string
-    onOpen?: () => void
-  }) => {
-    const [open, setOpen] = useState(false)
-    const [searchQuery, setSearchQuery] = useState("")
-    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
-    const [showAllSelected, setShowAllSelected] = useState(false)
-    const MAX_VISIBLE_ITEMS = 3 // Show first 3 items by default
-
-    useEffect(() => {
-      const timer = setTimeout(() => {
-        setDebouncedSearchQuery(searchQuery)
-      }, 300)
-      return () => clearTimeout(timer)
-    }, [searchQuery])
-
-    const toggleProduct = (productId: number) => {
-      if (selectedIds.includes(productId)) {
-        onSelectionChange(selectedIds.filter((id) => id !== productId))
-      } else {
-        onSelectionChange([...selectedIds, productId])
-      }
-    }
-
-    const filteredItems = items.filter((item) =>
-      item.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
-    )
-
-    const selectedItems = items.filter((item) => selectedIds.includes(item.id))
-    
-    // Check if all filtered items are selected
-    const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedIds.includes(item.id))
-    const someFilteredSelected = filteredItems.some(item => selectedIds.includes(item.id))
-    
-    const handleSelectAll = () => {
-      const filteredIds = filteredItems.map(item => item.id)
-      if (allFilteredSelected) {
-        // Deselect all filtered items
-        onSelectionChange(selectedIds.filter(id => !filteredIds.includes(id)))
-      } else {
-        // Select all filtered items (merge with existing selections)
-        const newSelection = [...new Set([...selectedIds, ...filteredIds])]
-        onSelectionChange(newSelection)
-      }
-    }
-
-  return (
-      <div className="space-y-2">
-        <Popover
-          open={open}
-          onOpenChange={(next) => {
-            setOpen(next)
-            if (next && onOpen) onOpen()
-            if (!next) {
-              setSearchQuery("")
-              setDebouncedSearchQuery("")
-              setShowAllSelected(false) // Reset show all when closing
-            }
-          }}
-        >
-          <PopoverTrigger asChild>
-            <Button variant="outline" role="combobox" aria-expanded={open} className="justify-between w-full">
-              {selectedIds.length > 0
-                ? `${selectedIds.length} product${selectedIds.length === 1 ? "" : "s"} selected`
-                : placeholder}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent 
-            className="p-0 w-[400px] max-h-[400px] flex flex-col overflow-hidden"
-            onOpenAutoFocus={(e) => e.preventDefault()}
-          >
-            <Command shouldFilter={false} className="flex flex-col h-full">
-              <div className="flex-shrink-0 border-b">
-                <CommandInput
-                  placeholder="Search products..."
-                  value={searchQuery}
-                  onValueChange={setSearchQuery}
-                />
-              </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <CommandList className="h-full overflow-y-auto overflow-x-hidden">
-                  <CommandEmpty>No products found.</CommandEmpty>
-                  {filteredItems.length > 0 && (
-                    <div className="border-b px-2 py-1.5 bg-muted/50">
-                      <div
-                        className="flex items-center space-x-2 w-full cursor-pointer hover:bg-muted rounded px-2 py-1.5 -mx-2 -my-1.5"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleSelectAll()
-                        }}
-                      >
-                        <Checkbox
-                          checked={allFilteredSelected}
-                          className="h-4 w-4"
-                          onChange={handleSelectAll}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <span className="text-sm font-medium flex-1">
-                          {allFilteredSelected ? "Deselect All" : "Select All"}
-                        </span>
-                        {someFilteredSelected && !allFilteredSelected && (
-                          <span className="text-xs text-muted-foreground">
-                            ({filteredItems.filter(item => selectedIds.includes(item.id)).length} of {filteredItems.length})
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  <CommandGroup>
-                  {filteredItems.map((item) => {
-                    const isSelected = selectedIds.includes(item.id)
-                    return (
-                      <CommandItem
-                        key={item.id}
-                        value={String(item.id)}
-                          onSelect={() => {
-                          toggleProduct(item.id)
-                        }}
-                        className="cursor-pointer"
-                      >
-                        <div 
-                          className="flex items-center space-x-2 w-full"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            toggleProduct(item.id)
-                          }}
-                        >
-                          <Checkbox
-                            checked={isSelected}
-                            onChange={() => {
-                              toggleProduct(item.id)
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                            }}
-                          />
-                          <span className="flex-1">{item.name}</span>
-                        </div>
-                      </CommandItem>
-                    )
-                  })}
-                  </CommandGroup>
-                </CommandList>
-              </div>
-            </Command>
-          </PopoverContent>
-        </Popover>
-      </div>
-    )
-  }
+  const handleProductSelected = useCallback((id: number, name: string) => {
+    setSelectedProductLabels((prev) => ({ ...prev, [id]: name }))
+  }, [])
 
   // Helper to get warehouse name async
   const getWarehouseNameAsync = useCallback(async (id: number): Promise<string | undefined> => {
@@ -1067,9 +916,10 @@ export default function ProductTransferPage() {
                       <MultiSelectProducts
                         selectedIds={selectedProductIds}
                         onSelectionChange={setSelectedProductIds}
-                        items={productOptions}
+                        fetchItems={fetchProductsForDropdown}
+                        selectedLabels={selectedProductLabels}
+                        onProductSelected={handleProductSelected}
                         placeholder="Select products..."
-                        onOpen={() => { if (!products.length) void fetchLookups() }}
                       />
                     </div>
                     <div className="grid gap-2">
@@ -1143,9 +993,21 @@ export default function ProductTransferPage() {
                     <Label className="text-sm font-medium">
                       Selected Products ({selectedProductIds.length})
                     </Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        setSelectedProductIds([])
+                        setSelectedProductLabels({})
+                      }}
+                    >
+                      Deselect All
+                    </Button>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(showAllSelected ? productOptions.filter(p => selectedProductIds.includes(p.id)) : productOptions.filter(p => selectedProductIds.includes(p.id)).slice(0, MAX_VISIBLE_ITEMS)).map((item) => (
+                    {(showAllSelected ? selectedProductOptions : selectedProductOptions.slice(0, MAX_VISIBLE_ITEMS)).map((item) => (
                       <Badge key={item.id} variant="secondary" className="flex items-center gap-1">
                         <span className="max-w-[200px] truncate">{item.name}</span>
                         <button

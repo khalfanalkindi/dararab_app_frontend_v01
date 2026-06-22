@@ -32,6 +32,14 @@ import { DateRange } from "react-day-picker"
 import { Checkbox } from "@/components/ui/checkbox"
 
 import { API_URL } from "@/lib/config"
+import {
+  formatInvoiceUsdAmount,
+  formatLineUsdAmount,
+  sumSelectedOutstandingDisplay,
+} from "@/lib/muscatCurrency"
+import { ReceiptContent } from "@/components/receipt/ReceiptContent"
+import { buildReceiptPayloadForDisplayAsync } from "@/components/receipt/buildReceiptPayload"
+import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 
 interface Customer {
   id: number
@@ -48,6 +56,7 @@ interface Warehouse {
   name_en?: string
   name_ar?: string
   name?: string
+  location?: string
 }
 
 interface Product {
@@ -56,6 +65,10 @@ interface Product {
   name_ar: string
   title?: string
   title_ar?: string
+  price?: string | null
+  price_omr?: string | null
+  latest_price?: string | null
+  latest_price_omr?: string | null
 }
 
 interface Invoice {
@@ -249,8 +262,11 @@ export default function OutstandingPaymentPage() {
   const [isCreatingBill, setIsCreatingBill] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = 'view' | 'generate' | 'confirm' | null
+  type DialogType = 'view' | 'generate' | 'confirm' | 'receipt' | null
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
+  const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
+  const [receiptCurrencyLabel, setReceiptCurrencyLabel] = useState("$")
+  const [reopenMainInvoiceAfterReceipt, setReopenMainInvoiceAfterReceipt] = useState(false)
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
@@ -685,7 +701,11 @@ export default function OutstandingPaymentPage() {
     }
   }
 
-  const handleViewInvoice = async (invoice: Invoice) => {
+  const handleViewInvoice = async (
+    invoice: Invoice,
+    options?: { openDialog?: boolean },
+  ) => {
+    const openDialog = options?.openDialog !== false
     // Abort previous request if still pending
     invoiceDetailsAbortControllerRef.current?.abort()
     invoiceDetailsAbortControllerRef.current = new AbortController()
@@ -976,7 +996,21 @@ export default function OutstandingPaymentPage() {
     // Note: We now always fetch complete invoice details above, so this section is no longer needed
     
     setShowOnlyUnpaid(false) // Reset filter when opening new invoice
-    setActiveDialog('view')
+    if (openDialog) {
+      setActiveDialog('view')
+    }
+  }
+
+  const handleCloseReceipt = () => {
+    setReceiptPayload(null)
+    setReceiptCurrencyLabel("$")
+    if (reopenMainInvoiceAfterReceipt) {
+      setReopenMainInvoiceAfterReceipt(false)
+      setActiveDialog("view")
+    } else {
+      setActiveDialog(null)
+      setSelectedInvoice(null)
+    }
   }
 
   const handleResetFilters = () => {
@@ -996,12 +1030,17 @@ export default function OutstandingPaymentPage() {
     ))
   }
 
-  // Calculate selected total using useMemo for efficiency
+  // Calculate selected total using useMemo for efficiency (USD for logic)
   const selectedTotal = useMemo(() => {
     return invoices
       .filter(invoice => invoice.selected)
       .reduce((sum, invoice) => sum + (invoice.remaining_amount || 0), 0)
   }, [invoices])
+
+  const selectedTotalDisplay = useMemo(
+    () => sumSelectedOutstandingDisplay(invoices, warehouses),
+    [invoices, warehouses],
+  )
 
   const handleSearch = () => {
     fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
@@ -1668,53 +1707,83 @@ export default function OutstandingPaymentPage() {
         ? `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} is now fully paid and will no longer appear in outstanding payments.`
         : `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} updated with ${remainingItems.length} remaining items.`
 
-    toast({
+      toast({
         title: "New Bill Generated Successfully",
         description: successMessage,
-      variant: "default",
-    })
-
-      toast({
-        title: "Child Bill Details",
-        description: `Child Bill ID: ${invoiceId}, Composite ID: ${composedId}, Main Invoice: ${originalInvoice.composite_id || originalInvoiceId}. View all invoices to see the new child bill.`,
         variant: "default",
-        action: (
-          <Link href="/invoices" className="text-primary hover:underline">
-            View All Invoices
-          </Link>
-        ),
       })
 
-      // Close dialogs and refresh data
-    setActiveDialog(null)
-    setSelectedItems([])
-    setSelectedInvoice(null)
+      const receiptSourceItems = [...selectedItems]
 
-      // Refresh the invoices list
+      setSelectedItems([])
+      setReopenMainInvoiceAfterReceipt(!isInvoiceFullyPaid)
+
       await fetchInvoices()
 
-      // Verify the new bill was created
+      // Refresh main invoice data in background so it stays available after receipt closes
+      if (!isInvoiceFullyPaid) {
+        await handleViewInvoice(
+          { ...(originalInvoice as Invoice), id: originalInvoiceId },
+          { openDialog: false },
+        )
+      } else {
+        setSelectedInvoice(null)
+      }
+
+      // Fetch child bill summary and show receipt (same as POS complete sale)
       try {
         const verifyResponse = await fetchWithRetry(
           `${API_URL}/sales/invoices/${invoiceId}/summary/`,
           {
             headers,
-            signal: billCreationAbortControllerRef.current.signal
-          }
+            signal: billCreationAbortControllerRef.current.signal,
+          },
         )
         if (verifyResponse.ok) {
-          const verifiedInvoice = await verifyResponse.json()
-          if (process.env.NODE_ENV !== 'production') {
-            console.log("Verified new bill exists:", verifiedInvoice)
-          }
+          const childSummary = await verifyResponse.json()
+          const receiptWarehouse =
+            childSummary.warehouse ??
+            originalInvoice.warehouse ??
+            warehouses.find(
+              (w) =>
+                w.id === originalInvoice.warehouse?.id ||
+                (!!childSummary.warehouse_name &&
+                  (w.name_en === childSummary.warehouse_name ||
+                    childSummary.warehouse_name.includes(w.name_en || ""))),
+            ) ??
+            null
+          const { payload, currencyLabel } = await buildReceiptPayloadForDisplayAsync(
+            childSummary,
+            receiptWarehouse,
+            warehouses,
+            receiptSourceItems,
+            token ?? "",
+            billCreationAbortControllerRef.current?.signal,
+          )
+          setReceiptPayload(payload)
+          setReceiptCurrencyLabel(currencyLabel)
+          setActiveDialog("receipt")
         } else {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn("Could not verify new bill creation")
+          toast({
+            title: "Child Bill Created",
+            description: "Bill was created but the receipt could not be loaded. View it from Invoices.",
+            variant: "default",
+          })
+          if (!isInvoiceFullyPaid) {
+            setActiveDialog("view")
           }
         }
       } catch (error) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn("Error verifying new bill:", error)
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Error loading child bill receipt:", error)
+        }
+        toast({
+          title: "Child Bill Created",
+          description: "Bill was created but the receipt could not be loaded. View it from Invoices.",
+          variant: "default",
+        })
+        if (!isInvoiceFullyPaid) {
+          setActiveDialog("view")
         }
       }
 
@@ -1915,7 +1984,7 @@ export default function OutstandingPaymentPage() {
             {selectedTotal > 0 && (
               <div className="mb-4 p-4 bg-primary/10 rounded-md">
                 <p className="text-lg font-semibold">
-                  Selected Outstanding Total: {selectedTotal.toFixed(3)} $
+                  Selected Outstanding Total: {selectedTotalDisplay}
                 </p>
               </div>
             )}
@@ -1984,10 +2053,14 @@ export default function OutstandingPaymentPage() {
                             <td className="p-2">{invoice.customer_name || 'No Customer'}</td>
                             <td className="p-2">{invoice.warehouse_name || 'No Warehouse'}</td>
                             <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
-                            <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} $</td>
-                            <td className="p-2 text-right">{(invoice.total_paid || 0).toFixed(3)} $</td>
+                            <td className="p-2 text-right">
+                              {formatInvoiceUsdAmount(invoice.total_amount || 0, invoice, warehouses)}
+                            </td>
+                            <td className="p-2 text-right">
+                              {formatInvoiceUsdAmount(invoice.total_paid || 0, invoice, warehouses)}
+                            </td>
                             <td className="p-2 text-right font-semibold text-red-600">
-                              {(invoice.remaining_amount || 0).toFixed(3)} $
+                              {formatInvoiceUsdAmount(invoice.remaining_amount || 0, invoice, warehouses)}
                             </td>
                             <td className="p-2 text-right">
                               <Button
@@ -2063,15 +2136,21 @@ export default function OutstandingPaymentPage() {
               <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold">{(selectedInvoice.total_amount || 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold">
+                    {formatInvoiceUsdAmount(selectedInvoice.total_amount || 0, selectedInvoice, warehouses)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Paid Amount</p>
-                  <p className="text-lg font-semibold text-green-600">{(selectedInvoice.total_paid || 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold text-green-600">
+                    {formatInvoiceUsdAmount(selectedInvoice.total_paid || 0, selectedInvoice, warehouses)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Outstanding</p>
-                  <p className="text-lg font-semibold text-red-600">{(selectedInvoice.remaining_amount || 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold text-red-600">
+                    {formatInvoiceUsdAmount(selectedInvoice.remaining_amount || 0, selectedInvoice, warehouses)}
+                  </p>
                 </div>
               </div>
 
@@ -2189,11 +2268,13 @@ export default function OutstandingPaymentPage() {
                               </div>
                             </td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.quantity) || 0}</td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{(Number(item.unit_price) || 0).toFixed(3)} $</td>
+                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>
+                                {formatLineUsdAmount(Number(item.unit_price) || 0, item, selectedInvoice, warehouses)}
+                              </td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.discount_percent) || 0}%</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.tax_percent) || 0}%</td>
                               <td className={`p-2 text-right ${isPaid ? 'text-green-700 font-semibold' : ''}`}>
-                                {(Number(item.total_price) || 0).toFixed(3)} $
+                                {formatLineUsdAmount(Number(item.total_price) || 0, item, selectedInvoice, warehouses)}
                                 {isPaid && <span className="ml-1 text-xs text-green-600">✓</span>}
                               </td>
                           </tr>
@@ -2267,7 +2348,15 @@ export default function OutstandingPaymentPage() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold text-green-600">{selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} $</p>
+                  <p className="text-lg font-semibold text-green-600">
+                    {selectedInvoice
+                      ? formatInvoiceUsdAmount(
+                          selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0),
+                          selectedInvoice,
+                          warehouses,
+                        )
+                      : "0.000 $"}
+                  </p>
                 </div>
               </div>
 
@@ -2296,10 +2385,18 @@ export default function OutstandingPaymentPage() {
                             </div>
                           </td>
                           <td className="p-2 text-right">{Number(item.quantity) || 0}</td>
-                          <td className="p-2 text-right">{(Number(item.unit_price) || 0).toFixed(3)} $</td>
+                          <td className="p-2 text-right">
+                            {selectedInvoice
+                              ? formatLineUsdAmount(Number(item.unit_price) || 0, item, selectedInvoice, warehouses)
+                              : `${(Number(item.unit_price) || 0).toFixed(3)} $`}
+                          </td>
                           <td className="text-right">{Number(item.discount_percent) || 0}%</td>
                           <td className="p-2 text-right">{Number(item.tax_percent) || 0}%</td>
-                          <td className="p-2 text-right">{(Number(item.total_price) || 0).toFixed(3)} $</td>
+                          <td className="p-2 text-right">
+                            {selectedInvoice
+                              ? formatLineUsdAmount(Number(item.total_price) || 0, item, selectedInvoice, warehouses)
+                              : `${(Number(item.total_price) || 0).toFixed(3)} $`}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2309,7 +2406,13 @@ export default function OutstandingPaymentPage() {
                           Total Amount:
                         </td>
                         <td className="p-2 text-right font-medium">
-                          {selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0).toFixed(3)} $
+                          {selectedInvoice
+                            ? formatInvoiceUsdAmount(
+                                selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0),
+                                selectedInvoice,
+                                warehouses,
+                              )
+                            : "0.000 $"}
                         </td>
                       </tr>
                     </tfoot>
@@ -2373,6 +2476,31 @@ export default function OutstandingPaymentPage() {
                 )}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Child Bill Receipt Dialog */}
+      <Dialog
+        open={activeDialog === "receipt"}
+        onOpenChange={(open) => {
+          if (!open) handleCloseReceipt()
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
+          <DialogHeader className="shrink-0 space-y-1 pb-2">
+            <DialogTitle>Child Bill Receipt</DialogTitle>
+            <DialogDescription>View, print, or download the new child bill.</DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {receiptPayload ? (
+              <ReceiptContent
+                receiptData={receiptPayload}
+                currencyLabel={receiptCurrencyLabel}
+                getDisplayPrice={() => null}
+                onClose={handleCloseReceipt}
+              />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

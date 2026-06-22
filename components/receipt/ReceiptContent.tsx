@@ -60,6 +60,204 @@ const PAYMENT_STATUS_PRINT_CSS = `
   }
 `
 
+const RECEIPT_BASE_STYLES = `
+  .receipt-container {
+    color: #000000;
+  }
+  .receipt-section-title {
+    font-weight: bold;
+    font-size: 9px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #000;
+    padding-bottom: 3px;
+    margin-bottom: 5px;
+    color: #000000;
+  }
+  .receipt-meta-compact {
+    font-size: 8px;
+    line-height: 1.25;
+    margin-bottom: 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px dashed #000;
+    color: #000000;
+  }
+  .receipt-meta-compact strong { font-weight: 700; }
+  .receipt-kv-block { margin-bottom: 5px; }
+  .receipt-container .receipt-kv-label {
+    font-weight: 700;
+    font-size: 8px;
+    color: #000000;
+    margin-bottom: 1px;
+  }
+  .receipt-container .receipt-kv-value {
+    font-size: 9px;
+    color: #000000;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .receipt-container .receipt-item-block {
+    border: 1px solid #000;
+    border-radius: 2px;
+    padding: 6px;
+    margin-bottom: 6px;
+  }
+  .receipt-container .receipt-item-name {
+    font-weight: 700;
+    font-size: 9px;
+    margin-bottom: 4px;
+    color: #000000;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .receipt-container .receipt-item-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 8px;
+    margin-top: 2px;
+    gap: 6px;
+    color: #000000;
+  }
+  ${PAYMENT_STATUS_PRINT_CSS}
+`
+
+const RECEIPT_PRINT_DOCUMENT_STYLES = `
+  @page {
+    size: auto;
+    margin: 8mm;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: auto;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #000000;
+    display: flex;
+    justify-content: center;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  .receipt-container {
+    width: 340px !important;
+    max-width: 340px !important;
+    margin: 0 auto !important;
+    padding: 8px 10px 10px !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    page-break-inside: avoid;
+    box-sizing: border-box;
+    background: #ffffff;
+  }
+  ${RECEIPT_BASE_STYLES}
+`
+
+async function waitForImages(root: ParentNode): Promise<void> {
+  const images = Array.from(root.querySelectorAll("img"))
+  await Promise.all(
+    images.map(
+      (img) =>
+        new Promise<void>((resolve) => {
+          if (img.complete) {
+            resolve()
+            return
+          }
+          img.onload = () => resolve()
+          img.onerror = () => resolve()
+        }),
+    ),
+  )
+}
+
+/** Capture full receipt (not scroll viewport) for PDF/image export. */
+async function captureReceiptToCanvas(receiptEl: HTMLElement): Promise<HTMLCanvasElement> {
+  const html2canvas = (await import("html2canvas")).default
+
+  const wrapper = document.createElement("div")
+  wrapper.setAttribute("aria-hidden", "true")
+  wrapper.style.position = "fixed"
+  wrapper.style.left = "-10000px"
+  wrapper.style.top = "0"
+  wrapper.style.width = `${receiptEl.offsetWidth || 340}px`
+  wrapper.style.overflow = "visible"
+  wrapper.style.background = "#ffffff"
+  wrapper.style.zIndex = "-1"
+  wrapper.style.pointerEvents = "none"
+
+  const clone = receiptEl.cloneNode(true) as HTMLElement
+  clone.style.overflow = "visible"
+  clone.style.maxHeight = "none"
+  clone.style.height = "auto"
+  clone.style.transform = "none"
+  clone.style.maxWidth = "340px"
+  clone.style.width = "100%"
+
+  wrapper.appendChild(clone)
+  document.body.appendChild(wrapper)
+
+  try {
+    await waitForImages(clone)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const width = Math.ceil(clone.scrollWidth || clone.offsetWidth || 340)
+    const height = Math.ceil(clone.scrollHeight || clone.offsetHeight)
+
+    return await html2canvas(clone, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      allowTaint: true,
+      logging: false,
+      width,
+      height,
+      windowWidth: width,
+      windowHeight: height,
+      scrollX: 0,
+      scrollY: 0,
+      x: 0,
+      y: 0,
+    })
+  } finally {
+    document.body.removeChild(wrapper)
+  }
+}
+
+function openReceiptPrintWindow(receiptEl: HTMLElement): void {
+  const printWindow = window.open("", "_blank", "noopener,noreferrer,width=480,height=720")
+  if (!printWindow) return
+
+  printWindow.document.open()
+  printWindow.document.write("<!DOCTYPE html><html><head><title>Receipt</title>")
+  printWindow.document.write(`<style>${RECEIPT_PRINT_DOCUMENT_STYLES}</style>`)
+  printWindow.document.write("</head><body>")
+  printWindow.document.write(receiptEl.outerHTML)
+  printWindow.document.write("</body></html>")
+  printWindow.document.close()
+
+  const triggerPrint = () => {
+    printWindow.focus()
+    printWindow.print()
+  }
+
+  if (printWindow.document.readyState === "complete") {
+    void waitForImages(printWindow.document).then(triggerPrint)
+  } else {
+    printWindow.onload = () => {
+      void waitForImages(printWindow.document).then(triggerPrint)
+    }
+  }
+}
+
 export interface ReceiptItem {
   id?: number
   product_name?: string
@@ -114,7 +312,7 @@ interface ReceiptContentProps {
 }
 
 export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, onClose }: ReceiptContentProps) {
-  const printRef = useRef<HTMLDivElement>(null)
+  const receiptRef = useRef<HTMLDivElement>(null)
 
   const getItemLineGross = (item: ReceiptItem) => toNum(item.unit_price) * toNum(item.quantity)
 
@@ -241,252 +439,58 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
   }
 
   const handlePrint = () => {
-    if (printRef.current) {
-      try {
-        const printWindow = window.open("", "_blank")
-        if (printWindow) {
-          printWindow.document.write("<html><head><title>Receipt</title>")
-          printWindow.document.write(`
-            <style>
-              @media print {
-                @page { 
-                  size: auto; 
-                  margin: 0; 
-                }
-                body { 
-                  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
-                  font-size: 11px; 
-                  line-height: 1.35; 
-                  margin: 0; 
-                  padding: 10px; 
-                  width: 100%;
-                  color: #000000;
-                }
-                .receipt-container { 
-                  width: 100% !important; 
-                  max-width: 100% !important; 
-                  margin: 0 !important; 
-                  padding: 0 !important;
-                  color: #000000 !important;
-                }
-                .receipt-section-title {
-                  border-bottom: 1px solid #000 !important;
-                  padding-bottom: 3px !important;
-                  margin-bottom: 5px !important;
-                  color: #000000 !important;
-                }
-                .receipt-meta-compact {
-                  color: #000000 !important;
-                }
-                .receipt-kv-value, .receipt-item-name {
-                  word-wrap: break-word !important;
-                  overflow-wrap: anywhere !important;
-                  white-space: normal !important;
-                  color: #000000 !important;
-                }
-                img {
-                  -webkit-print-color-adjust: exact !important;
-                  color-adjust: exact !important;
-                  print-color-adjust: exact !important;
-                }
-                ${PAYMENT_STATUS_PRINT_CSS}
-              }
-              body { 
-                font-family: system-ui, -apple-system, "Segoe UI", sans-serif; 
-                font-size: 11px; 
-                line-height: 1.35; 
-                margin: 0; 
-                padding: 10px; 
-                width: 100%;
-                color: #000000;
-              }
-              .receipt-container { color: #000000; }
-              .receipt-section-title {
-                font-weight: bold;
-                font-size: 9px;
-                letter-spacing: 0.03em;
-                text-transform: uppercase;
-                border-bottom: 1px solid #000;
-                padding-bottom: 3px;
-                margin-bottom: 5px;
-                color: #000000;
-              }
-              .receipt-meta-compact {
-                font-size: 8px;
-                line-height: 1.25;
-                margin-bottom: 6px;
-                padding-bottom: 5px;
-                border-bottom: 1px dashed #000;
-                color: #000000;
-              }
-              .receipt-meta-compact strong { font-weight: 700; }
-              .receipt-kv-block { margin-bottom: 5px; }
-              .receipt-kv-label { font-weight: 700; font-size: 8px; color: #000000; margin-bottom: 1px; }
-              .receipt-kv-value {
-                font-size: 9px;
-                color: #000000;
-                word-wrap: break-word;
-                overflow-wrap: anywhere;
-                white-space: normal;
-              }
-              .receipt-item-block {
-                border: 1px solid #000;
-                border-radius: 2px;
-                padding: 6px;
-                margin-bottom: 6px;
-              }
-              .receipt-item-name {
-                font-weight: 700;
-                font-size: 9px;
-                margin-bottom: 4px;
-                color: #000000;
-                word-wrap: break-word;
-                overflow-wrap: anywhere;
-                white-space: normal;
-              }
-              .receipt-item-row { display: flex; justify-content: space-between; font-size: 8px; margin-top: 2px; gap: 6px; color: #000000; }
-            </style>
-          `)
-          printWindow.document.write("</head><body>")
-          printWindow.document.write(printRef.current.innerHTML)
-          printWindow.document.write("</body></html>")
-          printWindow.document.close()
-          printWindow.print()
-        }
-      } catch (error) {
-        console.error("Error printing:", error)
-      }
+    if (!receiptRef.current) return
+    try {
+      openReceiptPrintWindow(receiptRef.current)
+    } catch (error) {
+      console.error("Error printing:", error)
     }
   }
 
-  const handleDownloadPDF = () => {
-    if (printRef.current) {
-      import('html2canvas').then((html2canvas) => {
-        setTimeout(() => {
-          html2canvas.default(printRef.current!, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            allowTaint: true,
-            logging: false,
-            width: printRef.current?.scrollWidth,
-            height: printRef.current?.scrollHeight
-          }).then(canvas => {
-            const imgWidth = canvas.width
-            const imgHeight = canvas.height
-            
-            const doc = new jsPDF({
-              unit: 'px',
-              format: [imgWidth, imgHeight],
-              orientation: imgHeight > imgWidth ? 'portrait' : 'landscape'
-            })
-            
-            const imgData = canvas.toDataURL('image/png')
-            doc.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight)
-            doc.save('receipt.pdf')
-          }).catch(error => {
-            console.error('Error generating PDF:', error)
-          })
-        }, 500)
+  const handleDownloadPDF = async () => {
+    if (!receiptRef.current) return
+    try {
+      const canvas = await captureReceiptToCanvas(receiptRef.current)
+      const imgWidth = canvas.width
+      const imgHeight = canvas.height
+
+      const doc = new jsPDF({
+        unit: "px",
+        format: [imgWidth, imgHeight],
+        orientation: imgHeight > imgWidth ? "portrait" : "landscape",
       })
+
+      const imgData = canvas.toDataURL("image/png")
+      doc.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight)
+      doc.save("receipt.pdf")
+    } catch (error) {
+      console.error("Error generating PDF:", error)
     }
   }
 
-  const handleDownloadImage = () => {
-    if (printRef.current) {
-      import('html2canvas').then((html2canvas) => {
-        setTimeout(() => {
-          html2canvas.default(printRef.current!, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            allowTaint: true,
-            logging: false,
-            width: printRef.current?.scrollWidth,
-            height: printRef.current?.scrollHeight
-          }).then(canvas => {
-            const link = document.createElement('a')
-            link.download = 'receipt.png'
-            link.href = canvas.toDataURL()
-            link.click()
-          }).catch(error => {
-            console.error('Error generating image:', error)
-          })
-        }, 500)
-      })
+  const handleDownloadImage = async () => {
+    if (!receiptRef.current) return
+    try {
+      const canvas = await captureReceiptToCanvas(receiptRef.current)
+      const link = document.createElement("a")
+      link.download = "receipt.png"
+      link.href = canvas.toDataURL("image/png")
+      link.click()
+    } catch (error) {
+      console.error("Error generating image:", error)
     }
   }
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto my-4" ref={printRef}>
+      <div className="flex-1 overflow-y-auto my-4 min-h-0">
         <style
           dangerouslySetInnerHTML={{
-            __html: `
-        .receipt-container {
-          color: #000000;
-        }
-        .receipt-section-title {
-          font-weight: bold;
-          font-size: 9px;
-          letter-spacing: 0.03em;
-          text-transform: uppercase;
-          border-bottom: 1px solid #000;
-          padding-bottom: 3px;
-          margin-bottom: 5px;
-          color: #000000;
-        }
-        .receipt-meta-compact {
-          font-size: 8px;
-          line-height: 1.25;
-          margin-bottom: 6px;
-          padding-bottom: 5px;
-          border-bottom: 1px dashed #000;
-          color: #000000;
-        }
-        .receipt-meta-compact strong { font-weight: 700; }
-        .receipt-kv-block { margin-bottom: 5px; }
-        .receipt-container .receipt-kv-label {
-          font-weight: 700;
-          font-size: 8px;
-          color: #000000;
-          margin-bottom: 1px;
-        }
-        .receipt-container .receipt-kv-value {
-          font-size: 9px;
-          color: #000000;
-          word-wrap: break-word;
-          overflow-wrap: anywhere;
-          white-space: normal;
-        }
-        .receipt-container .receipt-item-block {
-          border: 1px solid #000;
-          border-radius: 2px;
-          padding: 6px;
-          margin-bottom: 6px;
-        }
-        .receipt-container .receipt-item-name {
-          font-weight: 700;
-          font-size: 9px;
-          margin-bottom: 4px;
-          color: #000000;
-          word-wrap: break-word;
-          overflow-wrap: anywhere;
-          white-space: normal;
-        }
-        .receipt-container .receipt-item-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 8px;
-          margin-top: 2px;
-          gap: 6px;
-          color: #000000;
-        }
-        ${PAYMENT_STATUS_PRINT_CSS}
-      `,
+            __html: RECEIPT_BASE_STYLES,
           }}
         />
         <div
+          ref={receiptRef}
           className="receipt-container"
           style={{
             width: "100%",
@@ -497,7 +501,6 @@ export function ReceiptContent({ receiptData, currencyLabel, getDisplayPrice, on
             fontSize: "9px",
             lineHeight: 1.35,
             backgroundColor: "white",
-            minHeight: "100%",
             wordWrap: "break-word",
             overflowWrap: "anywhere",
             color: "#000000",
