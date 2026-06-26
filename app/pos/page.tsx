@@ -633,38 +633,54 @@ export default function POSPage() {
 
   // Cart functions
   const addToCart = (product: Product) => {
+    const availableStock = getAvailableStock(product)
+    const productWithStock = {
+      ...product,
+      warehouse_stock: selectedWarehouse ? availableStock : product.warehouse_stock,
+    }
+
+    let blockedByStock = false
+
     setCart((prevCart) => {
-      const existingItem = prevCart.find((item) => item.product.id === product.id);
-      if (existingItem) {
-        // increment quantity FIRST, then allocate later
-        // Use updateCartItem pattern for consistency
-        return prevCart.map((item) =>
-          item.product.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        );
+      const existingItem = prevCart.find((item) => item.product.id === product.id)
+      const requestedQty = existingItem ? existingItem.quantity + 1 : 1
+
+      if (requestedQty > availableStock) {
+        blockedByStock = true
+        return prevCart
       }
 
-      // New line item: for Individual customers, mark as paid immediately
-      // Otherwise, starts unpaid; allocation is handled centrally
+      if (existingItem) {
+        return prevCart.map((item) =>
+          item.product.id === product.id
+            ? {
+                ...item,
+                quantity: item.quantity + 1,
+                product: { ...item.product, warehouse_stock: availableStock },
+              }
+            : item
+        )
+      }
+
       const newItem = {
-        product,
+        product: productWithStock,
         quantity: 1,
         discount_percent: 0,
-        is_paid: isIndividualCustomer, // Auto-paid for Individual customers
-        paid_amount: 0, // Will be calculated by the Individual customer effect
-      };
-      return [...prevCart, newItem];
-    });
+        is_paid: isIndividualCustomer,
+        paid_amount: 0,
+      }
+      return [...prevCart, newItem]
+    })
 
-    // If current payment method is cash-like, auto-allocate to GRAND TOTAL
-    // (slight timeout lets React commit state before we read totals)
-    // Skip for Individual customers (handled by separate effect)
+    if (blockedByStock) {
+      showInsufficientStockToast(availableStock)
+      return
+    }
+
     setTimeout(() => {
-      if (isIndividualCustomer) return;
-      // Store (cash or outstanding) and non-individual cash: reconcile line paid amounts to match payment method
-      allocatePayInFullRef.current?.();
-    }, 0);
+      if (isIndividualCustomer) return
+      allocatePayInFullRef.current?.()
+    }, 0)
   }
 
   const removeFromCart = (productId: number) => {
@@ -868,11 +884,25 @@ export default function POSPage() {
   };
 
   const updateQuantity = (productId: number, newQuantity: number) => {
-    const q = Math.floor(Number(newQuantity))
+    let q = Math.floor(Number(newQuantity))
     if (!Number.isFinite(q) || q < 1) {
       removeFromCart(productId)
       return
     }
+
+    const cartItem = cart.find((item) => item.product.id === productId)
+    if (!cartItem) return
+
+    const availableStock = getAvailableStock(cartItem.product)
+    if (q > availableStock) {
+      showInsufficientStockToast(availableStock)
+      if (availableStock < 1) {
+        removeFromCart(productId)
+        return
+      }
+      q = availableStock
+    }
+
     updateCartItem(productId, (item, currentCart) => {
       const updatedItem = { ...item, quantity: q };
       const mergedCart = replaceCartItemForTotals(currentCart, updatedItem);
@@ -965,6 +995,27 @@ export default function POSPage() {
   const getCurrencyLabel = useCallback((): string => {
     return isMuscatWarehouse ? 'OMR' : '$';
   }, [isMuscatWarehouse]);
+
+  /** Stock for the selected warehouse (not total across all warehouses). */
+  const getAvailableStock = useCallback((product: Product): number => {
+    if (selectedWarehouse) {
+      const fresh = products.find((p) => p.id === product.id)
+      const source = fresh ?? product
+      return source.warehouse_stock ?? 0
+    }
+    return product.stock ?? 0
+  }, [selectedWarehouse, products])
+
+  const showInsufficientStockToast = useCallback((availableStock: number) => {
+    toast({
+      title: "Insufficient stock",
+      description:
+        availableStock > 0
+          ? `Only ${availableStock} item(s) available in this warehouse.`
+          : "This product is out of stock in the selected warehouse.",
+      variant: "destructive",
+    })
+  }, [])
 
   /** Convert a USD line amount to OMR for on-screen display (Muscat only). */
   const usdToDisplayForLine = useCallback(
@@ -1500,12 +1551,24 @@ export default function POSPage() {
             }
             return res.json()
           })
-          .then(data => ({
-            productId: item.product.id,
-            productName: item.product.title_en,
-            quantity: item.quantity,
-            inventory: data.results?.[0] || null
-          }))
+          .then(data => {
+            const results = Array.isArray(data?.results)
+              ? data.results
+              : Array.isArray(data)
+                ? data
+                : []
+            const inventory =
+              results.find(
+                (row: { product_id?: number; product?: { id?: number } }) =>
+                  row.product_id === item.product.id || row.product?.id === item.product.id
+              ) ?? results[0] ?? null
+            return {
+              productId: item.product.id,
+              productName: item.product.title_en,
+              quantity: item.quantity,
+              inventory,
+            }
+          })
       )
 
       const inventoryResults = await Promise.allSettled(inventoryFetchPromises)
@@ -1622,6 +1685,8 @@ export default function POSPage() {
       const payment = await paymentResponse.json()
       createdPaymentId = payment.id
 
+      const cartSnapshot = [...cart]
+
       const remainingAmount = roundedTotal - finalPaidAmount;
       const displayRemaining =
         isMuscatWarehouse && roundedTotal > 0
@@ -1634,15 +1699,54 @@ export default function POSPage() {
           : `Sale completed successfully - ${displayRemaining.toFixed(3)} ${getCurrencyLabel()} remaining`,
       })
 
-      // Fetch invoice summary for receipt
-      const summaryRes = await fetchWithRetry(`${API_URL}/sales/invoices/${invoiceId}/summary/`, { 
-        headers,
-        signal: controller.signal,
-      })
-      if (!summaryRes.ok) {
-        throw new Error("Failed to fetch invoice summary for receipt")
+      // Fetch invoice summary for receipt (fallback to local data if API fails — sale is already saved)
+      let summary: Record<string, unknown> | null = null
+      try {
+        const summaryRes = await fetchWithRetry(`${API_URL}/sales/invoices/${invoiceId}/summary/`, {
+          headers,
+          signal: controller.signal,
+        })
+        if (summaryRes.ok) {
+          summary = await summaryRes.json()
+        }
+      } catch (summaryError) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn("Invoice summary fetch failed, using local receipt data:", summaryError)
+        }
       }
-      const summary = await summaryRes.json()
+
+      if (!summary) {
+        summary = {
+          id: invoice.id,
+          composite_id: invoice.composite_id ?? String(invoice.id),
+          customer_name: selectedCustomer.institution_name,
+          customer_contact: [
+            selectedCustomer.contact_person,
+            selectedCustomer.phone,
+            selectedCustomer.email,
+          ].filter(Boolean).join(" · ") || "No Contact Information",
+          warehouse_name: warehouses.find((w) => w.id === selectedWarehouse)?.name_en ?? "N/A",
+          invoice_type_name: invoiceTypes.find((t) => t.id === selectedInvoiceType)?.display_name_en ?? "N/A",
+          payment_method_name: paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en ?? "N/A",
+          notes: invoiceNotes,
+          created_at_formatted: format(new Date(), "PPP"),
+          total_amount: roundedTotal,
+          total_paid: finalPaidAmount,
+          remaining_amount: remainingAmount,
+          items: cartSnapshot.map((item) => ({
+            product_name: item.product.title_ar || item.product.title_en,
+            quantity: item.quantity,
+            unit_price: parseFloat(item.product.price || item.product.latest_price || "0"),
+            discount_percent: item.discount_percent,
+            total_price: calculateItemTotal(item, cartSnapshot),
+          })),
+        }
+        toast({
+          title: "Sale saved",
+          description: "The sale was completed but the full receipt could not be loaded from the server. Showing sale details from your cart.",
+        })
+      }
+
       setConfirmSaleOpen(false)
       setReceiptData(summary)
       queueMicrotask(() => {
@@ -1654,7 +1758,7 @@ export default function POSPage() {
       setTotalCustomers(prev => prev + 1)
       // Find the most popular product in the cart
       const productCounts = new Map<number, number>()
-      cart.forEach(item => {
+      cartSnapshot.forEach(item => {
         const count = productCounts.get(item.product.id) || 0
         productCounts.set(item.product.id, count + item.quantity)
       })
@@ -1692,24 +1796,24 @@ export default function POSPage() {
         } else if (error.message.includes("Failed to fetch inventory") || error.message.includes("Inventory validation failed")) {
           // These errors occur before inventory update, so no rollback needed
           errorMessage = error.message
-        } else {
-          // For other errors that might occur after invoice creation, attempt rollback
-          // Check if we have invoiceId (means invoice was created)
-          if (invoiceId !== undefined && headers) {
-            try {
-              await rollbackSaleCreation(invoiceId, createdInvoiceItemIds || [], headers, controller.signal)
-              errorMessage = `${error.message} The sale has been rolled back. Please try again.`
-            } catch (rollbackError) {
-              // Rollback failed - need manual reconciliation
-              needsManualReconciliation = true
-              errorMessage = `${error.message} Rollback failed. Invoice ID: ${invoiceId}. Please contact support for manual reconciliation.`
-              if (process.env.NODE_ENV !== 'production') {
-                console.error("Rollback failed:", rollbackError)
-              }
+        } else if (createdPaymentId) {
+          // Payment succeeded — sale is saved; never roll back for post-payment UI errors
+          errorMessage =
+            `${error.message} The sale was saved successfully (invoice #${invoiceId}). ` +
+            "Check the Invoices page if the receipt did not appear."
+        } else if (invoiceId !== undefined && headers) {
+          try {
+            await rollbackSaleCreation(invoiceId, createdInvoiceItemIds || [], headers, controller.signal)
+            errorMessage = `${error.message} The sale has been rolled back. Please try again.`
+          } catch (rollbackError) {
+            needsManualReconciliation = true
+            errorMessage = `${error.message} Rollback failed. Invoice ID: ${invoiceId}. Please contact support for manual reconciliation.`
+            if (process.env.NODE_ENV !== 'production') {
+              console.error("Rollback failed:", rollbackError)
             }
-          } else {
-            errorMessage = error.message
           }
+        } else {
+          errorMessage = error.message
         }
       }
       
@@ -2407,6 +2511,7 @@ export default function POSPage() {
                                     type="button"
                                     variant="outline"
                                     size="sm"
+                                    disabled={item.quantity >= getAvailableStock(item.product)}
                                     onClick={() => updateQuantity(item.product.id, Number(item.quantity) + 1)}
                                   >
                                     <Plus className="h-4 w-4" />
@@ -2938,13 +3043,13 @@ export default function POSPage() {
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <p className="text-xs text-muted-foreground cursor-help">
-                                            Stock: {product.stock || product.warehouse_stock || 0}
+                                            Stock: {getAvailableStock(product)}
                                           </p>
                                         </TooltipTrigger>
                                         <TooltipContent>
                                           <div className="space-y-1">
                                             <p className="font-medium">Stock Information</p>
-                                            <p>Current Stock: {product.stock || product.warehouse_stock || 0}</p>
+                                            <p>Current Stock: {getAvailableStock(product)}</p>
                                             <p>ISBN: {product.isbn || 'N/A'}</p>
                                             <p>Author: {product.author_name || 'N/A'}</p>
                                             <p>Translator: {product.translator_name || 'N/A'}</p>
@@ -2956,6 +3061,7 @@ export default function POSPage() {
                                   <Button 
                                     size="sm" 
                                     className="h-7 px-2 text-xs"
+                                    disabled={getAvailableStock(product) < 1}
                                     onClick={() => addToCart(product)}
                                   >
                                     Add
