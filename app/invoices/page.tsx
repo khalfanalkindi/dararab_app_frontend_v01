@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, Search, Trash2, Receipt, Loader2 } from "lucide-react"
+import { FileText, Search, Trash2, Receipt, Loader2, FileSpreadsheet } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ import { API_URL } from "@/lib/config"
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
+import { downloadInvoiceDetailAsExcel } from "@/lib/exportInvoicesToExcel"
 
 interface Invoice {
   id: number
@@ -84,6 +85,7 @@ interface Warehouse {
   id: number
   name_en: string
   name_ar: string
+  location?: string
 }
 
 interface CustomerOption {
@@ -165,6 +167,7 @@ export default function InvoicesPage() {
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
+  const [exportingInvoiceId, setExportingInvoiceId] = useState<number | null>(null)
 
   // Individual operation loading states
   const [isViewingInvoice, setIsViewingInvoice] = useState(false)
@@ -345,6 +348,88 @@ export default function InvoicesPage() {
     return allItems
   }
 
+  const buildInvoicesUrl = useCallback(
+    (options?: { search?: string; customerId?: number | null; pageSize?: number }) => {
+      let url = `${API_URL}/sales/invoices/`
+      const params = new URLSearchParams()
+
+      if (selectedWarehouse) {
+        params.append("warehouse_id", selectedWarehouse.toString())
+      }
+      if (dateRange?.from) {
+        params.append("start_date", format(dateRange.from, "yyyy-MM-dd"))
+      }
+      if (dateRange?.to) {
+        params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
+      }
+
+      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
+
+      if (searchValue) {
+        params.append("search", searchValue)
+      }
+      if (customerId) {
+        params.append("customer_id", customerId.toString())
+      }
+
+      params.append("page_size", String(options?.pageSize ?? 1000))
+      params.append("ordering", "-created_at")
+
+      const queryString = params.toString()
+      if (queryString) {
+        url += `?${queryString}`
+      }
+      return url
+    },
+    [selectedWarehouse, dateRange, debouncedSearchQuery, selectedCustomerId],
+  )
+
+  const getCurrencyLabelForInvoice = useCallback(
+    (warehouseName?: string, warehouseId?: number) => {
+      const warehouse = warehouses.find(
+        (w) => w.id === warehouseId || w.name_en === warehouseName || w.name_ar === warehouseName,
+      )
+      return warehouse?.location === "Muscat" ? "OMR" : "$"
+    },
+    [warehouses],
+  )
+
+  const handleExportInvoiceExcel = async (invoice: Invoice) => {
+    setExportingInvoiceId(invoice.id)
+    try {
+      const res = await fetchWithRetry(`${API_URL}/sales/invoices/${invoice.id}/summary/`, {
+        headers,
+      })
+      if (!res.ok) {
+        throw new Error(`Failed to load invoice details (${res.status})`)
+      }
+
+      const data: InvoiceSummaryResponse = await res.json()
+      const warehouse = warehouses.find(
+        (w) => w.id === invoice.warehouse?.id || w.name_en === data.warehouse_name,
+      )
+      const receiptData = buildReceiptPayloadFromSummary({
+        ...data,
+        warehouse_location: warehouse?.location,
+      })
+      const currencyLabel = getCurrencyLabelForInvoice(data.warehouse_name, warehouse?.id)
+      const filename = `invoice-${receiptData.composite_id || invoice.id}.xlsx`
+
+      downloadInvoiceDetailAsExcel(receiptData, currencyLabel, filename)
+
+      toast({
+        title: "Excel exported",
+        description: `Invoice ${receiptData.composite_id || invoice.id} downloaded.`,
+      })
+    } catch (error) {
+      handleError(error, "Failed to export invoice to Excel")
+    } finally {
+      setExportingInvoiceId(null)
+    }
+  }
+
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
     warehousesAbortControllerRef.current?.abort()
@@ -394,34 +479,10 @@ export default function InvoicesPage() {
     
     setIsLoading(true)
     try {
-      let url = `${API_URL}/sales/invoices/`
-      const params = new URLSearchParams()
-
-      if (selectedWarehouse) {
-        params.append("warehouse_id", selectedWarehouse.toString())
-      }
-      if (dateRange?.from) {
-        params.append("start_date", format(dateRange.from, "yyyy-MM-dd"))
-      }
-      if (dateRange?.to) {
-        params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
-      }
-      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
-      const customerId =
-        options?.customerId !== undefined ? options.customerId : selectedCustomerId
-      if (searchValue) {
-        params.append("search", searchValue)
-      }
-      if (customerId) {
-        params.append("customer_id", customerId.toString())
-      }
-      params.append("page_size", "1000")
-      params.append("ordering", "-created_at") // Order by created_at in descending order
-
-      const queryString = params.toString()
-      if (queryString) {
-        url += `?${queryString}`
-      }
+      const url = buildInvoicesUrl({
+        search: options?.search,
+        customerId: options?.customerId,
+      })
 
       const res = await fetchWithRetry(url, {
         headers,
@@ -437,6 +498,8 @@ export default function InvoicesPage() {
         ? data.results
         : []
 
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
       if (customerId) {
         invoicesData = invoicesData.filter((invoice) => invoice.customer?.id === customerId)
       }
@@ -1165,7 +1228,7 @@ export default function InvoicesPage() {
                         <th className="text-left font-medium p-2">Type</th>
                         <th className="text-left font-medium p-2">Date</th>
                         <th className="text-right font-medium p-2">Amount</th>
-                        <th className="text-right font-medium p-2">Actions</th>
+                        <th className="text-right font-medium p-2 min-w-[280px]">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1202,21 +1265,20 @@ export default function InvoicesPage() {
                             </td>
                             <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
                             <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} $</td>
-                            <td className="p-2 text-right space-x-2">
+                            <td className="p-2 text-right align-middle">
+                              <div className="inline-flex flex-nowrap items-center justify-end gap-1">
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="h-8 px-2"
                                 onClick={() => handleViewInvoice(invoice)}
                                 disabled={isViewingInvoice}
                               >
                                 {isViewingInvoice ? (
-                                  <>
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    Loading...
-                                  </>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <>
-                                    <FileText className="h-4 w-4 mr-2" />
+                                    <FileText className="h-4 w-4 mr-1" />
                                     View
                                   </>
                                 )}
@@ -1225,15 +1287,35 @@ export default function InvoicesPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="h-8 px-2"
                                 onClick={() => handleViewReceipt(invoice)}
                               >
-                                <Receipt className="h-4 w-4 mr-2" />
+                                <Receipt className="h-4 w-4 mr-1" />
                                 Receipt
+                              </Button>
+
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8 shrink-0"
+                                title="Export Excel"
+                                aria-label="Export Excel"
+                                onClick={() => void handleExportInvoiceExcel(invoice)}
+                                disabled={exportingInvoiceId === invoice.id}
+                              >
+                                {exportingInvoiceId === invoice.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileSpreadsheet className="h-4 w-4" />
+                                )}
                               </Button>
 
                               <Button
                                 variant="destructive"
                                 size="icon"
+                                className="h-8 w-8 shrink-0"
+                                title="Delete invoice"
+                                aria-label="Delete invoice"
                                 onClick={() => {
                                   setInvoiceToDelete(invoice)
                                   setActiveDialog('delete')
@@ -1241,6 +1323,7 @@ export default function InvoicesPage() {
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
+                              </div>
                             </td>
                           </tr>
                         ))
