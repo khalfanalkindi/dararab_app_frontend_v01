@@ -14,13 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, Search, Trash2, Receipt, Loader2, Download, FileSpreadsheet } from "lucide-react"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { FileText, Search, Trash2, Receipt, Loader2, FileSpreadsheet } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -39,7 +33,7 @@ import { API_URL } from "@/lib/config"
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
-import { downloadInvoicesAsExcel, type InvoiceExcelRow } from "@/lib/exportInvoicesToExcel"
+import { downloadInvoiceDetailAsExcel } from "@/lib/exportInvoicesToExcel"
 
 interface Invoice {
   id: number
@@ -91,6 +85,7 @@ interface Warehouse {
   id: number
   name_en: string
   name_ar: string
+  location?: string
 }
 
 interface CustomerOption {
@@ -172,7 +167,7 @@ export default function InvoicesPage() {
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
+  const [exportingInvoiceId, setExportingInvoiceId] = useState<number | null>(null)
 
   // Individual operation loading states
   const [isViewingInvoice, setIsViewingInvoice] = useState(false)
@@ -391,121 +386,49 @@ export default function InvoicesPage() {
     [selectedWarehouse, dateRange, debouncedSearchQuery, selectedCustomerId],
   )
 
-  const mapInvoiceToExportRow = useCallback((invoice: Invoice): InvoiceExcelRow => {
-    const totalAmount = invoice.total_amount || 0
-    const totalPaid = invoice.total_paid ?? 0
-    const remaining = invoice.remaining_amount ?? Math.max(0, totalAmount - totalPaid)
-    const status =
-      invoice.status ||
-      calculateInvoiceStatus(
-        totalPaid,
-        totalAmount,
-        invoice.global_discount_percent,
-        invoice.tax_percent,
+  const getCurrencyLabelForInvoice = useCallback(
+    (warehouseName?: string, warehouseId?: number) => {
+      const warehouse = warehouses.find(
+        (w) => w.id === warehouseId || w.name_en === warehouseName || w.name_ar === warehouseName,
       )
-
-    return {
-      "Invoice #": invoice.invoice_number || invoice.composite_id || String(invoice.id),
-      "Composite ID": invoice.composite_id || "",
-      Customer: invoice.customer?.institution_name || "",
-      Contact: invoice.customer?.contact_person || "",
-      Warehouse: invoice.warehouse?.name_en || "",
-      Type: invoice.invoice_type?.display_name_en || "",
-      "Payment Method": invoice.payment_method?.display_name_en || "",
-      Date: invoice.created_at ? format(new Date(invoice.created_at), "yyyy-MM-dd HH:mm") : "",
-      Amount: Number(totalAmount.toFixed(3)),
-      Paid: Number(totalPaid.toFixed(3)),
-      Remaining: Number(remaining.toFixed(3)),
-      Status: status,
-    }
-  }, [])
-
-  const buildExportFilename = useCallback(() => {
-    const from = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : ""
-    const to = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : from
-    const rangePart = from ? (from === to ? from : `${from}_to_${to}`) : format(new Date(), "yyyy-MM-dd")
-    return `invoices-${rangePart}.xlsx`
-  }, [dateRange])
-
-  const exportInvoicesToExcel = useCallback(
-    async (mode: "all" | "selected") => {
-      if (!hasSearched) {
-        toast({
-          title: "No data to export",
-          description: "Search for invoices first, then export.",
-          variant: "destructive",
-        })
-        return
-      }
-
-      const selectedInvoices = invoices.filter((invoice) => invoice.selected)
-      if (mode === "selected" && selectedInvoices.length === 0) {
-        toast({
-          title: "No invoices selected",
-          description: "Select at least one invoice to export.",
-          variant: "destructive",
-        })
-        return
-      }
-
-      setIsExporting(true)
-      const exportAbortController = new AbortController()
-
-      try {
-        let invoicesToExport: Invoice[]
-
-        if (mode === "selected") {
-          invoicesToExport = selectedInvoices
-        } else {
-          const url = buildInvoicesUrl({
-            search: searchQuery,
-            customerId: selectedCustomerId,
-            pageSize: 1000,
-          })
-          invoicesToExport = await fetchAllPaginated<Invoice>(
-            url,
-            exportAbortController.signal,
-          )
-          if (selectedCustomerId) {
-            invoicesToExport = invoicesToExport.filter(
-              (invoice) => invoice.customer?.id === selectedCustomerId,
-            )
-          }
-        }
-
-        if (invoicesToExport.length === 0) {
-          toast({
-            title: "Nothing to export",
-            description: "No invoices match the current filters.",
-            variant: "destructive",
-          })
-          return
-        }
-
-        const rows = invoicesToExport.map(mapInvoiceToExportRow)
-        downloadInvoicesAsExcel(rows, buildExportFilename())
-
-        toast({
-          title: "Export complete",
-          description: `Exported ${rows.length} invoice${rows.length === 1 ? "" : "s"} to Excel.`,
-        })
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return
-        handleError(error, "Failed to export invoices to Excel")
-      } finally {
-        setIsExporting(false)
-      }
+      return warehouse?.location === "Muscat" ? "OMR" : "$"
     },
-    [
-      hasSearched,
-      invoices,
-      buildInvoicesUrl,
-      searchQuery,
-      selectedCustomerId,
-      mapInvoiceToExportRow,
-      buildExportFilename,
-    ],
+    [warehouses],
   )
+
+  const handleExportInvoiceExcel = async (invoice: Invoice) => {
+    setExportingInvoiceId(invoice.id)
+    try {
+      const res = await fetchWithRetry(`${API_URL}/sales/invoices/${invoice.id}/summary/`, {
+        headers,
+      })
+      if (!res.ok) {
+        throw new Error(`Failed to load invoice details (${res.status})`)
+      }
+
+      const data: InvoiceSummaryResponse = await res.json()
+      const warehouse = warehouses.find(
+        (w) => w.id === invoice.warehouse?.id || w.name_en === data.warehouse_name,
+      )
+      const receiptData = buildReceiptPayloadFromSummary({
+        ...data,
+        warehouse_location: warehouse?.location,
+      })
+      const currencyLabel = getCurrencyLabelForInvoice(data.warehouse_name, warehouse?.id)
+      const filename = `invoice-${receiptData.composite_id || invoice.id}.xlsx`
+
+      downloadInvoiceDetailAsExcel(receiptData, currencyLabel, filename)
+
+      toast({
+        title: "Excel exported",
+        description: `Invoice ${receiptData.composite_id || invoice.id} downloaded.`,
+      })
+    } catch (error) {
+      handleError(error, "Failed to export invoice to Excel")
+    } finally {
+      setExportingInvoiceId(null)
+    }
+  }
 
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
@@ -1263,40 +1186,6 @@ export default function InvoicesPage() {
                   <Button type="button" variant="outline" onClick={handleResetFilters}>
                     Reset
                   </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!hasSearched || isExporting || isLoading}
-                      >
-                        {isExporting ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Exporting...
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-4 w-4 mr-2" />
-                            Export
-                          </>
-                        )}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => void exportInvoicesToExcel("all")}>
-                        <FileSpreadsheet className="mr-2 h-4 w-4" />
-                        Export all results (Excel)
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => void exportInvoicesToExcel("selected")}
-                        disabled={!invoices.some((invoice) => invoice.selected)}
-                      >
-                        <FileSpreadsheet className="mr-2 h-4 w-4" />
-                        Export selected (Excel)
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
                 </div>
             </div>
 
@@ -1339,7 +1228,7 @@ export default function InvoicesPage() {
                         <th className="text-left font-medium p-2">Type</th>
                         <th className="text-left font-medium p-2">Date</th>
                         <th className="text-right font-medium p-2">Amount</th>
-                        <th className="text-right font-medium p-2">Actions</th>
+                        <th className="text-right font-medium p-2 min-w-[280px]">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1376,21 +1265,20 @@ export default function InvoicesPage() {
                             </td>
                             <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
                             <td className="p-2 text-right">{(invoice.total_amount || 0).toFixed(3)} $</td>
-                            <td className="p-2 text-right space-x-2">
+                            <td className="p-2 text-right align-middle">
+                              <div className="inline-flex flex-nowrap items-center justify-end gap-1">
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="h-8 px-2"
                                 onClick={() => handleViewInvoice(invoice)}
                                 disabled={isViewingInvoice}
                               >
                                 {isViewingInvoice ? (
-                                  <>
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    Loading...
-                                  </>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <>
-                                    <FileText className="h-4 w-4 mr-2" />
+                                    <FileText className="h-4 w-4 mr-1" />
                                     View
                                   </>
                                 )}
@@ -1399,15 +1287,35 @@ export default function InvoicesPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="h-8 px-2"
                                 onClick={() => handleViewReceipt(invoice)}
                               >
-                                <Receipt className="h-4 w-4 mr-2" />
+                                <Receipt className="h-4 w-4 mr-1" />
                                 Receipt
+                              </Button>
+
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8 shrink-0"
+                                title="Export Excel"
+                                aria-label="Export Excel"
+                                onClick={() => void handleExportInvoiceExcel(invoice)}
+                                disabled={exportingInvoiceId === invoice.id}
+                              >
+                                {exportingInvoiceId === invoice.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileSpreadsheet className="h-4 w-4" />
+                                )}
                               </Button>
 
                               <Button
                                 variant="destructive"
                                 size="icon"
+                                className="h-8 w-8 shrink-0"
+                                title="Delete invoice"
+                                aria-label="Delete invoice"
                                 onClick={() => {
                                   setInvoiceToDelete(invoice)
                                   setActiveDialog('delete')
@@ -1415,6 +1323,7 @@ export default function InvoicesPage() {
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
+                              </div>
                             </td>
                           </tr>
                         ))
