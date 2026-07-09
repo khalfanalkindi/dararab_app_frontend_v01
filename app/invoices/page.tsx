@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { AppSidebar } from "../../components/app-sidebar"
 import {
   Breadcrumb,
@@ -14,7 +14,13 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { FileText, Search, Trash2, Receipt, Loader2 } from "lucide-react"
+import { FileText, Search, Trash2, Receipt, Loader2, Download, FileSpreadsheet } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +39,7 @@ import { API_URL } from "@/lib/config"
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
+import { downloadInvoicesAsExcel, type InvoiceExcelRow } from "@/lib/exportInvoicesToExcel"
 
 interface Invoice {
   id: number
@@ -165,6 +172,7 @@ export default function InvoicesPage() {
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [hasSearched, setHasSearched] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
 
   // Individual operation loading states
   const [isViewingInvoice, setIsViewingInvoice] = useState(false)
@@ -345,6 +353,160 @@ export default function InvoicesPage() {
     return allItems
   }
 
+  const buildInvoicesUrl = useCallback(
+    (options?: { search?: string; customerId?: number | null; pageSize?: number }) => {
+      let url = `${API_URL}/sales/invoices/`
+      const params = new URLSearchParams()
+
+      if (selectedWarehouse) {
+        params.append("warehouse_id", selectedWarehouse.toString())
+      }
+      if (dateRange?.from) {
+        params.append("start_date", format(dateRange.from, "yyyy-MM-dd"))
+      }
+      if (dateRange?.to) {
+        params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
+      }
+
+      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
+
+      if (searchValue) {
+        params.append("search", searchValue)
+      }
+      if (customerId) {
+        params.append("customer_id", customerId.toString())
+      }
+
+      params.append("page_size", String(options?.pageSize ?? 1000))
+      params.append("ordering", "-created_at")
+
+      const queryString = params.toString()
+      if (queryString) {
+        url += `?${queryString}`
+      }
+      return url
+    },
+    [selectedWarehouse, dateRange, debouncedSearchQuery, selectedCustomerId],
+  )
+
+  const mapInvoiceToExportRow = useCallback((invoice: Invoice): InvoiceExcelRow => {
+    const totalAmount = invoice.total_amount || 0
+    const totalPaid = invoice.total_paid ?? 0
+    const remaining = invoice.remaining_amount ?? Math.max(0, totalAmount - totalPaid)
+    const status =
+      invoice.status ||
+      calculateInvoiceStatus(
+        totalPaid,
+        totalAmount,
+        invoice.global_discount_percent,
+        invoice.tax_percent,
+      )
+
+    return {
+      "Invoice #": invoice.invoice_number || invoice.composite_id || String(invoice.id),
+      "Composite ID": invoice.composite_id || "",
+      Customer: invoice.customer?.institution_name || "",
+      Contact: invoice.customer?.contact_person || "",
+      Warehouse: invoice.warehouse?.name_en || "",
+      Type: invoice.invoice_type?.display_name_en || "",
+      "Payment Method": invoice.payment_method?.display_name_en || "",
+      Date: invoice.created_at ? format(new Date(invoice.created_at), "yyyy-MM-dd HH:mm") : "",
+      Amount: Number(totalAmount.toFixed(3)),
+      Paid: Number(totalPaid.toFixed(3)),
+      Remaining: Number(remaining.toFixed(3)),
+      Status: status,
+    }
+  }, [])
+
+  const buildExportFilename = useCallback(() => {
+    const from = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : ""
+    const to = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : from
+    const rangePart = from ? (from === to ? from : `${from}_to_${to}`) : format(new Date(), "yyyy-MM-dd")
+    return `invoices-${rangePart}.xlsx`
+  }, [dateRange])
+
+  const exportInvoicesToExcel = useCallback(
+    async (mode: "all" | "selected") => {
+      if (!hasSearched) {
+        toast({
+          title: "No data to export",
+          description: "Search for invoices first, then export.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const selectedInvoices = invoices.filter((invoice) => invoice.selected)
+      if (mode === "selected" && selectedInvoices.length === 0) {
+        toast({
+          title: "No invoices selected",
+          description: "Select at least one invoice to export.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setIsExporting(true)
+      const exportAbortController = new AbortController()
+
+      try {
+        let invoicesToExport: Invoice[]
+
+        if (mode === "selected") {
+          invoicesToExport = selectedInvoices
+        } else {
+          const url = buildInvoicesUrl({
+            search: searchQuery,
+            customerId: selectedCustomerId,
+            pageSize: 1000,
+          })
+          invoicesToExport = await fetchAllPaginated<Invoice>(
+            url,
+            exportAbortController.signal,
+          )
+          if (selectedCustomerId) {
+            invoicesToExport = invoicesToExport.filter(
+              (invoice) => invoice.customer?.id === selectedCustomerId,
+            )
+          }
+        }
+
+        if (invoicesToExport.length === 0) {
+          toast({
+            title: "Nothing to export",
+            description: "No invoices match the current filters.",
+            variant: "destructive",
+          })
+          return
+        }
+
+        const rows = invoicesToExport.map(mapInvoiceToExportRow)
+        downloadInvoicesAsExcel(rows, buildExportFilename())
+
+        toast({
+          title: "Export complete",
+          description: `Exported ${rows.length} invoice${rows.length === 1 ? "" : "s"} to Excel.`,
+        })
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return
+        handleError(error, "Failed to export invoices to Excel")
+      } finally {
+        setIsExporting(false)
+      }
+    },
+    [
+      hasSearched,
+      invoices,
+      buildInvoicesUrl,
+      searchQuery,
+      selectedCustomerId,
+      mapInvoiceToExportRow,
+      buildExportFilename,
+    ],
+  )
+
   const fetchWarehouses = async () => {
     // Abort previous request if still pending
     warehousesAbortControllerRef.current?.abort()
@@ -394,34 +556,10 @@ export default function InvoicesPage() {
     
     setIsLoading(true)
     try {
-      let url = `${API_URL}/sales/invoices/`
-      const params = new URLSearchParams()
-
-      if (selectedWarehouse) {
-        params.append("warehouse_id", selectedWarehouse.toString())
-      }
-      if (dateRange?.from) {
-        params.append("start_date", format(dateRange.from, "yyyy-MM-dd"))
-      }
-      if (dateRange?.to) {
-        params.append("end_date", format(dateRange.to, "yyyy-MM-dd"))
-      }
-      const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
-      const customerId =
-        options?.customerId !== undefined ? options.customerId : selectedCustomerId
-      if (searchValue) {
-        params.append("search", searchValue)
-      }
-      if (customerId) {
-        params.append("customer_id", customerId.toString())
-      }
-      params.append("page_size", "1000")
-      params.append("ordering", "-created_at") // Order by created_at in descending order
-
-      const queryString = params.toString()
-      if (queryString) {
-        url += `?${queryString}`
-      }
+      const url = buildInvoicesUrl({
+        search: options?.search,
+        customerId: options?.customerId,
+      })
 
       const res = await fetchWithRetry(url, {
         headers,
@@ -437,6 +575,8 @@ export default function InvoicesPage() {
         ? data.results
         : []
 
+      const customerId =
+        options?.customerId !== undefined ? options.customerId : selectedCustomerId
       if (customerId) {
         invoicesData = invoicesData.filter((invoice) => invoice.customer?.id === customerId)
       }
@@ -1123,6 +1263,40 @@ export default function InvoicesPage() {
                   <Button type="button" variant="outline" onClick={handleResetFilters}>
                     Reset
                   </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!hasSearched || isExporting || isLoading}
+                      >
+                        {isExporting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Exporting...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4 mr-2" />
+                            Export
+                          </>
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => void exportInvoicesToExcel("all")}>
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Export all results (Excel)
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => void exportInvoicesToExcel("selected")}
+                        disabled={!invoices.some((invoice) => invoice.selected)}
+                      >
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Export selected (Excel)
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
             </div>
 
