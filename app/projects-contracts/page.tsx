@@ -1,20 +1,14 @@
 "use client"
 
 import type React from "react"
+import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
 
-import Link from "next/link"
+import { fetchWithRetry } from "@/lib/apiClient"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import {
   Edit,
@@ -35,7 +29,7 @@ import {
   X,
 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import { format, parseISO } from "date-fns"
@@ -185,7 +179,6 @@ export default function ProjectContract() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
-  const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(null)
   
   // Pagination state for projects
@@ -293,77 +286,7 @@ export default function ProjectContract() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  // Memoized lookup maps for O(1) lookups
+// Memoized lookup maps for O(1) lookups
   const contractTypesMap = useMemo(() => {
     const map = new Map<number, ContractType>()
     contractTypes.forEach(type => {
@@ -600,11 +523,7 @@ export default function ProjectContract() {
       setTranslators([])
       setRightsOwners([])
       setReviewers([])
-      toast({
-        title: "Error",
-        description: "Failed to load data. Please try again later.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to load data. Please try again later." })
       throw error
     }
   }, [headers])
@@ -668,11 +587,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error fetching projects:", error)
       }
-      toast({
-        title: "Error",
-        description: "Failed to fetch projects",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to fetch projects" })
       setProjects([])
       setTotalCount(0)
     }
@@ -753,11 +668,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error fetching contracts:", error)
       }
-      toast({
-        title: "Error",
-        description: "Failed to fetch contracts",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to fetch contracts" })
     } finally {
       setIsContractsLoading(false)
     }
@@ -1097,18 +1008,10 @@ export default function ProjectContract() {
 
       if (modalView === "create") {
         setContracts([...contracts, savedContract])
-        toast({
-          title: "Contract Created",
-          description: "New contract has been added",
-          variant: "default",
-        })
+        toast.success("Contract Created", { description: "New contract has been added" })
       } else {
         setContracts(contracts.map((c) => (c.id === savedContract.id ? savedContract : c)))
-        toast({
-          title: "Contract Updated",
-          description: "Contract has been updated",
-          variant: "default",
-        })
+        toast.success("Contract Updated", { description: "Contract has been updated" })
       }
 
       setModalView("list")
@@ -1120,11 +1023,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error saving contract:", error)
       }
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save contract",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: error instanceof Error ? error.message : "Failed to save contract" })
     } finally {
       setIsSubmitting(false)
       setIsCreating(false)
@@ -1164,11 +1063,10 @@ export default function ProjectContract() {
   const handleDeleteContract = async (contract: Contract) => {
     if (!selectedProject) return
     setContractToDelete(contract)
-    setDeleteConfirmation("")
   }
 
   const confirmDelete = async () => {
-    if (!contractToDelete || deleteConfirmation !== "DELETE") return
+    if (!contractToDelete) return
 
     // Store original state for rollback
     const originalContracts = [...contracts]
@@ -1177,7 +1075,6 @@ export default function ProjectContract() {
     // Optimistic update - remove contract immediately
     setContracts(contracts.filter((c) => c.id !== contractIdToDelete))
     setContractToDelete(null)
-    setDeleteConfirmation("")
 
     // Create AbortController for this request
     const abortController = new AbortController()
@@ -1194,11 +1091,7 @@ export default function ProjectContract() {
         throw new Error("Failed to delete contract")
       }
 
-      toast({
-        title: "Contract Deleted",
-        description: "Contract has been deleted",
-        variant: "default",
-      })
+      toast.success("Contract Deleted", { description: "Contract has been deleted" })
     } catch (error) {
       // Rollback on error
       setContracts(originalContracts)
@@ -1211,11 +1104,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error deleting contract:", error)
       }
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete contract",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: error instanceof Error ? error.message : "Failed to delete contract" })
     } finally {
       setIsDeleting(false)
     }
@@ -1354,11 +1243,7 @@ export default function ProjectContract() {
     }
 
     if (!newParty.name.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Name is required",
-        variant: "destructive",
-      })
+      toast.error("Validation Error", { description: "Name is required" })
       return
     }
 
@@ -1420,20 +1305,12 @@ export default function ProjectContract() {
       setNewParty({ name: "", bio: "", contact_info: "" })
       setIsAddPartyModalOpen(false)
 
-      toast({
-        title: "Success",
-        description: `${partyType === 'rightsowner' ? 'Rights Owner' : partyType === 'reviewer' ? 'Reviewer' : partyType.charAt(0).toUpperCase() + partyType.slice(1)} "${createdParty.name}" has been created and selected.`,
-        variant: "default",
-      })
+      toast.success("Success", { description: "${partyType === 'rightsowner' ? 'Rights Owner' : partyType === 'reviewer' ? 'Reviewer' : partyType.charAt(0).toUpperCase() + partyType.slice(1)} \"${createdParty.name}\" has been created and selected." })
     } catch (error: any) {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error creating party:", error)
       }
-      toast({
-        title: "Error",
-        description: `Failed to create ${partyType}. Please try again.`,
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to create ${partyType}. Please try again." })
     } finally {
       setIsCreatingParty(false)
     }
@@ -1450,26 +1327,13 @@ export default function ProjectContract() {
 
   return (
     <ErrorBoundary>
-      <SidebarProvider>
-        <AppSidebar />
+      <DocumentTitle title="Project Contracts" />
         <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Project Contracts</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Project Contracts" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1506,18 +1370,18 @@ export default function ProjectContract() {
             {/* Search Input */}
             <div className="mb-6">
               <div className="relative max-w-md">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 transform text-muted-foreground" />
                 <Input
                   type="text"
                   placeholder="Search projects by name..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 pr-10"
+                  className="ps-10 pe-10"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery("")}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="absolute end-3 top-1/2 -translate-y-1/2 transform text-muted-foreground hover:text-foreground"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -1696,15 +1560,6 @@ export default function ProjectContract() {
                       <li>Status: {getStatusName(contractToDelete?.status_id ?? null)}</li>
                     </ul>
                   </div>
-                  <div className="mt-4">
-                    <p className="text-sm font-medium mb-2">Type DELETE to confirm:</p>
-                    <Input
-                      value={deleteConfirmation}
-                      onChange={(e) => setDeleteConfirmation(e.target.value)}
-                      placeholder="Type DELETE"
-                      className="w-full"
-                    />
-                  </div>
                 </DialogDescription>
               </DialogHeader>
               <div className="flex justify-end space-x-2">
@@ -1714,7 +1569,7 @@ export default function ProjectContract() {
                 <Button
                   variant="destructive"
                   onClick={confirmDelete}
-                  disabled={deleteConfirmation !== "DELETE" || isDeleting}
+                  disabled={isDeleting}
                 >
                   {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Delete Contract
@@ -2375,7 +2230,6 @@ export default function ProjectContract() {
           </div>
         </DialogContent>
       </Dialog>
-    </SidebarProvider>
-    </ErrorBoundary>
+</ErrorBoundary>
   )
 }

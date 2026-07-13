@@ -15,6 +15,14 @@ import { cn } from "@/lib/utils"
 import { Calendar as CalendarComponent } from "@/components/ui/calendar"
 import { CalendarIcon } from "@radix-ui/react-icons"
 import { format } from "date-fns"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 import type {
   Author,
@@ -474,30 +482,29 @@ export function EditBookDialog({
                     <h3 className="font-medium">Print Run Details</h3>
                   </div>
                   <div className="p-0">
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="text-sm border-b">
-                            <th className="text-left font-medium p-3">Print Run Number</th>
-                            <th className="text-left font-medium p-3">Price ($)</th>
-                            <th className="text-left font-medium p-3">Price OMR (OMR)</th>
-                            <th className="text-left font-medium p-3">Status</th>
-                            <th className="text-left font-medium p-3">Published Date</th>
-                            <th className="text-right font-medium p-3">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Print Run Number</TableHead>
+                          <TableHead>Price ($)</TableHead>
+                          <TableHead>Price OMR (OMR)</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Published Date</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
                           {!selectedBook ? (
-                            <tr>
-                              <td colSpan={6} className="py-8 text-center">
+                            <TableRow>
+                              <TableCell colSpan={6} className="py-8 text-center">
                                 <div className="flex flex-col items-center">
                                   <p className="text-muted-foreground">No book selected</p>
                                 </div>
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ) : !selectedBook.print_runs || selectedBook.print_runs.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} className="py-8 text-center">
+                            <TableRow>
+                              <TableCell colSpan={6} className="py-8 text-center">
                                 <div className="flex flex-col items-center">
                                   <p className="text-muted-foreground mb-4">No Print Runs available.</p>
                                   <Button
@@ -521,15 +528,15 @@ export function EditBookDialog({
                                     Create New Print Run
                                   </Button>
                                 </div>
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ) : (
                             selectedBook.print_runs.map((printRun, index) => (
-                              <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
-                                <td className="p-3">
+                              <TableRow key={index}>
+                                <TableCell>
                                   <span className="font-medium">Print Run {printRun.edition_number}</span>
-                                </td>
-                                <td className="p-3">
+                                </TableCell>
+                                <TableCell>
                                   <Input
                                     type="number"
                                     min="0"
@@ -548,8 +555,8 @@ export function EditBookDialog({
                                     }}
                                     className="w-[100px]"
                                   />
-                                </td>
-                                <td className="p-3">
+                                </TableCell>
+                                <TableCell>
                                   <Input
                                     type="number"
                                     min="0"
@@ -568,8 +575,8 @@ export function EditBookDialog({
                                     }}
                                     className="w-[100px]"
                                   />
-                                </td>
-                                <td className="p-3">
+                                </TableCell>
+                                <TableCell>
                                   <Select
                                     value={printRun.status?.id?.toString() || ""}
                                     onValueChange={(value) => {
@@ -596,8 +603,8 @@ export function EditBookDialog({
                                       ))}
                                     </SelectContent>
                                   </Select>
-                                </td>
-                                <td className="p-3">
+                                </TableCell>
+                                <TableCell>
                                   <Popover>
                                     <PopoverTrigger asChild>
                                       <Button variant="outline" className="w-[150px] justify-start text-left font-normal">
@@ -624,8 +631,8 @@ export function EditBookDialog({
                                       />
                                     </PopoverContent>
                                   </Popover>
-                                </td>
-                                <td className="p-3 text-right">
+                                </TableCell>
+                                <TableCell className="text-right">
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -641,13 +648,12 @@ export function EditBookDialog({
                                   >
                                     <X className="h-4 w-4" />
                                   </Button>
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             ))
                           )}
-                        </tbody>
-                      </table>
-                    </div>
+                      </TableBody>
+                    </Table>
                   </div>
                 </div>
               </div>
@@ -665,26 +671,25 @@ export function EditBookDialog({
                 <div className="bg-muted p-4 flex justify-between items-center">
                   <h3 className="font-medium">Inventory</h3>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-3">Warehouse</th>
-                        <th className="text-left font-medium p-3">Quantity</th>
-                        <th className="text-right font-medium p-3">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Warehouse</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                       {editBookInventory.length === 0 ? (
-                        <tr>
-                          <td colSpan={3} className="py-8 text-center">
+                        <TableRow>
+                          <TableCell colSpan={3} className="py-8 text-center">
                             <p className="text-muted-foreground">No inventory rows yet.</p>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ) : (
                         editBookInventory.map((item, index) => (
-                          <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
-                            <td className="p-3">
+                          <TableRow key={index}>
+                            <TableCell>
                               <Select
                                 value={item.warehouse.toString()}
                                 onValueChange={(value) => {
@@ -704,8 +709,8 @@ export function EditBookDialog({
                                   ))}
                                 </SelectContent>
                               </Select>
-                            </td>
-                            <td className="p-3">
+                            </TableCell>
+                            <TableCell>
                               <Input
                                 type="number"
                                 min={0}
@@ -717,8 +722,8 @@ export function EditBookDialog({
                                 }}
                                 className="w-[100px]"
                               />
-                            </td>
-                            <td className="p-3 text-right">
+                            </TableCell>
+                            <TableCell className="text-right">
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -729,13 +734,12 @@ export function EditBookDialog({
                               >
                                 <X className="h-4 w-4" />
                               </Button>
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ))
                       )}
-                    </tbody>
-                  </table>
-                </div>
+                  </TableBody>
+                </Table>
               </div>
             </TabsContent>
           </Tabs>

@@ -1,7 +1,11 @@
-import { redirect } from "next/navigation"
+"use client"
 
+import { AuthLoading } from "@/components/auth-loading"
+
+/**
+ * Landing route. AuthCheck sends guests to /login and signed-in users
+ * to their first allowed page (typically /dashboard).
+ */
 export default function Home() {
-  redirect("/login")
-  return null
+  return <AuthLoading />
 }
-

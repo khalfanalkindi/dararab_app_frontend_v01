@@ -1,20 +1,12 @@
 "use client"
 
-import Link from "next/link"
+import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
-import { Button } from "@/components/ui/button"
-import { FileText, Search, Plus, Loader2 } from "lucide-react"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import {
   Dialog,
   DialogContent,
@@ -22,112 +14,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "@/hooks/use-toast"
-import { format } from "date-fns"
-import { DatePickerWithRange } from "@/components/ui/date-range-picker"
+import { toast } from "sonner"
 import { DateRange } from "react-day-picker"
-import { Checkbox } from "@/components/ui/checkbox"
 
 import { API_URL } from "@/lib/config"
-import {
-  formatInvoiceUsdAmount,
-  formatLineUsdAmount,
-  sumSelectedOutstandingDisplay,
-} from "@/lib/muscatCurrency"
+import { sumSelectedOutstandingDisplay } from "@/lib/muscatCurrency"
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import { buildReceiptPayloadForDisplayAsync } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
-
-interface Customer {
-  id: number
-  institution_name?: string
-  name_en?: string
-  contact_person?: string
-  phone?: string
-  customer_type?: string
-  type?: string
-}
-
-interface Warehouse {
-  id: number
-  name_en?: string
-  name_ar?: string
-  name?: string
-  location?: string
-}
-
-interface Product {
-  id: number
-  name_en: string
-  name_ar: string
-  title?: string
-  title_ar?: string
-  price?: string | null
-  price_omr?: string | null
-  latest_price?: string | null
-  latest_price_omr?: string | null
-}
-
-interface Invoice {
-  id: number
-  composite_id?: string // New field for display purposes
-  customer_name: string
-  customer_type: string | null
-  customer_contact: string
-  warehouse_name: string
-  invoice_type_name: string
-  payment_method_name: string
-  is_returnable?: boolean
-  items: InvoiceItem[]
-  total_amount: number
-  total_paid: number
-  remaining_amount: number
-  notes?: string
-  created_at_formatted?: string
-  created_by?: number
-  updated_by?: number
-  created_at: string
-  updated_at?: string
-  selected?: boolean
-  status?: string
-  // Nested objects from API
-  customer?: Customer | null
-  warehouse?: Warehouse | null
-  invoice_type?: {
-    id: number
-    display_name_en?: string
-    name_en?: string
-    value?: string
-  } | null
-  payment_method?: {
-    id: number
-    display_name_en?: string
-    name_en?: string
-    value?: string
-  } | null
-}
-
-interface InvoiceItem {
-  id?: number
-  product_name: string
-  quantity?: number | string
-  unit_price?: number | string
-  discount_percent?: number | string
-  tax_percent?: number | string
-  total_price?: number | string
-  paid_amount?: number | string
-  remaining_amount?: number | string
-  is_paid?: boolean
-  selected?: boolean
-  payment_status?: number
-  payment_status_display?: string
-  payment_summary?: any
-  // Nested product object from API
-  product?: Product | number
-}
+import { OutstandingFilters } from "./components/outstanding-filters"
+import { OutstandingTable } from "./components/outstanding-table"
+import { PaymentAllocationDialogs } from "./components/payment-allocation-dialog"
+import type {
+  AllocationDialogType,
+  Customer,
+  Invoice,
+  InvoiceItem,
+  Product,
+  RowAction,
+  Warehouse,
+} from "./components/types"
 
 // API Response Types
 interface OutstandingPaymentInvoiceResponse {
@@ -256,13 +162,18 @@ export default function OutstandingPaymentPage() {
   const [selectedItems, setSelectedItems] = useState<InvoiceItem[]>([])
   const [isLoadingItems, setIsLoadingItems] = useState(false)
   const [showOnlyUnpaid, setShowOnlyUnpaid] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalCount, setTotalCount] = useState(0)
 
-  // Individual operation loading states
-  const [isViewingInvoice, setIsViewingInvoice] = useState(false)
+  // Per-row action loading (avoids disabling every row's View button)
+  const [loadingAction, setLoadingAction] = useState<{ id: number; action: RowAction } | null>(null)
+  const isRowLoading = (id: number, action: RowAction) =>
+    loadingAction?.id === id && loadingAction?.action === action
   const [isCreatingBill, setIsCreatingBill] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = 'view' | 'generate' | 'confirm' | 'receipt' | null
+  type DialogType = AllocationDialogType | "receipt"
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
   const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
   const [receiptCurrencyLabel, setReceiptCurrencyLabel] = useState("$")
@@ -281,63 +192,7 @@ export default function OutstandingPaymentPage() {
     Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
   }), [])
 
-  // Utility function for retry logic with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 rate limit)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response
-        }
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          throw lastError
-        }
-        
-        // Calculate delay with exponential backoff
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = (
     error: unknown,
     defaultMessage: string,
@@ -369,12 +224,7 @@ export default function OutstandingPaymentPage() {
     }
 
     // Show toast notification
-    toast({
-      title: options?.title || "Error",
-      description: errorMessage,
-      variant: "destructive",
-      duration: options?.duration || 5000,
-    })
+    toast.error(options?.title || "Error", { description: errorMessage })
   }
 
   useEffect(() => {
@@ -466,7 +316,7 @@ export default function OutstandingPaymentPage() {
     setIsLoadingCustomers(true)
     try {
       const customersData = await fetchAllPaginated<Customer>(
-        `${API_URL}/sales/customers/?page_size=1000`,
+        `${API_URL}/sales/customers/?page_size=100`,
         customersAbortControllerRef.current.signal,
       )
       const sorted = [...customersData].sort((a, b) =>
@@ -486,28 +336,36 @@ export default function OutstandingPaymentPage() {
     }
   }
 
-  const fetchInvoices = async (options?: { search?: string; customerId?: number | null }) => {
+  const fetchInvoices = async (options?: {
+    search?: string
+    customerId?: number | null
+    page?: number
+    pageSize?: number
+  }) => {
     // Abort previous request if still pending
     invoicesAbortControllerRef.current?.abort()
     invoicesAbortControllerRef.current = new AbortController()
-    
+
+    const page = options?.page ?? currentPage
+    const size = options?.pageSize ?? pageSize
+
     setIsLoading(true)
     try {
       // Build query parameters
       const params = new URLSearchParams()
-      
+
       if (selectedWarehouse) {
-        params.append('warehouse', selectedWarehouse.toString())
+        params.append('warehouse_id', selectedWarehouse.toString())
       }
-      
+
       if (dateRange?.from) {
         params.append('start_date', dateRange.from.toISOString().split('T')[0])
       }
-      
+
       if (dateRange?.to) {
         params.append('end_date', dateRange.to.toISOString().split('T')[0])
       }
-      
+
       const searchValue = options?.search !== undefined ? options.search : debouncedSearchQuery
       const customerId =
         options?.customerId !== undefined ? options.customerId : selectedCustomerId
@@ -517,6 +375,10 @@ export default function OutstandingPaymentPage() {
       if (customerId) {
         params.append('customer_id', customerId.toString())
       }
+
+      params.append('page', String(page))
+      params.append('page_size', String(size))
+      params.append('ordering', '-created_at')
 
       // Use the new outstanding payments endpoint
       const url = `${API_URL}/sales/invoices/outstanding-payments/${params.toString() ? `?${params.toString()}` : ''}`
@@ -684,15 +546,16 @@ export default function OutstandingPaymentPage() {
       })
       
       // The outstanding-payments endpoint already returns only invoices where is_fully_paid = False
-      // No need for additional filtering since the endpoint handles this logic
-      const filteredInvoices = customerId
-        ? mappedInvoices.filter(
-            (invoice: Invoice) =>
-              invoice.customer?.id === customerId ||
-              customers.find((c) => c.id === customerId)?.institution_name === invoice.customer_name,
-          )
-        : mappedInvoices
-      setInvoices(filteredInvoices)
+      setInvoices(mappedInvoices)
+      setTotalCount(
+        Array.isArray(data)
+          ? mappedInvoices.length
+          : typeof data.count === 'number'
+            ? data.count
+            : mappedInvoices.length,
+      )
+      setCurrentPage(page)
+      setPageSize(size)
       setHasSearched(true)
     } catch (error) {
       handleError(error, "Failed to fetch invoices")
@@ -722,7 +585,7 @@ export default function OutstandingPaymentPage() {
     }
     
     // Always fetch the complete invoice details to ensure we have all the data
-    setIsViewingInvoice(true)
+    setLoadingAction({ id: invoice.id, action: "view" })
     setIsLoadingItems(true)
     try {
       if (process.env.NODE_ENV !== 'production') {
@@ -989,7 +852,7 @@ export default function OutstandingPaymentPage() {
       handleError(error, 'Failed to fetch complete invoice details')
       setSelectedInvoice(invoice)
     } finally {
-      setIsViewingInvoice(false)
+      setLoadingAction(null)
       setIsLoadingItems(false)
     }
     
@@ -1020,6 +883,8 @@ export default function OutstandingPaymentPage() {
     setSearchQuery("")
     setInvoices([])
     setHasSearched(false)
+    setCurrentPage(1)
+    setTotalCount(0)
   }
 
   const handleInvoiceSelect = (invoiceId: number) => {
@@ -1028,6 +893,43 @@ export default function OutstandingPaymentPage() {
         ? { ...invoice, selected: !invoice.selected }
         : invoice
     ))
+  }
+
+  const handleSelectAllInvoices = (checked: boolean) => {
+    setInvoices(invoices.map(invoice => ({
+      ...invoice,
+      selected: checked,
+    })))
+  }
+
+  const handleSelectAllItems = (checked: boolean) => {
+    if (!selectedInvoice?.items) return
+
+    const updatedItems = selectedInvoice.items.map(item => {
+      const isPaid = item.is_paid || Number(item.paid_amount) >= Number(item.total_price)
+      const shouldUpdate = !isPaid && (!showOnlyUnpaid || !isPaid)
+      return {
+        ...item,
+        selected: shouldUpdate ? checked : item.selected,
+      }
+    })
+    setSelectedInvoice({ ...selectedInvoice, items: updatedItems })
+  }
+
+  const handleToggleShowOnlyUnpaid = () => {
+    setShowOnlyUnpaid(!showOnlyUnpaid)
+  }
+
+  const handleLoadOutstanding = () => {
+    setSelectedWarehouse(null)
+    setDateRange(null)
+    setSearchQuery("")
+    setSelectedCustomerId(null)
+    fetchInvoices({ page: 1 })
+  }
+
+  const handleAllocationDialogChange = (dialog: AllocationDialogType) => {
+    setActiveDialog(dialog)
   }
 
   // Calculate selected total using useMemo for efficiency (USD for logic)
@@ -1043,7 +945,7 @@ export default function OutstandingPaymentPage() {
   )
 
   const handleSearch = () => {
-    fetchInvoices({ search: searchQuery, customerId: selectedCustomerId })
+    fetchInvoices({ search: searchQuery, customerId: selectedCustomerId, page: 1 })
   }
 
   const handleItemSelect = (itemIndex: number) => {
@@ -1067,11 +969,7 @@ export default function OutstandingPaymentPage() {
 
     const selectedItems = selectedInvoice.items.filter(item => item.selected)
     if (selectedItems.length === 0) {
-      toast({
-        title: "No Items Selected",
-        description: "Please select at least one item to generate a new bill",
-        variant: "destructive",
-      })
+      toast.error("No Items Selected", { description: "Please select at least one item to generate a new bill" })
       return
     }
 
@@ -1087,22 +985,6 @@ export default function OutstandingPaymentPage() {
     // Generate composite ID: main_invoice_id_child_bill_id
     // This matches the database format: 158_159
     return `${originalInvoiceId}_${newBillId}`
-  }
-
-  const formatInvoiceId = (invoice: Invoice) => {
-    const displayId = invoice.composite_id || invoice.id.toString()
-    const isChildInvoice = displayId.includes('_')
-    
-    return (
-      <div className="flex items-center gap-2">
-        <span className="font-medium">{displayId}</span>
-        {isChildInvoice && (
-          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-            Child
-          </span>
-        )}
-      </div>
-    )
   }
 
   // Rollback function for bill generation failures
@@ -1187,11 +1069,7 @@ export default function OutstandingPaymentPage() {
 
   const handleCreateNewBill = async () => {
     if (selectedItems.length === 0 || !selectedInvoice) {
-      toast({
-        title: "No Items Selected",
-        description: "Please select at least one item to generate a new bill",
-        variant: "destructive",
-      })
+      toast.error("No Items Selected", { description: "Please select at least one item to generate a new bill" })
       return
     }
 
@@ -1199,11 +1077,7 @@ export default function OutstandingPaymentPage() {
     // Since we're using the summary API, we need to get the IDs from the original invoice list
     const originalInvoice = invoices.find(inv => inv.id === selectedInvoice.id)
     if (!originalInvoice?.customer?.id || !originalInvoice?.warehouse?.id) {
-      toast({
-        title: "Missing Data",
-        description: "Customer or warehouse information is missing from the original invoice",
-        variant: "destructive",
-      })
+      toast.error("Missing Data", { description: "Customer or warehouse information is missing from the original invoice" })
       return
     }
 
@@ -1614,12 +1488,7 @@ export default function OutstandingPaymentPage() {
           }
           
           // Show warning toast but don't fail the entire operation
-          toast({
-            title: "Warning",
-            description: `Failed to update ${failedUpdates.length} item(s) in original invoice. The child bill was created successfully, but you may need to manually update the original invoice items.`,
-            variant: "default",
-            duration: 8000,
-          })
+          toast.success("Warning", { description: "Failed to update ${failedUpdates.length} item(s) in original invoice. The child bill was created successfully, but you may need to manually update the original invoice items." })
         }
       }
 
@@ -1707,11 +1576,7 @@ export default function OutstandingPaymentPage() {
         ? `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} is now fully paid and will no longer appear in outstanding payments.`
         : `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} updated with ${remainingItems.length} remaining items.`
 
-      toast({
-        title: "New Bill Generated Successfully",
-        description: successMessage,
-        variant: "default",
-      })
+      toast.success("New Bill Generated Successfully", { description: successMessage })
 
       const receiptSourceItems = [...selectedItems]
 
@@ -1764,11 +1629,7 @@ export default function OutstandingPaymentPage() {
           setReceiptCurrencyLabel(currencyLabel)
           setActiveDialog("receipt")
         } else {
-          toast({
-            title: "Child Bill Created",
-            description: "Bill was created but the receipt could not be loaded. View it from Invoices.",
-            variant: "default",
-          })
+          toast.success("Child Bill Created", { description: "Bill was created but the receipt could not be loaded. View it from Invoices." })
           if (!isInvoiceFullyPaid) {
             setActiveDialog("view")
           }
@@ -1777,11 +1638,7 @@ export default function OutstandingPaymentPage() {
         if (process.env.NODE_ENV !== "production") {
           console.warn("Error loading child bill receipt:", error)
         }
-        toast({
-          title: "Child Bill Created",
-          description: "Bill was created but the receipt could not be loaded. View it from Invoices.",
-          variant: "default",
-        })
+        toast.success("Child Bill Created", { description: "Bill was created but the receipt could not be loaded. View it from Invoices." })
         if (!isInvoiceFullyPaid) {
           setActiveDialog("view")
         }
@@ -1849,26 +1706,14 @@ export default function OutstandingPaymentPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <>
+      <DocumentTitle title="Outstanding Payment" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Outstanding Payments</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Outstanding Payments" }]} />
           </div>
         </header>
 
@@ -1878,607 +1723,78 @@ export default function OutstandingPaymentPage() {
             <p className="mb-6">View and manage invoices that are not fully paid, including completely unpaid invoices and those with partial payments.</p>
 
 
-            {/* Filters Section */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              {/* Warehouse Filter */}
-              <div className="space-y-2">
-                  <Label>Warehouse</Label>
-                  <Select
-                    value={selectedWarehouse?.toString() || "all"}
-                    onValueChange={(value) => setSelectedWarehouse(value === "all" ? null : Number(value))}
-                  >
-                  <SelectTrigger className="w-full h-10">
-                      <SelectValue placeholder="All Warehouses" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Warehouses</SelectItem>
-                      {warehouses.map((warehouse) => (
-                        <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                          {warehouse.name_en}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+            <OutstandingFilters
+              warehouses={warehouses}
+              customers={customers}
+              selectedWarehouse={selectedWarehouse}
+              onWarehouseChange={setSelectedWarehouse}
+              dateRange={dateRange}
+              onDateRangeChange={setDateRange}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              selectedCustomerId={selectedCustomerId}
+              onCustomerChange={setSelectedCustomerId}
+              isLoadingCustomers={isLoadingCustomers}
+              isLoading={isLoading}
+              onSearch={handleSearch}
+              onReset={handleResetFilters}
+              onLoadOutstanding={handleLoadOutstanding}
+            />
 
-              {/* Date Range Filter */}
-              <div className="space-y-2">
-                  <Label>Date Range</Label>
-                <div className="h-10">
-                    <DatePickerWithRange
-                      date={dateRange ?? { from: undefined, to: undefined }}
-                      onDateChange={(range) => setDateRange(range ?? null)}
-                    />
-                  </div>
-                </div>
-
-              {/* Invoice Search Filter */}
-              <div className="space-y-2">
-                  <Label>Invoice/Composite ID</Label>
-                    <Input
-                  className="w-full h-10"
-                      placeholder="Search by invoice ID (e.g., 121 or 121_223)..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          handleSearch()
-                        }
-                      }}
-                    />
-              </div>
-
-              {/* Customer Filter */}
-              <div className="space-y-2">
-                  <Label>Customer</Label>
-                  <Select
-                    value={selectedCustomerId?.toString() || "all"}
-                    onValueChange={(value) =>
-                      setSelectedCustomerId(value === "all" ? null : Number(value))
-                    }
-                    disabled={isLoadingCustomers}
-                  >
-                    <SelectTrigger className="w-full h-10">
-                      <SelectValue
-                        placeholder={isLoadingCustomers ? "Loading customers..." : "All Customers"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[300px]">
-                      <SelectItem value="all">All Customers</SelectItem>
-                      {customers.map((customer) => (
-                        <SelectItem key={customer.id} value={customer.id.toString()}>
-                          {customer.institution_name || customer.name_en || `Customer #${customer.id}`}
-                          {customer.contact_person ? ` (${customer.contact_person})` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-2 mb-6">
-                      <Button 
-                onClick={handleSearch}
-                disabled={isLoading}
-                      >
-                        <Search className="h-4 w-4 mr-2" />
-                {isLoading ? "Loading..." : "Search"}
-                      </Button>
-              <Button variant="outline" onClick={handleResetFilters} disabled={isLoading}>
-                        Reset
-                      </Button>
-                      <Button variant="secondary" onClick={() => {
-                        setSelectedWarehouse(null)
-                        setDateRange(null)
-                        setSearchQuery("")
-                        setSelectedCustomerId(null)
-                        fetchInvoices()
-              }} disabled={isLoading}>
-                {isLoading ? "Loading..." : "Load Outstanding"}
-                      </Button>
-            </div>
-
-            {/* Selected Total Display */}
-            {selectedTotal > 0 && (
-              <div className="mb-4 p-4 bg-primary/10 rounded-md">
-                <p className="text-lg font-semibold">
-                  Selected Outstanding Total: {selectedTotalDisplay}
-                </p>
-              </div>
-            )}
-
-            {/* Invoices Table */}
-            {!hasSearched ? (
-              <div className="text-center text-muted-foreground py-12">
-                <p>Click "Search" to view all outstanding invoices (unpaid and partially paid) or use filters to narrow down results.</p>
-                <p className="text-sm mt-2">You can filter by invoice ID (e.g., &quot;121&quot; or &quot;121_223&quot;), select a customer from the list, or use date/warehouse filters.</p>
-              </div>
-            ) : (
-              <div className="border rounded-md">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">
-                          <input
-                            type="checkbox"
-                            onChange={(e) => {
-                              setInvoices(invoices.map(invoice => ({
-                                ...invoice,
-                                selected: e.target.checked
-                              })))
-                            }}
-                            checked={invoices.length > 0 && invoices.every(invoice => invoice.selected)}
-                          />
-                        </th>
-                        <th className="text-left font-medium p-2">Invoice ID</th>
-                        <th className="text-left font-medium p-2">Customer</th>
-                        <th className="text-left font-medium p-2">Warehouse</th>
-                        <th className="text-left font-medium p-2">Date</th>
-                        <th className="text-right font-medium p-2">Total Amount</th>
-                        <th className="text-right font-medium p-2">Paid Amount</th>
-                        <th className="text-right font-medium p-2">Outstanding</th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan={9} className="py-8 text-center">
-                            Loading invoices...
-                          </td>
-                        </tr>
-                      ) : invoices.length === 0 ? (
-                        <tr>
-                          <td colSpan={9} className="py-8 text-center">
-                            <div className="text-muted-foreground">
-                              <p>No outstanding invoices found</p>
-                              <p className="text-sm mt-1">All invoices are fully paid or no invoices match your search criteria</p>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        invoices.map((invoice) => (
-                          <tr key={invoice.id} className="border-b last:border-0">
-                            <td className="p-2">
-                              <input
-                                type="checkbox"
-                                checked={invoice.selected || false}
-                                onChange={() => handleInvoiceSelect(invoice.id)}
-                              />
-                            </td>
-                            <td className="p-2">{formatInvoiceId(invoice)}</td>
-                            <td className="p-2">{invoice.customer_name || 'No Customer'}</td>
-                            <td className="p-2">{invoice.warehouse_name || 'No Warehouse'}</td>
-                            <td className="p-2">{invoice.created_at ? format(new Date(invoice.created_at), "PPP") : 'No Date'}</td>
-                            <td className="p-2 text-right">
-                              {formatInvoiceUsdAmount(invoice.total_amount || 0, invoice, warehouses)}
-                            </td>
-                            <td className="p-2 text-right">
-                              {formatInvoiceUsdAmount(invoice.total_paid || 0, invoice, warehouses)}
-                            </td>
-                            <td className="p-2 text-right font-semibold text-red-600">
-                              {formatInvoiceUsdAmount(invoice.remaining_amount || 0, invoice, warehouses)}
-                            </td>
-                            <td className="p-2 text-right">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleViewInvoice(invoice)}
-                                disabled={isViewingInvoice}
-                              >
-                                {isViewingInvoice ? (
-                                  <>
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    Loading...
-                                  </>
-                                ) : (
-                                  <>
-                                    <FileText className="h-4 w-4 mr-2" />
-                                    View
-                                  </>
-                                )}
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            <OutstandingTable
+              hasSearched={hasSearched}
+              isLoading={isLoading}
+              invoices={invoices}
+              warehouses={warehouses}
+              selectedTotal={selectedTotal}
+              selectedTotalDisplay={selectedTotalDisplay}
+              currentPage={currentPage}
+              pageSize={pageSize}
+              totalCount={totalCount}
+              isRowLoading={isRowLoading}
+              onSelectAllInvoices={handleSelectAllInvoices}
+              onInvoiceSelect={handleInvoiceSelect}
+              onViewInvoice={handleViewInvoice}
+              onPageChange={(page) =>
+                fetchInvoices({
+                  search: searchQuery,
+                  customerId: selectedCustomerId,
+                  page,
+                })
+              }
+              onPageSizeChange={(size) =>
+                fetchInvoices({
+                  search: searchQuery,
+                  customerId: selectedCustomerId,
+                  page: 1,
+                  pageSize: size,
+                })
+              }
+            />
           </div>
         </div>
       </SidebarInset>
 
-      {/* View Invoice Dialog */}
-      <Dialog open={activeDialog === 'view'} onOpenChange={(open) => setActiveDialog(open ? 'view' : null)}>
-        <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Outstanding Invoice Details</DialogTitle>
-            <DialogDescription>
-              Invoice #{selectedInvoice?.composite_id || selectedInvoice?.id} - {selectedInvoice?.customer_name || 'No Customer'}
-              {selectedInvoice?.composite_id?.includes('_') && (
-                <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                  Child Invoice
-                </span>
-              )}
-              {showOnlyUnpaid && (
-                <span className="ml-2 text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded">
-                  Showing Unpaid Items Only
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedInvoice && (
-            <div className="space-y-6">
-              {/* Invoice Header */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h3 className="font-medium mb-2">Customer Information</h3>
-                  <p>{selectedInvoice.customer_name || 'No Customer'}</p>
-                  <p className="text-sm text-muted-foreground">{selectedInvoice.customer_contact || 'No Contact Person'}</p>
-                </div>
-                <div>
-                  <h3 className="font-medium mb-2">Invoice Information</h3>
-                  <p>Date: {selectedInvoice.created_at ? format(new Date(selectedInvoice.created_at), "PPP") : 'No Date'}</p>
-                  <p>Warehouse: {selectedInvoice.warehouse_name || 'No Warehouse'}</p>
-                  <p>Type: {selectedInvoice.invoice_type_name || 'No Type'}</p>
-                  <p>Payment Method: {selectedInvoice.payment_method_name || 'No Payment Method'}</p>
-                </div>
-              </div>
-
-              {/* Payment Summary */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold">
-                    {formatInvoiceUsdAmount(selectedInvoice.total_amount || 0, selectedInvoice, warehouses)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Paid Amount</p>
-                  <p className="text-lg font-semibold text-green-600">
-                    {formatInvoiceUsdAmount(selectedInvoice.total_paid || 0, selectedInvoice, warehouses)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Outstanding</p>
-                  <p className="text-lg font-semibold text-red-600">
-                    {formatInvoiceUsdAmount(selectedInvoice.remaining_amount || 0, selectedInvoice, warehouses)}
-                  </p>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Invoice Items */}
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <div>
-                  <h3 className="font-medium">Items</h3>
-                    {selectedInvoice.items && selectedInvoice.items.length > 0 && (
-                      <div className="flex gap-4 mt-1 text-sm text-muted-foreground">
-                        <span>Total: {selectedInvoice.items.length}</span>
-                        <span className="text-green-600">
-                          Paid: {selectedInvoice.items.filter(item => item.is_paid || Number(item.paid_amount) >= Number(item.total_price)).length}
-                        </span>
-                        <span className="text-orange-600">
-                          Unpaid: {selectedInvoice.items.filter(item => !item.is_paid && Number(item.paid_amount) < Number(item.total_price)).length}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowOnlyUnpaid(!showOnlyUnpaid)}
-                    >
-                      {showOnlyUnpaid ? "Show All" : "Show Unpaid Only"}
-                    </Button>
-                  <Button
-                    onClick={handleGenerateNewBill}
-                      disabled={!selectedInvoice.items?.some(item => item.selected && !item.is_paid) || isCreatingBill}
-                  >
-                    {isCreatingBill ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="h-4 w-4 mr-2" />
-                        Generate Child Bill
-                      </>
-                    )}
-                  </Button>
-                  </div>
-                </div>
-                <div className="border rounded-md">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">
-                          <Checkbox
-                            checked={selectedInvoice.items && selectedInvoice.items.length > 0 && 
-                              selectedInvoice.items
-                                .filter(item => !item.is_paid)
-                                .filter(item => !showOnlyUnpaid || !(item.is_paid || Number(item.paid_amount) >= Number(item.total_price)))
-                                .every(item => item.selected)}
-                            onChange={(e) => {
-                              if (selectedInvoice.items) {
-                                const updatedItems = selectedInvoice.items.map(item => {
-                                  const isPaid = item.is_paid || Number(item.paid_amount) >= Number(item.total_price)
-                                  const shouldUpdate = !isPaid && (!showOnlyUnpaid || !isPaid)
-                                  return {
-                                  ...item,
-                                    selected: shouldUpdate ? e.target.checked : item.selected
-                                  }
-                                })
-                                setSelectedInvoice({ ...selectedInvoice, items: updatedItems })
-                              }
-                            }}
-                          />
-                        </th>
-                                                <th className="text-left font-medium p-2">Product</th>
-                        <th className="text-right font-medium p-2">Quantity</th>
-                        <th className="text-right font-medium p-2">Unit Price</th>
-                        <th className="text-right font-medium p-2">Discount</th>
-                        <th className="text-right font-medium p-2">Tax</th>
-                        <th className="text-right font-medium p-2">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoadingItems ? (
-                        <tr>
-                          <td colSpan={7} className="p-4 text-center text-muted-foreground">
-                            <div className="py-4">
-                              <p className="text-sm">Loading invoice items...</p>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : selectedInvoice.items && selectedInvoice.items.length > 0 ? (
-                        selectedInvoice.items
-                          .filter(item => !showOnlyUnpaid || !(item.is_paid || Number(item.paid_amount) >= Number(item.total_price)))
-                          .map((item, index) => {
-                          const isPaid = item.is_paid || Number(item.paid_amount) >= Number(item.total_price)
-                          return (
-                            <tr key={index} className={`border-b last:border-0 ${isPaid ? 'bg-green-50' : ''}`}>
-                            <td className="p-2">
-                              <Checkbox
-                                checked={item.selected || false}
-                                onChange={() => handleItemSelect(selectedInvoice.items.indexOf(item))}
-                                  disabled={isPaid}
-                              />
-                            </td>
-                            <td className="p-2">
-                              <div>
-                                  <p className={`font-medium ${isPaid ? 'text-green-700' : ''}`}>
-                                    {item.product_name || 'No Title'}
-                                    {isPaid && <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">PAID</span>}
-                                  </p>
-                                  <p className={`text-sm ${isPaid ? 'text-green-600' : 'text-muted-foreground'}`}>
-                                    {(typeof item.product === 'object' && item.product !== null ? (item.product.name_ar || item.product.title_ar) : null) || 'No Arabic Title'}
-                                  </p>
-                              </div>
-                            </td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.quantity) || 0}</td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>
-                                {formatLineUsdAmount(Number(item.unit_price) || 0, item, selectedInvoice, warehouses)}
-                              </td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.discount_percent) || 0}%</td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700' : ''}`}>{Number(item.tax_percent) || 0}%</td>
-                              <td className={`p-2 text-right ${isPaid ? 'text-green-700 font-semibold' : ''}`}>
-                                {formatLineUsdAmount(Number(item.total_price) || 0, item, selectedInvoice, warehouses)}
-                                {isPaid && <span className="ml-1 text-xs text-green-600">✓</span>}
-                              </td>
-                          </tr>
-                          )
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={7} className="p-4 text-center text-muted-foreground">
-                            <div className="py-4">
-                              <p className="text-sm">No items found for this invoice</p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                This invoice might not have any line items
-                              </p>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Generate New Bill Dialog */}
-      <Dialog open={activeDialog === 'generate'} onOpenChange={(open) => setActiveDialog(open ? 'generate' : null)}>
-        <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Generate Child Bill</DialogTitle>
-            <DialogDescription>
-              Review selected items and generate a child bill from Main Invoice #{selectedInvoice?.composite_id || selectedInvoice?.id}
-              {selectedInvoice?.composite_id?.includes('_') && (
-                <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                  Child Invoice
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedItems.length > 0 && (
-            <div className="space-y-6">
-              {/* New Bill Preview */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h3 className="font-medium mb-2">Main Invoice</h3>
-                  <p className="text-sm text-muted-foreground">#{selectedInvoice?.composite_id || selectedInvoice?.id}</p>
-                  <p className="text-sm text-muted-foreground">{selectedInvoice?.customer_name}</p>
-                  <p className="text-sm text-muted-foreground">Type: {selectedInvoice?.invoice_type_name || 'Unknown'}</p>
-                </div>
-                <div>
-                  <h3 className="font-medium mb-2">Child Bill</h3>
-                  <p className="text-sm text-muted-foreground">Composite ID: Will be generated after bill creation</p>
-                  <p className="text-sm text-muted-foreground">{selectedInvoice?.customer_name}</p>
-                  <p className="text-sm text-muted-foreground">Type: <span className="text-green-600 font-medium">paid</span></p>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Bill Summary */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
-                <div>
-                  <p className="text-sm text-muted-foreground">Child Bill ID</p>
-                  <p className="text-lg font-semibold">Will be assigned</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Main Invoice</p>
-                  <p className="text-lg font-semibold">#{selectedInvoice?.composite_id || selectedInvoice?.id}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-lg font-semibold text-green-600">
-                    {selectedInvoice
-                      ? formatInvoiceUsdAmount(
-                          selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0),
-                          selectedInvoice,
-                          warehouses,
-                        )
-                      : "0.000 $"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Selected Items */}
-              <div>
-                <h3 className="font-medium mb-4">Selected Items ({selectedItems.length})</h3>
-                <div className="border rounded-md">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Product</th>
-                        <th className="text-right font-medium p-2">Quantity</th>
-                        <th className="text-right font-medium p-2">Unit Price</th>
-                        <th className="text-right font-medium p-2">Discount</th>
-                        <th className="text-right font-medium p-2">Tax</th>
-                        <th className="text-right font-medium p-2">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedItems.map((item, index) => (
-                        <tr key={index} className="border-b last:border-0">
-                          <td className="p-2">
-                            <div>
-                              <p className="font-medium">{item.product_name || 'No Title'}</p>
-                              <p className="text-sm text-muted-foreground">{(typeof item.product === 'object' && item.product !== null ? (item.product.name_ar || item.product.title_ar) : null) || 'No Arabic Title'}</p>
-                            </div>
-                          </td>
-                          <td className="p-2 text-right">{Number(item.quantity) || 0}</td>
-                          <td className="p-2 text-right">
-                            {selectedInvoice
-                              ? formatLineUsdAmount(Number(item.unit_price) || 0, item, selectedInvoice, warehouses)
-                              : `${(Number(item.unit_price) || 0).toFixed(3)} $`}
-                          </td>
-                          <td className="text-right">{Number(item.discount_percent) || 0}%</td>
-                          <td className="p-2 text-right">{Number(item.tax_percent) || 0}%</td>
-                          <td className="p-2 text-right">
-                            {selectedInvoice
-                              ? formatLineUsdAmount(Number(item.total_price) || 0, item, selectedInvoice, warehouses)
-                              : `${(Number(item.total_price) || 0).toFixed(3)} $`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t">
-                        <td colSpan={4} className="p-2 text-right font-medium">
-                          Total Amount:
-                        </td>
-                        <td className="p-2 text-right font-medium">
-                          {selectedInvoice
-                            ? formatInvoiceUsdAmount(
-                                selectedItems.reduce((sum, item) => sum + (Number(item.total_price) || 0), 0),
-                                selectedInvoice,
-                                warehouses,
-                              )
-                            : "0.000 $"}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-
-              <div className="flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setActiveDialog(null)} disabled={isCreatingBill}>
-                  Cancel
-                </Button>
-                <Button onClick={handleConfirmGenerateBill} disabled={isCreatingBill}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Review & Create Child Bill
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Confirmation Dialog */}
-      <Dialog open={activeDialog === 'confirm'} onOpenChange={(open) => setActiveDialog(open ? 'confirm' : null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirm Child Bill Creation</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to create a child bill with {selectedItems.length} selected items?
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="p-4 bg-muted rounded-md">
-              <p className="text-sm font-medium">Summary:</p>
-              <ul className="text-sm text-muted-foreground mt-2 space-y-1">
-                <li>• Child bill will be created with "postpaid" payment method</li>
-                <li>• Child bill ID will be assigned automatically by the system</li>
-                <li>• Composite ID will be: main_invoice_id_child_bill_id</li>
-                <li>• Main invoice ID will be set to the original invoice ID</li>
-                <li>• Selected items will be marked as paid in the main invoice</li>
-                <li>• Main invoice amounts will be recalculated</li>
-                <li>• If all items are selected, main invoice will be marked as fully paid</li>
-              </ul>
-            </div>
-
-            <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setActiveDialog(null)} disabled={isCreatingBill}>
-                Cancel
-              </Button>
-              <Button onClick={handleCreateNewBill} disabled={isCreatingBill}>
-                {isCreatingBill ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Create Child Bill
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PaymentAllocationDialogs
+        activeDialog={
+          activeDialog === "view" || activeDialog === "generate" || activeDialog === "confirm"
+            ? activeDialog
+            : null
+        }
+        onActiveDialogChange={handleAllocationDialogChange}
+        selectedInvoice={selectedInvoice}
+        selectedItems={selectedItems}
+        warehouses={warehouses}
+        showOnlyUnpaid={showOnlyUnpaid}
+        onToggleShowOnlyUnpaid={handleToggleShowOnlyUnpaid}
+        isLoadingItems={isLoadingItems}
+        isCreatingBill={isCreatingBill}
+        onSelectAllItems={handleSelectAllItems}
+        onItemSelect={handleItemSelect}
+        onGenerateNewBill={handleGenerateNewBill}
+        onConfirmGenerateBill={handleConfirmGenerateBill}
+        onCreateNewBill={handleCreateNewBill}
+      />
 
       {/* Child Bill Receipt Dialog */}
       <Dialog
@@ -2504,7 +1820,6 @@ export default function OutstandingPaymentPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </SidebarProvider>
+    </>
   )
 }
-

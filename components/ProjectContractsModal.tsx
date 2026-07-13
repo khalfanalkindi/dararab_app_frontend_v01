@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, FileText, Calendar, DollarSign, User, Clock, CheckCircle, AlertCircle, Clock as ClockIcon } from "lucide-react"
 import { useState, useEffect } from "react"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 
 interface Project {
   id: number
@@ -102,11 +102,7 @@ export default function ProjectContractsModal({
         contractsData.filter((c: Contract) => c.project.id === projectId)
       )
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch contracts",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to fetch contracts" })
     } finally {
       setIsContractsLoading(false)
     }

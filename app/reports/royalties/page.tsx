@@ -1,15 +1,12 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-} from "@/components/ui/breadcrumb"
+import { PageBreadcrumb, DASHBOARD_CRUMB, REPORTS_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DollarSign, Calculator, AlertCircle, CheckCircle2, Info, Loader2 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -17,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { API_URL } from "@/lib/config"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 
 interface Project {
   id: number
@@ -97,77 +94,7 @@ export default function RoyaltiesReport() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            }, { once: true })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  const fetchAllPaginated = useCallback(async <T,>(
+const fetchAllPaginated = useCallback(async <T,>(
     initialUrl: string,
     signal: AbortSignal,
   ): Promise<T[]> => {
@@ -223,7 +150,7 @@ export default function RoyaltiesReport() {
     setIsLoadingProjects(true)
     try {
       const projectsData = await fetchAllPaginated<Project>(
-        `${API_URL}/inventory/projects/?page_size=1000`,
+        `${API_URL}/inventory/projects/?page_size=100`,
         abortController.signal,
       )
       setProjects(projectsData)
@@ -235,11 +162,7 @@ export default function RoyaltiesReport() {
       
       handleError(error, "Failed to fetch projects")
       setProjects([])
-      toast({
-        title: "Error",
-        description: "Failed to load projects. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to load projects. Please try again." })
     } finally {
       setIsLoadingProjects(false)
     }
@@ -259,7 +182,7 @@ export default function RoyaltiesReport() {
     setIsLoadingContracts(true)
     try {
       const contractsData = await fetchAllPaginated<Contract>(
-        `${API_URL}/inventory/contracts/?project_id=${projectId}&page_size=1000`,
+        `${API_URL}/inventory/contracts/?project_id=${projectId}&page_size=100`,
         abortController.signal,
       )
       setContracts(contractsData)
@@ -271,11 +194,7 @@ export default function RoyaltiesReport() {
       
       handleError(error, "Failed to fetch contracts")
       setContracts([])
-      toast({
-        title: "Error",
-        description: "Failed to load contracts. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to load contracts. Please try again." })
     } finally {
       setIsLoadingContracts(false)
     }
@@ -284,11 +203,7 @@ export default function RoyaltiesReport() {
   // Calculate royalties
   const calculateRoyalties = useCallback(async () => {
     if (!selectedContractId && !selectedProjectId) {
-      toast({
-        title: "Error",
-        description: "Please select either a contract or a project.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Please select either a contract or a project." })
       return
     }
     
@@ -338,11 +253,7 @@ export default function RoyaltiesReport() {
           errorMessage = "Missing required contract data. Please ensure the contract has fixed_amount and commission_percent."
         }
         
-        toast({
-          title: "Calculation Error",
-          description: errorMessage,
-          variant: "destructive",
-        })
+        toast.error("Calculation Error", { description: errorMessage })
         return
       }
       
@@ -351,17 +262,9 @@ export default function RoyaltiesReport() {
       setError(null)
       
       if (data.eligible) {
-        toast({
-          title: "Calculation Complete",
-          description: `Royalty Amount: $${data.RA?.toFixed(2)}`,
-          variant: "default",
-        })
+        toast.success("Calculation Complete", { description: "Royalty Amount: $${data.RA?.toFixed(2)}" })
       } else {
-        toast({
-          title: "Not Eligible",
-          description: data.reason || "This contract/project is not eligible for royalties.",
-          variant: "default",
-        })
+        toast.success("Not Eligible", { description: data.reason || "This contract/project is not eligible for royalties." })
       }
       
     } catch (error) {
@@ -373,11 +276,7 @@ export default function RoyaltiesReport() {
       handleError(error, "Failed to calculate royalties")
       setError('Network error: ' + (error instanceof Error ? error.message : 'Unknown error'))
       setResult(null)
-      toast({
-        title: "Error",
-        description: "Failed to calculate royalties. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to calculate royalties. Please try again." })
     } finally {
       setIsLoading(false)
     }
@@ -435,20 +334,13 @@ export default function RoyaltiesReport() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
       <SidebarInset>
+        <DocumentTitle title="Royalties" />
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Royalties Calculation</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, REPORTS_CRUMB, { label: "Royalties Calculation" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -756,6 +648,5 @@ export default function RoyaltiesReport() {
           </div>
         </div>
       </SidebarInset>
-    </SidebarProvider>
-  )
+)
 }

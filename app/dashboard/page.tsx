@@ -1,26 +1,30 @@
 "use client"
 
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
+import { PageBreadcrumb } from "@/components/page-breadcrumb"
+
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { FileText, CheckCircle2, AlertCircle, Clock, Users, DollarSign, Receipt, TrendingUp, BookOpen } from "lucide-react"
+import { FileText, CheckCircle2, AlertCircle, Clock, Users, Coins, Receipt, TrendingUp, BookOpen } from "lucide-react"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ResponsiveContainer } from "recharts"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  CardSkeleton,
+  ChartCardSkeleton,
+  OverviewCardSkeleton,
+} from "@/components/card-skeleton"
 import { format } from "date-fns"
+import { toast } from "sonner"
+import { formatApiErrorMessage } from "@/lib/apiErrors"
 
 interface DashboardStats {
   totalProjects: number
@@ -151,6 +155,8 @@ export default function Dashboard() {
   const [appliedWarehouse, setAppliedWarehouse] = useState<string>("all")
   const [appliedDateRange, setAppliedDateRange] = useState<DateRange | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
 
   // AbortController refs for request cancellation
   const fetchStatsAbortControllerRef = useRef<AbortController | null>(null)
@@ -165,60 +171,14 @@ export default function Dashboard() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
       if (process.env.NODE_ENV !== 'production') {
         console.log('Request aborted')
       }
-      return
+      return null
     }
 
     const errorMessage = error instanceof Error ? error.message : defaultMessage
@@ -226,7 +186,42 @@ export default function Dashboard() {
     if (process.env.NODE_ENV !== 'production') {
       console.error('Error:', errorMessage, error)
     }
+    return errorMessage
   }, [])
+
+  const emptyStats = useMemo(
+    (): DashboardStats => ({
+      totalProjects: 0,
+      approvedProjects: 0,
+      pendingProjects: 0,
+      totalAuthors: 0,
+      totalTranslators: 0,
+      totalRightsOwners: 0,
+      totalReviewers: 0,
+      approvedPercentage: "0",
+      pendingPercentage: "0",
+      totalBills: 0,
+      totalRevenue: 0,
+      monthlyRevenue: 0,
+      booksSold: 0,
+      billsChangePercent: 0,
+      revenueChangePercent: 0,
+      booksSoldChangePercent: 0,
+    }),
+    [],
+  )
+
+  const isEmptyDashboard =
+    hasLoadedOnce &&
+    !fetchError &&
+    !isLoading &&
+    stats.totalProjects === 0 &&
+    stats.totalBills === 0 &&
+    stats.totalRevenue === 0 &&
+    stats.booksSold === 0 &&
+    stats.totalAuthors === 0 &&
+    projectStatusData.length === 0 &&
+    salesTrend.length === 0
 
   useEffect(() => {
     if (warehousesAbortControllerRef.current) {
@@ -273,6 +268,7 @@ export default function Dashboard() {
     const controller = new AbortController()
     fetchStatsAbortControllerRef.current = controller
     setIsLoading(true)
+    setFetchError(null)
 
     try {
       const params = new URLSearchParams()
@@ -295,7 +291,12 @@ export default function Dashboard() {
       })
 
       if (!response.ok) {
-        throw new Error(`Dashboard API error: ${response.status}`)
+        const body = await response.json().catch(() => null)
+        const message = formatApiErrorMessage(
+          body,
+          `Dashboard API error: ${response.status}`,
+        )
+        throw new Error(message)
       }
 
       const data: DashboardOverviewResponse = await response.json()
@@ -324,36 +325,28 @@ export default function Dashboard() {
       setSalesByGenre(data.sales_by_genre)
       setComparisonMode(data.sales.comparison_mode)
       setHasDateFilter(Boolean(data.filters.start_date && data.filters.end_date))
+      setFetchError(null)
+      setHasLoadedOnce(true)
     } catch (error) {
-      handleError(error, "Error fetching dashboard stats")
-      setStats({
-        totalProjects: 0,
-        approvedProjects: 0,
-        pendingProjects: 0,
-        totalAuthors: 0,
-        totalTranslators: 0,
-        totalRightsOwners: 0,
-        totalReviewers: 0,
-        approvedPercentage: '0',
-        pendingPercentage: '0',
-        totalBills: 0,
-        totalRevenue: 0,
-        monthlyRevenue: 0,
-        booksSold: 0,
-        billsChangePercent: 0,
-        revenueChangePercent: 0,
-        booksSoldChangePercent: 0,
-      })
+      const message = handleError(error, "Error fetching dashboard stats")
+      if (message == null) {
+        // Abort — keep previous data
+        return
+      }
+      setFetchError(message)
+      setHasLoadedOnce(true)
+      setStats(emptyStats)
       setProjectStatusData([])
       setProjectTrends([])
       setSalesTrend([])
       setSalesByGenre([])
       setComparisonMode("previous_month")
       setHasDateFilter(false)
+      toast.error("Dashboard failed to load", { description: message })
     } finally {
       setIsLoading(false)
     }
-  }, [fetchWithRetry, handleError, headers])
+  }, [emptyStats, fetchWithRetry, handleError, headers])
 
   useEffect(() => {
     fetchStats(appliedWarehouse, appliedDateRange)
@@ -385,20 +378,14 @@ export default function Dashboard() {
   const hasActiveFilters = appliedWarehouse !== "all" || Boolean(appliedDateRange?.from)
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+      <ErrorBoundary>
+      <DocumentTitle title="Dashboard" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Dashboard</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[{ label: "Dashboard" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -440,7 +427,41 @@ export default function Dashboard() {
             </div>
 
             {isLoading ? (
-              <div className="py-8 text-center">Loading dashboard data...</div>
+              <div className="space-y-8" aria-busy="true" aria-label="Loading dashboard data">
+                <OverviewCardSkeleton metrics={3} />
+                <CardSkeleton count={4} />
+                <OverviewCardSkeleton metrics={4} />
+                <div className="space-y-6">
+                  <ChartCardSkeleton />
+                  <ChartCardSkeleton />
+                </div>
+              </div>
+            ) : fetchError ? (
+              <Alert variant="destructive" className="mb-6">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Could not load dashboard</AlertTitle>
+                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{fetchError}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-destructive/40 bg-background"
+                    onClick={() => fetchStats(appliedWarehouse, appliedDateRange)}
+                  >
+                    Retry
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : isEmptyDashboard ? (
+              <Alert className="mb-6">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>No data in this range</AlertTitle>
+                <AlertDescription>
+                  {hasActiveFilters
+                    ? "Nothing matched the selected warehouse or dates. Try clearing filters or widening the date range."
+                    : "There is no project or sales activity to show yet."}
+                </AlertDescription>
+              </Alert>
             ) : (
               <>
                 {/* Projects Overview - Consolidated Box */}
@@ -502,7 +523,7 @@ export default function Dashboard() {
                       <CardTitle className="text-sm font-medium">
                         {hasDateFilter ? "Period Revenue" : "Total Revenue"}
                       </CardTitle>
-                      <DollarSign className="h-4 w-4 text-muted-foreground" />
+                      <Coins className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats.totalRevenue.toLocaleString()} OMR</div>
@@ -698,7 +719,6 @@ export default function Dashboard() {
           </div>
         </div>
       </SidebarInset>
-    </SidebarProvider>
-  )
+</ErrorBoundary>
+)
 }
-

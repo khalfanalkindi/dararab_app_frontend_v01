@@ -1,19 +1,14 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, DASHBOARD_CRUMB, ADMIN_CRUMB } from "@/components/page-breadcrumb"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, UserPlus, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -33,20 +28,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 type User = {
@@ -73,7 +59,6 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [isAddUserOpen, setIsAddUserOpen] = useState(false)
   const [isEditUserOpen, setIsEditUserOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null;
     message: string;
@@ -99,53 +84,7 @@ export default function UsersPage() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -161,11 +100,7 @@ export default function UsersPage() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
+    toast.error("Error", { description: errorMessage })
   }, [])
 
   // Form state for new user
@@ -292,11 +227,7 @@ export default function UsersPage() {
       setIsAddUserOpen(false)
 
       // Show toast notification
-      toast({
-        title: "User Added Successfully",
-        description: `${userName} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success("User Added Successfully", { description: "${userName} has been added to the system." })
 
       // Show alert message
       showAlert("success", `New user "${userName}" has been successfully added to the system.`)
@@ -338,11 +269,7 @@ export default function UsersPage() {
         firstName && lastName ? `${firstName} ${lastName}` : editingUser.username || updatedUser.username || "User"
 
       // Show toast notification
-      toast({
-        title: "User Updated Successfully",
-        description: `${userName}'s information has been updated.`,
-        variant: "default",
-      })
+      toast.success("User Updated Successfully", { description: "${userName}'s information has been updated." })
 
       // Show alert message
       showAlert("success", `User "${userName}" has been successfully updated.`)
@@ -383,14 +310,9 @@ export default function UsersPage() {
       setUsers(users.filter((user) => user.id !== userToDelete))
       setUserToDelete(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
 
       // Show toast notification
-      toast({
-        title: "User Deleted",
-        description: `${userName} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.error("User Deleted", { description: "${userName} has been permanently removed from the system." })
 
       // Show alert message
       showAlert("warning", `User "${userName}" has been permanently deleted from the system.`)
@@ -420,26 +342,15 @@ export default function UsersPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+    <>
+      <DocumentTitle title="Users" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Users</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, ADMIN_CRUMB, { label: "Users" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -724,47 +635,27 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {userToDelete !== null && (
-                <>
-                  You are about to delete{" "}
-                  <strong>
-                    {users.find((u) => u.id === userToDelete)?.first_name}{" "}
-                    {users.find((u) => u.id === userToDelete)?.last_name}
-                  </strong>
-                  . This action cannot be undone. This will permanently delete the user account and remove their data
-                  from our servers.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteUser}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          userToDelete !== null ? (
+            <>
+              You are about to delete{" "}
+              <strong>
+                {users.find((u) => u.id === userToDelete)?.first_name}{" "}
+                {users.find((u) => u.id === userToDelete)?.last_name}
+              </strong>
+              . This action cannot be undone. This will permanently delete the user account and remove their data
+              from our servers.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeleteUser}
+      />
+    </>
+  </ErrorBoundary>
   )
 }
-

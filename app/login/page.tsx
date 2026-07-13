@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Eye, EyeOff, Globe, Lock, LogIn, User } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { DocumentTitle } from "@/components/document-title"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -13,12 +14,20 @@ import { toast } from "sonner"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { API_URL } from "@/lib/config"
+import { fetchWithRetry } from "@/lib/apiClient"
+import {
+  LANGUAGE_COOKIE,
+  type AppLanguage,
+  normalizeLanguage,
+  persistLanguage,
+} from "@/lib/language"
+import { cacheUserData } from "@/lib/user-profile"
 
 export default function LoginPage() {
   const router = useRouter()
   const [username, setUsername] = React.useState("")
   const [password, setPassword] = React.useState("")
-  const [language, setLanguage] = React.useState("en")
+  const [language, setLanguage] = React.useState<AppLanguage>("en")
   const [error, setError] = React.useState("")
   const [showPassword, setShowPassword] = React.useState(false)
   const [isLoading, setIsLoading] = React.useState(false)
@@ -30,52 +39,6 @@ export default function LoginPage() {
   const headers = React.useMemo(() => ({
     "Content-Type": "application/json",
   }), [])
-
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = React.useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
 
   // Standardized error handling utility
   const handleError = React.useCallback((error: unknown, defaultMessage: string) => {
@@ -96,20 +59,12 @@ export default function LoginPage() {
     setError(errorMessage)
   }, [])
 
-  // Load language preference
+  // Load language preference (localStorage + cookie sync for SSR lang/dir)
   React.useEffect(() => {
-    const storedLanguage = localStorage.getItem("preferredLanguage")
-    if (storedLanguage) {
-      setLanguage(storedLanguage)
-    }
+    const storedLanguage = normalizeLanguage(localStorage.getItem(LANGUAGE_COOKIE))
+    setLanguage(storedLanguage)
+    persistLanguage(storedLanguage)
   }, [])
-
-  // Update document direction when language changes
-  React.useEffect(() => {
-    document.documentElement.dir = language === "ar" ? "rtl" : "ltr"
-    document.documentElement.lang = language
-    localStorage.setItem("preferredLanguage", language)
-  }, [language])
 
   // Cleanup: abort pending requests on unmount
   React.useEffect(() => {
@@ -139,12 +94,14 @@ export default function LoginPage() {
         headers,
         body: JSON.stringify({ username, password }),
         signal: controller.signal,
+        skipAuth: true,
+        skipSessionHandling: true,
       });
   
       const data = await response.json();
   
       if (!response.ok) {
-        throw new Error(data.error || "Authentication failed");
+        throw new Error(data.detail || data.error || "Authentication failed");
       }
   
       // ✅ Store tokens in localStorage
@@ -153,15 +110,32 @@ export default function LoginPage() {
   
       // ✅ Store user data (optional)
       if (data.user) {
-        localStorage.setItem("userData", JSON.stringify(data.user));
+        cacheUserData(data.user as Record<string, unknown>)
+      }
+
+      // Cache page permissions from login (also refreshed by PermissionsProvider)
+      if (data.permissions) {
+        localStorage.setItem("userPermissions", JSON.stringify(data.permissions));
       }
   
       // ✅ Redirect after successful login
       toast.success(language === "en" ? "Login Successful" : "تم تسجيل الدخول بنجاح", {
         description: language === "en" ? "Welcome to the dashboard" : "مرحبًا بك في لوحة التحكم",
       });
+
+      const perms = data.permissions
+      let landing = "/dashboard"
+      if (perms && !perms.unrestricted) {
+        const first = (perms.permissions || []).find(
+          (p: { can_view?: boolean; url?: string }) => p.can_view && p.url,
+        )
+        if (first?.url) landing = first.url
+        else if (!(perms.permissions || []).some((p: { url?: string; can_view?: boolean }) => p.url === "/dashboard" && p.can_view)) {
+          landing = "/account"
+        }
+      }
   
-      router.push("/dashboard");
+      router.push(landing);
     } catch (err: unknown) {
       // Handle AbortError silently
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -184,13 +158,23 @@ export default function LoginPage() {
     setShowPassword(!showPassword)
   }
 
+  const handleLanguageChange = (value: string) => {
+    const next = normalizeLanguage(value)
+    setLanguage(next)
+    persistLanguage(next)
+  }
+
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-muted/40">
-      {/* Language Switcher */}
-      <div className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 z-10">
-        <Select value={language} onValueChange={setLanguage}>
-          <SelectTrigger className="w-[180px]">
-            <Globe className="mr-2 h-4 w-4" />
+      <DocumentTitle title="Login" />
+      {/* Language Switcher — logical `end` mirrors to left in RTL */}
+      <div className="absolute top-4 end-4 z-10 flex items-center gap-2 md:top-8 md:end-8">
+        <Select value={language} onValueChange={handleLanguageChange}>
+          <SelectTrigger
+            className="w-[180px]"
+            aria-label={language === "en" ? "Select language" : "اختر اللغة"}
+          >
+            <Globe className="me-2 h-4 w-4" />
             <SelectValue placeholder="Select Language" />
           </SelectTrigger>
           <SelectContent>
@@ -204,8 +188,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md px-4">
         <Card className="mx-auto shadow-lg">
           <CardHeader className="space-y-1 text-center">
-            <div className="flex justify-center mb-4">
-              <div className="h-36 w-36 flex items-center justify-center">
+            <div className="mb-4 flex justify-center">
+              <div className="flex h-36 w-36 items-center justify-center">
                 <img 
                   src="/dararab-logo-1.png" 
                   alt="DarArab Logo" 
@@ -231,11 +215,11 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <Label htmlFor="username">{language === "en" ? "Username" : "اسم المستخدم"}</Label>
                 <div className="relative">
-                  <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <User className="absolute start-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="username"
                     placeholder={language === "en" ? "Enter your username" : "أدخل اسم المستخدم"}
-                    className="pl-10"
+                    className="ps-10"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     required
@@ -245,12 +229,12 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <Label htmlFor="password">{language === "en" ? "Password" : "كلمة المرور"}</Label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Lock className="absolute start-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
                     placeholder={language === "en" ? "Enter your password" : "أدخل كلمة المرور"}
-                    className="pl-10"
+                    className="ps-10 pe-10"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
@@ -259,8 +243,17 @@ export default function LoginPage() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="absolute right-1 top-1 h-8 w-8"
+                    className="absolute end-1 top-1 h-8 w-8"
                     onClick={togglePasswordVisibility}
+                    aria-label={
+                      showPassword
+                        ? language === "en"
+                          ? "Hide password"
+                          : "إخفاء كلمة المرور"
+                        : language === "en"
+                          ? "Show password"
+                          : "إظهار كلمة المرور"
+                    }
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
@@ -272,7 +265,7 @@ export default function LoginPage() {
                 {isLoading ? (
                   <>
                     <svg
-                      className="mr-2 h-4 w-4 animate-spin"
+                      className="me-2 h-4 w-4 animate-spin"
                       xmlns="http://www.w3.org/2000/svg"
                       fill="none"
                       viewBox="0 0 24 24"
@@ -284,7 +277,7 @@ export default function LoginPage() {
                   </>
                 ) : (
                   <>
-                    <LogIn className="mr-2 h-4 w-4" />
+                    <LogIn className="me-2 h-4 w-4" />
                     {language === "en" ? "Login" : "تسجيل الدخول"}
                   </>
                 )}

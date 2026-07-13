@@ -1,18 +1,14 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { PageBreadcrumb, DASHBOARD_CRUMB, REPORTS_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { DollarSign, BookOpen, TrendingUp, Percent, Download, FileSpreadsheet, FileText } from "lucide-react"
+import { Coins, BookOpen, TrendingUp, Percent, Download, FileSpreadsheet, FileText } from "lucide-react"
 import { format } from "date-fns"
 import jsPDF from "jspdf"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ResponsiveContainer } from "recharts"
@@ -36,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { API_URL } from "@/lib/config"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 
 interface WarehouseStats {
   totalIncome: number
@@ -106,77 +102,7 @@ export default function WarehouseStats() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            }, { once: true })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  // Fetch warehouses on mount
+// Fetch warehouses on mount
   const fetchWarehouses = useCallback(async () => {
     // Cancel previous request if still pending
     if (warehousesAbortControllerRef.current) {
@@ -207,11 +133,7 @@ export default function WarehouseStats() {
       
       handleError(error, "Failed to fetch warehouses")
       setWarehouses([])
-      toast({
-        title: "Error",
-        description: "Failed to load warehouses. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to load warehouses. Please try again." })
     }
   }, [headers, fetchWithRetry, handleError])
 
@@ -495,11 +417,7 @@ export default function WarehouseStats() {
       handleError(error, "Failed to fetch warehouse statistics")
       setStats(null)
       setExportMeta(null)
-      toast({
-        title: "Error",
-        description: "Failed to load warehouse statistics. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to load warehouse statistics. Please try again." })
     } finally {
       setIsLoading(false)
     }
@@ -518,20 +436,13 @@ export default function WarehouseStats() {
   }, [])
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
       <SidebarInset>
+        <DocumentTitle title="Warehouse Statistics" />
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Warehouse Statistics</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, REPORTS_CRUMB, { label: "Warehouse Statistics" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -586,7 +497,7 @@ export default function WarehouseStats() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">Total Income (with Discount)</CardTitle>
-                      <DollarSign className="h-4 w-4 text-green-500" />
+                      <Coins className="h-4 w-4 text-green-500" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats?.totalIncome?.toLocaleString() ?? 0} $</div>
@@ -599,7 +510,7 @@ export default function WarehouseStats() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">Total Income Without Discount</CardTitle>
-                      <DollarSign className="h-4 w-4 text-gray-500" />
+                      <Coins className="h-4 w-4 text-gray-500" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats?.totalIncomeWithoutDiscount?.toLocaleString() ?? 0} $</div>
@@ -824,7 +735,6 @@ export default function WarehouseStats() {
           </div>
         </div>
       </SidebarInset>
-    </SidebarProvider>
-  )
+)
 }
 

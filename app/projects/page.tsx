@@ -1,20 +1,14 @@
 "use client"
 
-import Link from "next/link"
+import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
 import ProjectContractsModal from "@/components/ProjectContractsModal"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, FileText, PenTool, Languages, Crown, Eye, User, Users, ArrowUpDown, ArrowUp, ArrowDown, Loader2, Package } from "lucide-react"
 import {
@@ -34,25 +28,24 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { API_URL } from "@/lib/config"
 
 interface Project {
@@ -121,7 +114,6 @@ export default function ProjectManagement() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false)
   const [isEditProjectOpen, setIsEditProjectOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -246,77 +238,7 @@ export default function ProjectManagement() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, signal?: AbortSignal) => {
+const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, signal?: AbortSignal) => {
     try {
       const pageToUse = page ?? currentPage
       const pageSizeToUse = pageSizeParam ?? pageSize
@@ -577,29 +499,17 @@ export default function ProjectManagement() {
           const failedCount = errors.length
           if (failedCount === results.length) {
             // All requests failed
-            toast({
-              title: "Error",
-              description: "Failed to fetch data. Please try again later.",
-              variant: "destructive",
-            })
+            toast.error("Error", { description: "Failed to fetch data. Please try again later." })
           } else {
             // Some requests failed
-            toast({
-              title: "Warning",
-              description: `Some data failed to load (${failedCount} of ${results.length} requests)`,
-              variant: "destructive",
-            })
+            toast.error("Warning", { description: "Some data failed to load (${failedCount} of ${results.length} requests)" })
           }
         }
       } catch (error) {
         if (process.env.NODE_ENV !== 'production') {
           console.error("Unexpected error in fetchData:", error)
         }
-        toast({
-          title: "Error",
-          description: "Failed to fetch data",
-          variant: "destructive",
-        })
+        toast.error("Error", { description: "Failed to fetch data" })
       } finally {
         setIsLoading(false)
       }
@@ -962,11 +872,7 @@ export default function ProjectManagement() {
       await fetchProjects(currentPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Project Added Successfully",
-        description: `${data.title_ar} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success("Project Added Successfully", { description: "${data.title_ar} has been added to the system." })
     } catch (error) {
       // Handle AbortError silently
       if (error instanceof Error && error.name === 'AbortError') {
@@ -994,11 +900,7 @@ export default function ProjectManagement() {
         reviewer: optimisticProject.reviewer,
       })
       
-      toast({
-        title: "Error",
-        description: "Failed to add project. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to add project. Please try again." })
     } finally {
       setIsAdding(false)
     }
@@ -1076,11 +978,7 @@ export default function ProjectManagement() {
       setProjects(prev => prev.map(p => p.id === editProject.id ? responseData : p))
 
       // Show toast notification
-      toast({
-        title: "Project Updated Successfully",
-        description: `${responseData.title_ar} has been updated.`,
-        variant: "default",
-      })
+      toast.success("Project Updated Successfully", { description: "${responseData.title_ar} has been updated." })
 
       // Refresh projects list to ensure consistency
       fetchProjects(currentPage, pageSize)
@@ -1101,11 +999,7 @@ export default function ProjectManagement() {
         console.error("Update error:", error)
       }
       const errorMessage = error instanceof Error ? error.message : "Failed to update project"
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      toast.error("Error", { description: errorMessage })
     } finally {
       setIsUpdating(false)
     }
@@ -1131,11 +1025,7 @@ export default function ProjectManagement() {
       }
 
       // Show success toast
-      toast({
-        title: "Project Converted Successfully",
-        description: `${project.title_ar} has been converted to a product.`,
-        variant: "default",
-      })
+      toast.success("Project Converted Successfully", { description: "${project.title_ar} has been converted to a product." })
 
       // Refresh projects list
       await fetchProjects(currentPage, pageSize)
@@ -1150,11 +1040,7 @@ export default function ProjectManagement() {
       }
       
       const errorMessage = error instanceof Error ? error.message : "Failed to convert project to product"
-      toast({
-        title: "Conversion Failed",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      toast.error("Conversion Failed", { description: errorMessage })
     } finally {
       setIsConverting(false)
       setConvertingProjectId(null)
@@ -1181,7 +1067,6 @@ export default function ProjectManagement() {
     // Close dialog immediately for better UX
     setDeleteProjectId(null)
     setIsDeleteAlertOpen(false)
-    setDeleteConfirm("")
     
     try {
       const abortController = new AbortController()
@@ -1202,11 +1087,7 @@ export default function ProjectManagement() {
       }
 
       // Show toast notification
-      toast({
-        title: "Project Deleted",
-        description: `${projectToDelete.title_ar} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.error("Project Deleted", { description: "${projectToDelete.title_ar} has been permanently removed from the system." })
     } catch (error) {
       // Handle AbortError silently
       if (error instanceof Error && error.name === 'AbortError') {
@@ -1227,11 +1108,7 @@ export default function ProjectManagement() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Delete error:", error)
       }
-      toast({
-        title: "Error",
-        description: "Failed to delete project. The project has been restored.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to delete project. The project has been restored." })
     } finally {
       setIsDeleting(false)
     }
@@ -1434,26 +1311,13 @@ export default function ProjectManagement() {
 
   return (
     <ErrorBoundary>
-      <SidebarProvider>
-      <AppSidebar />
+      <DocumentTitle title="Projects" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Projects</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Projects" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1688,42 +1552,36 @@ export default function ProjectManagement() {
               </div>
               <div className="p-4">
                 <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-background z-10">
-                      <tr className="text-sm border-b">
-                        <th 
-                          className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => handleSort("title_ar")}
+                  <Table disableWrapper>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow className="text-sm">
+                        <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("title_ar")}
                         >
                           <div className="flex items-center">
                             Project Title (Arabic)
                             {getSortIndicator("title_ar")}
                           </div>
-                        </th>
-                        <th 
-                          className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => handleSort("title_original")}
+                        </TableHead>
+                        <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("title_original")}
                         >
                           <div className="flex items-center">
                             Project Title (English)
                             {getSortIndicator("title_original")}
                           </div>
-                        </th>
-                        <th className="text-left font-medium p-2">Type</th>
-                        <th 
-                          className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => handleSort("approval_status")}
+                        </TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("approval_status")}
                         >
                           <div className="flex items-center">
                             Approval Status
                             {getSortIndicator("approval_status")}
                           </div>
-                        </th>
-                        <th className="text-left font-medium p-2">Progress Status</th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                  </table>
+                        </TableHead>
+                        <TableHead>Progress Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                  </Table>
                   {shouldVirtualize ? (
                     <div
                       ref={containerRef}
@@ -1732,52 +1590,52 @@ export default function ProjectManagement() {
                       onScroll={handleScroll}
                     >
                       <div style={{ height: virtualizedData.totalHeight, position: 'relative' }}>
-                        <table className="w-full border-collapse">
-                          <tbody>
+                        <Table disableWrapper>
+                          <TableBody>
                             {virtualizedData.offsetY > 0 && (
-                              <tr style={{ height: virtualizedData.offsetY }}>
-                                <td colSpan={6}></td>
-                              </tr>
+                              <TableRow style={{ height: virtualizedData.offsetY }}>
+                                <TableCell colSpan={6}></TableCell>
+                              </TableRow>
                             )}
                             {isLoading ? (
                               // Skeleton loaders matching table structure
                               Array.from({ length: 5 }).map((_, index) => (
-                                <tr key={`skeleton-${index}`} className="border-b">
-                                  <td className="p-2">
+                                <TableRow key={`skeleton-${index}`}>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-32" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-40" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-24" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-6 w-20 rounded-full" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-28" />
-                                  </td>
-                                  <td className="p-2 text-right">
+                                  </TableCell>
+                                  <TableCell className="text-right">
                                     <div className="flex justify-end gap-2">
                                       <Skeleton className="h-8 w-8 rounded" />
                                       <Skeleton className="h-8 w-8 rounded" />
                                     </div>
-                                  </td>
-                                </tr>
+                                  </TableCell>
+                                </TableRow>
                               ))
                             ) : virtualizedData.visibleProjects.length === 0 ? (
-                              <tr>
-                                <td colSpan={6} className="py-8 text-center">
+                              <TableRow>
+                                <TableCell colSpan={6} className="py-8 text-center">
                                   No projects found
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             ) : (
                               virtualizedData.visibleProjects.map((project) => (
-                                <tr key={project.id} className="border-b last:border-0">
-                                  <td className="p-2 font-medium">{project.title_ar}</td>
-                                  <td className="p-2">{project.title_original || "No English Title"}</td>
-                                  <td className="p-2">
+                                <TableRow key={project.id}>
+                                  <TableCell className="font-medium">{project.title_ar}</TableCell>
+                                  <TableCell>{project.title_original || "No English Title"}</TableCell>
+                                  <TableCell>
                                     {project.type ? (
                                       <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
                                         {typeof project.type === "object"
@@ -1787,8 +1645,8 @@ export default function ProjectManagement() {
                                     ) : (
                                       "Not set"
                                     )}
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     {project.approval_status ? (
                                       <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">
                                         <CheckCircle2 className="h-4 w-4 mr-1" />
@@ -1800,8 +1658,8 @@ export default function ProjectManagement() {
                                         Not Approved
                                       </span>
                                     )}
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between">
                                         <span className="text-xs font-medium text-muted-foreground">
@@ -1822,8 +1680,8 @@ export default function ProjectManagement() {
                                         className="h-2"
                                       />
                                     </div>
-                                  </td>
-                                  <td className="p-2 text-right">
+                                  </TableCell>
+                                  <TableCell className="text-right">
                                     <div className="flex justify-end gap-2">
                                       {/* Desktop view - separate buttons */}
                                       <div className="hidden sm:flex gap-2">
@@ -1930,17 +1788,17 @@ export default function ProjectManagement() {
                                         </DropdownMenu>
                                       </div>
                                     </div>
-                                  </td>
-                                </tr>
+                                  </TableCell>
+                                </TableRow>
                               ))
                             )}
                             {(projects.length - virtualizedData.endIndex) * rowHeight > 0 && (
-                              <tr style={{ height: (projects.length - virtualizedData.endIndex) * rowHeight }}>
-                                <td colSpan={6}></td>
-                              </tr>
+                              <TableRow style={{ height: (projects.length - virtualizedData.endIndex) * rowHeight }}>
+                                <TableCell colSpan={6}></TableCell>
+                              </TableRow>
                             )}
-                          </tbody>
-                        </table>
+                          </TableBody>
+                        </Table>
                       </div>
                     </div>
                   ) : (
@@ -1949,47 +1807,47 @@ export default function ProjectManagement() {
                       className="overflow-y-auto"
                       style={{ maxHeight: '600px' }}
                     >
-                      <table className="w-full border-collapse">
-                        <tbody>
+                      <Table disableWrapper>
+                        <TableBody>
                           {isLoading ? (
                             // Skeleton loaders matching table structure
                             Array.from({ length: 5 }).map((_, index) => (
-                              <tr key={`skeleton-${index}`} className="border-b">
-                                <td className="p-2">
+                              <TableRow key={`skeleton-${index}`}>
+                                <TableCell>
                                   <Skeleton className="h-5 w-32" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-5 w-40" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-5 w-24" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-6 w-20 rounded-full" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-5 w-28" />
-                                </td>
-                                <td className="p-2 text-right">
+                                </TableCell>
+                                <TableCell className="text-right">
                                   <div className="flex justify-end gap-2">
                                     <Skeleton className="h-8 w-8 rounded" />
                                     <Skeleton className="h-8 w-8 rounded" />
                                   </div>
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             ))
                           ) : projects.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} className="py-8 text-center">
+                            <TableRow>
+                              <TableCell colSpan={6} className="py-8 text-center">
                                 No projects found
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ) : (
                             projects.map((project) => (
-                              <tr key={project.id} className="border-b last:border-0">
-                                <td className="p-2 font-medium">{project.title_ar}</td>
-                                <td className="p-2">{project.title_original || "No English Title"}</td>
-                                <td className="p-2">
+                              <TableRow key={project.id}>
+                                <TableCell className="font-medium">{project.title_ar}</TableCell>
+                                <TableCell>{project.title_original || "No English Title"}</TableCell>
+                                <TableCell>
                                   {project.type ? (
                                     <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
                                       {typeof project.type === "object"
@@ -1999,8 +1857,8 @@ export default function ProjectManagement() {
                                   ) : (
                                     "Not set"
                                   )}
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   {project.approval_status ? (
                                     <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">
                                       <CheckCircle2 className="h-4 w-4 mr-1" />
@@ -2012,8 +1870,8 @@ export default function ProjectManagement() {
                                       Not Approved
                                     </span>
                                   )}
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <div className="space-y-2">
                                     <div className="flex items-center justify-between">
                                       <span className="text-xs font-medium text-muted-foreground">
@@ -2034,8 +1892,8 @@ export default function ProjectManagement() {
                                       className="h-2"
                                     />
                                   </div>
-                                </td>
-                                <td className="p-2 text-right">
+                                </TableCell>
+                                <TableCell className="text-right">
                                   <div className="flex justify-end gap-2">
                                     {/* Desktop view - separate buttons */}
                                     <div className="hidden sm:flex gap-2">
@@ -2142,12 +2000,12 @@ export default function ProjectManagement() {
                                       </DropdownMenu>
                                     </div>
                                   </div>
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             ))
                           )}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     </div>
                   )}
                 </div>
@@ -2492,48 +2350,22 @@ export default function ProjectManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteProjectId !== null && (
-                <>
-                  You are about to delete <strong>{projects.find((p) => p.id === deleteProjectId)?.title_ar}</strong>.
-                  This action cannot be undone. This will permanently remove the project from your system.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteProject}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE" || isDeleting}
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          deleteProjectId !== null ? (
+            <>
+              You are about to delete <strong>{projects.find((p) => p.id === deleteProjectId)?.title_ar}</strong>.
+              This action cannot be undone. This will permanently remove the project from your system.
+            </>
+          ) : (
+            ""
+          )
+        }
+        isDeleting={isDeleting}
+        onConfirm={handleDeleteProject}
+      />
 
       {/* Project Contracts Modal */}
       <ProjectContractsModal
@@ -2542,8 +2374,7 @@ export default function ProjectManagement() {
         project={selectedProjectForContracts}
         token={localStorage.getItem("accessToken") || ""}
       />
-    </SidebarProvider>
-    </ErrorBoundary>
+</ErrorBoundary>
   )
 }
 

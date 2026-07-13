@@ -1,18 +1,21 @@
 "use client"
 
-import Link from "next/link"
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
+import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { TableSkeleton } from "@/components/table-skeleton"
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -32,19 +35,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -55,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { API_URL } from "@/lib/config"
+import { ListPagination } from "@/components/list-pagination"
 
 interface ListItem {
   id: number
@@ -77,7 +72,6 @@ export default function WarehouseManagement() {
   const [editWarehouse, setEditWarehouse] = useState<Warehouse | null>(null)
   const [isAddWarehouseOpen, setIsAddWarehouseOpen] = useState(false)
   const [isEditWarehouseOpen, setIsEditWarehouseOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -86,6 +80,11 @@ export default function WarehouseManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalCount, setTotalCount] = useState(0)
 
   // Form state for new warehouse
   const [newWarehouse, setNewWarehouse] = useState<Partial<Warehouse>>({
@@ -117,53 +116,7 @@ export default function WarehouseManagement() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((
     error: unknown,
     defaultMessage: string,
@@ -189,23 +142,19 @@ export default function WarehouseManagement() {
     }
 
     // Show toast notification
-    toast({
-      title: options?.title || "Error",
-      description: errorMessage,
-      variant: "destructive",
-      duration: options?.duration || 5000,
-    })
+    toast.error(options?.title || "Error", { description: errorMessage })
   }, [])
 
   useEffect(() => {
-    fetchWarehouses()
+    fetchWarehouses(currentPage, pageSize)
     fetchWarehouseTypes()
-    
+
     // Cleanup: abort pending requests on unmount
     return () => {
       fetchWarehousesAbortControllerRef.current?.abort()
       fetchWarehouseTypesAbortControllerRef.current?.abort()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial + page/size driven by handlers
   }, [])
 
   const fetchWarehouseTypes = async () => {
@@ -221,11 +170,11 @@ export default function WarehouseManagement() {
           signal: fetchWarehouseTypesAbortControllerRef.current.signal
         }
       )
-      
+
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
-      
+
       const data = await res.json()
       const typesData = Array.isArray(data) ? data : data.results || []
       setWarehouseTypes(typesData)
@@ -235,35 +184,60 @@ export default function WarehouseManagement() {
     }
   }
 
-  const fetchWarehouses = async () => {
+  const fetchWarehouses = async (page: number = currentPage, size: number = pageSize) => {
     // Abort previous request if still pending
     fetchWarehousesAbortControllerRef.current?.abort()
     fetchWarehousesAbortControllerRef.current = new AbortController()
 
+    setIsLoading(true)
     try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(size),
+        ordering: "name_en",
+      })
       const res = await fetchWithRetry(
-        `${API_URL}/inventory/warehouses/`,
+        `${API_URL}/inventory/warehouses/?${params.toString()}`,
         {
           headers,
           signal: fetchWarehousesAbortControllerRef.current.signal
         }
       )
-      
+
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
-      
+
       const data = await res.json()
-      // Ensure data is an array
       const warehousesData = Array.isArray(data) ? data : data.results || []
+
       setWarehouses(warehousesData)
+      setTotalCount(
+        Array.isArray(data)
+          ? warehousesData.length
+          : typeof data.count === "number"
+            ? data.count
+            : warehousesData.length,
+      )
+      setCurrentPage(page)
+      setPageSize(size)
     } catch (error) {
       handleError(error, "Failed to fetch warehouses")
-      // Set empty array on error
       setWarehouses([])
+      setTotalCount(0)
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    fetchWarehouses(newPage, pageSize)
+  }
+
+  // Handle items per page change
+  const handlePageSizeChange = (size: number) => {
+    fetchWarehouses(1, size)
   }
 
   // Handle adding a new warehouse
@@ -281,7 +255,7 @@ export default function WarehouseManagement() {
       }
 
       const data = await res.json()
-      setWarehouses([...warehouses, data])
+      setIsAddWarehouseOpen(false)
 
       // Reset form
       setNewWarehouse({
@@ -291,14 +265,10 @@ export default function WarehouseManagement() {
         location: "",
       })
 
-      setIsAddWarehouseOpen(false)
+      await fetchWarehouses(1, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Warehouse Added Successfully",
-        description: `${data.name_ar} / ${data.name_en} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success("Warehouse Added Successfully", { description: "${data.name_ar} / ${data.name_en} has been added to the system." })
 
       // Show alert message
       showAlert("success", `New warehouse "${data.name_ar} / ${data.name_en}" has been successfully added to the system.`)
@@ -329,16 +299,12 @@ export default function WarehouseManagement() {
 
       const responseData = await res.json()
 
-      setWarehouses(warehouses.map((w) => (w.id === responseData.id ? responseData : w)))
       setEditWarehouse(null)
       setIsEditWarehouseOpen(false)
+      await fetchWarehouses(currentPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Warehouse Updated Successfully",
-        description: `${responseData.name_ar} / ${responseData.name_en} has been updated.`,
-        variant: "default",
-      })
+      toast.success("Warehouse Updated Successfully", { description: "${responseData.name_ar} / ${responseData.name_en} has been updated." })
 
       // Show alert message
       showAlert("success", `Warehouse "${responseData.name_ar} / ${responseData.name_en}" has been successfully updated.`)
@@ -370,17 +336,15 @@ export default function WarehouseManagement() {
         throw new Error(errorData.message || errorData.detail || "Failed to delete warehouse")
       }
 
-      setWarehouses(warehouses.filter((w) => w.id !== deleteWarehouseId))
       setDeleteWarehouseId(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
+
+      const nextPage =
+        warehouses.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage
+      await fetchWarehouses(nextPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Warehouse Deleted",
-        description: `${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.error("Warehouse Deleted", { description: "${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en} has been permanently removed from the system." })
 
       // Show alert message
       showAlert("warning", `Warehouse "${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en}" has been permanently deleted from the system.`)
@@ -406,26 +370,14 @@ export default function WarehouseManagement() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <>
+      <DocumentTitle title="Warehouses" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Warehouses</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Warehouses" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -530,95 +482,101 @@ export default function WarehouseManagement() {
                 </Dialog>
               </div>
               <div className="p-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Name (AR/EN)</th>
-                        <th className="text-left font-medium p-2">Type</th>
-                        <th className="text-left font-medium p-2">Location</th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan={4} className="py-8 text-center">
-                            Loading warehouses...
-                          </td>
-                        </tr>
-                      ) : warehouses.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="py-8 text-center">
-                            No warehouses found
-                          </td>
-                        </tr>
-                      ) : (
-                        warehouses.map((warehouse) => (
-                          <tr key={warehouse.id} className="border-b last:border-0">
-                            <td className="p-2 font-medium">
-                              {warehouse.name_ar} / {warehouse.name_en}
-                            </td>
-                            <td className="p-2">{warehouse.type?.name || "No type"}</td>
-                            <td className="p-2">{warehouse.location || "No location"}</td>
-                            <td className="p-2 text-right">
-                              <div className="flex justify-end gap-2">
-                                {/* Desktop view - separate buttons */}
-                                <div className="hidden sm:flex gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => openEditDialog(warehouse)}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                    <span className="sr-only">Edit</span>
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => openDeleteDialog(warehouse.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Delete</span>
-                                  </Button>
-                                </div>
-
-                                {/* Mobile view - dropdown menu */}
-                                <div className="sm:hidden">
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="outline" size="icon" className="h-8 w-8">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        <span className="sr-only">Actions</span>
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openEditDialog(warehouse)}>
-                                        <Edit className="h-4 w-4 mr-2" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={() => openDeleteDialog(warehouse.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name (AR/EN)</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading ? (
+                      <TableSkeleton columns={4} rows={5} hasActions />
+                    ) : warehouses.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-8 text-center">
+                          No warehouses found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      warehouses.map((warehouse) => (
+                        <TableRow key={warehouse.id}>
+                          <TableCell className="font-medium">
+                            {warehouse.name_ar} / {warehouse.name_en}
+                          </TableCell>
+                          <TableCell>{warehouse.type?.name || "No type"}</TableCell>
+                          <TableCell>{warehouse.location || "No location"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              {/* Desktop view - separate buttons */}
+                              <div className="hidden sm:flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => openEditDialog(warehouse)}
+                                >
+                                  <Edit className="h-4 w-4" />
+                                  <span className="sr-only">Edit</span>
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive hover:text-destructive"
+                                  onClick={() => openDeleteDialog(warehouse.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  <span className="sr-only">Delete</span>
+                                </Button>
                               </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+
+                              {/* Mobile view - dropdown menu */}
+                              <div className="sm:hidden">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="outline" size="icon" className="h-8 w-8">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                      <span className="sr-only">Actions</span>
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuItem onClick={() => openEditDialog(warehouse)}>
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => openDeleteDialog(warehouse.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+
+                {/* Pagination Controls */}
+                {!isLoading && totalCount > 0 && (
+                  <ListPagination
+                    currentPage={currentPage}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    disabled={isLoading}
+                    onPageChange={handlePageChange}
+                    onPageSizeChange={handlePageSizeChange}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -690,47 +648,25 @@ export default function WarehouseManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteWarehouseId !== null && (
-                <>
-                  You are about to delete{" "}
-                  <strong>
-                    {warehouses.find((w) => w.id === deleteWarehouseId)?.name_ar} /{" "}
-                    {warehouses.find((w) => w.id === deleteWarehouseId)?.name_en}
-                  </strong>
-                  . This action cannot be undone. This will permanently remove the warehouse from your system.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteWarehouse}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          deleteWarehouseId !== null ? (
+            <>
+              You are about to delete{" "}
+              <strong>
+                {warehouses.find((w) => w.id === deleteWarehouseId)?.name_ar} /{" "}
+                {warehouses.find((w) => w.id === deleteWarehouseId)?.name_en}
+              </strong>
+              . This action cannot be undone. This will permanently remove the warehouse from your system.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeleteWarehouse}
+      />
+    </>
   )
 }
-
-

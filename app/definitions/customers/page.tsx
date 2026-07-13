@@ -1,20 +1,23 @@
 "use client"
 
-import Link from "next/link"
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
+import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { TableSkeleton } from "@/components/table-skeleton"
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react"
+import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,23 +35,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { API_URL } from "@/lib/config"
+import { ListPagination } from "@/components/list-pagination"
 
 interface Customer {
   id: number
@@ -66,7 +61,6 @@ export default function CustomerManagement() {
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null)
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false)
   const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -79,8 +73,8 @@ export default function CustomerManagement() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage, setItemsPerPage] = useState(10)
-  const [totalItems, setTotalItems] = useState(0)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalCount, setTotalCount] = useState(0)
 
   // Form state for new customer
   const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({
@@ -113,53 +107,7 @@ export default function CustomerManagement() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((
     error: unknown,
     defaultMessage: string,
@@ -185,23 +133,19 @@ export default function CustomerManagement() {
     }
 
     // Show toast notification
-    toast({
-      title: options?.title || "Error",
-      description: errorMessage,
-      variant: "destructive",
-      duration: options?.duration || 5000,
-    })
+    toast.error(options?.title || "Error", { description: errorMessage })
   }, [])
 
   useEffect(() => {
-    fetchCustomers()
+    fetchCustomers(currentPage, pageSize)
     fetchCustomerTypes()
-    
+
     // Cleanup: abort pending requests on unmount
     return () => {
       fetchCustomersAbortControllerRef.current?.abort()
       fetchCustomerTypesAbortControllerRef.current?.abort()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial + page/size driven by handlers
   }, [])
 
   const fetchCustomerTypes = async () => {
@@ -217,11 +161,11 @@ export default function CustomerManagement() {
           signal: fetchCustomerTypesAbortControllerRef.current.signal
         }
       )
-      
+
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
-      
+
       const data = await res.json()
       setCustomerTypes(data.results || [])
     } catch (error) {
@@ -229,63 +173,60 @@ export default function CustomerManagement() {
     }
   }
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = async (page: number = currentPage, size: number = pageSize) => {
     // Abort previous request if still pending
     fetchCustomersAbortControllerRef.current?.abort()
     fetchCustomersAbortControllerRef.current = new AbortController()
 
+    setIsLoading(true)
     try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(size),
+        ordering: "institution_name",
+      })
       const res = await fetchWithRetry(
-        `${API_URL}/sales/customers/?page_size=1000`,
+        `${API_URL}/sales/customers/?${params.toString()}`,
         {
           headers,
           signal: fetchCustomersAbortControllerRef.current.signal
         }
       )
-      
+
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
-      
+
       const data = await res.json()
-      
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('API Response:', data)
-      }
-      
-      // Handle the response structure with results array
-      const customersData = data.results || []
-      
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('Processed Customers:', customersData)
-      }
-      
+      const customersData = Array.isArray(data) ? data : data.results || []
+
       setCustomers(customersData)
-      setTotalItems(data.count || customersData.length)
+      setTotalCount(
+        Array.isArray(data)
+          ? customersData.length
+          : typeof data.count === "number"
+            ? data.count
+            : customersData.length,
+      )
+      setCurrentPage(page)
+      setPageSize(size)
     } catch (error) {
       handleError(error, "Failed to fetch customers")
       setCustomers([])
-      setTotalItems(0)
+      setTotalCount(0)
     } finally {
       setIsLoading(false)
     }
   }
 
-  // Calculate pagination values
-  const totalPages = Math.ceil(totalItems / itemsPerPage)
-  const startIndex = (currentPage - 1) * itemsPerPage
-  const endIndex = startIndex + itemsPerPage
-  const currentCustomers = customers.slice(startIndex, endIndex)
-
   // Handle page change
   const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage)
+    fetchCustomers(newPage, pageSize)
   }
 
   // Handle items per page change
-  const handleItemsPerPageChange = (value: string) => {
-    setItemsPerPage(Number(value))
-    setCurrentPage(1) // Reset to first page when changing items per page
+  const handlePageSizeChange = (size: number) => {
+    fetchCustomers(1, size)
   }
 
   // Handle adding a new customer
@@ -303,8 +244,7 @@ export default function CustomerManagement() {
       }
 
       const data = await res.json()
-      setCustomers([...customers, data])
-      setTotalItems(totalItems + 1)
+      setIsAddCustomerOpen(false)
 
       // Reset form
       setNewCustomer({
@@ -315,14 +255,10 @@ export default function CustomerManagement() {
         email: "",
       })
 
-      setIsAddCustomerOpen(false)
+      await fetchCustomers(1, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Customer Added Successfully",
-        description: `${data.institution_name} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success("Customer Added Successfully", { description: "${data.institution_name} has been added to the system." })
 
       // Show alert message
       showAlert("success", `New customer "${data.institution_name}" has been successfully added to the system.`)
@@ -353,16 +289,12 @@ export default function CustomerManagement() {
 
       const responseData = await res.json()
 
-      setCustomers(customers.map((c) => (c.id === responseData.id ? responseData : c)))
       setEditCustomer(null)
       setIsEditCustomerOpen(false)
+      await fetchCustomers(currentPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Customer Updated Successfully",
-        description: `${responseData.institution_name} has been updated.`,
-        variant: "default",
-      })
+      toast.success("Customer Updated Successfully", { description: "${responseData.institution_name} has been updated." })
 
       // Show alert message
       showAlert("success", `Customer "${responseData.institution_name}" has been successfully updated.`)
@@ -394,18 +326,15 @@ export default function CustomerManagement() {
         throw new Error(errorData.message || errorData.detail || "Failed to delete customer")
       }
 
-      setCustomers(customers.filter((c) => c.id !== deleteCustomerId))
-      setTotalItems(totalItems - 1)
       setDeleteCustomerId(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
+
+      const nextPage =
+        customers.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage
+      await fetchCustomers(nextPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Customer Deleted",
-        description: `${customerToDelete.institution_name} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.error("Customer Deleted", { description: "${customerToDelete.institution_name} has been permanently removed from the system." })
 
       // Show alert message
       showAlert("warning", `Customer "${customerToDelete.institution_name}" has been permanently deleted from the system.`)
@@ -431,26 +360,14 @@ export default function CustomerManagement() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <>
+      <DocumentTitle title="Customers" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Customers</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Customers" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -562,149 +479,104 @@ export default function CustomerManagement() {
                 </Dialog>
               </div>
               <div className="p-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Type</th>
-                        <th className="text-left font-medium p-2">Institution Name</th>
-                        <th className="text-left font-medium p-2">Contact Person</th>
-                        <th className="text-left font-medium p-2">Phone</th>
-                        <th className="text-left font-medium p-2">Email</th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan={6} className="py-8 text-center">
-                            Loading customers...
-                          </td>
-                        </tr>
-                      ) : currentCustomers.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="py-8 text-center">
-                            No customers found
-                          </td>
-                        </tr>
-                      ) : (
-                        currentCustomers.map((customer) => (
-                          <tr key={customer.id} className="border-b last:border-0">
-                            <td className="p-2">
-                              {customerTypes.find(t => t.id === customer.customer_type)?.display_name_en || customerTypes.find(t => t.id === customer.customer_type)?.name_en || "N/A"}
-                            </td>
-                            <td className="p-2 font-medium">{customer.institution_name}</td>
-                            <td className="p-2">{customer.contact_person || "N/A"}</td>
-                            <td className="p-2">{customer.phone || "N/A"}</td>
-                            <td className="p-2">{customer.email || "N/A"}</td>
-                            <td className="p-2 text-right">
-                              <div className="flex justify-end gap-2">
-                                {/* Desktop view - separate buttons */}
-                                <div className="hidden sm:flex gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => openEditDialog(customer)}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                    <span className="sr-only">Edit</span>
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => openDeleteDialog(customer.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Delete</span>
-                                  </Button>
-                                </div>
-
-                                {/* Mobile view - dropdown menu */}
-                                <div className="sm:hidden">
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="outline" size="icon" className="h-8 w-8">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        <span className="sr-only">Actions</span>
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openEditDialog(customer)}>
-                                        <Edit className="h-4 w-4 mr-2" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={() => openDeleteDialog(customer.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Institution Name</TableHead>
+                      <TableHead>Contact Person</TableHead>
+                      <TableHead>Phone</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading ? (
+                      <TableSkeleton columns={6} rows={5} hasActions />
+                    ) : customers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center">
+                          No customers found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      customers.map((customer) => (
+                        <TableRow key={customer.id}>
+                          <TableCell>
+                            {customerTypes.find(t => t.id === customer.customer_type)?.display_name_en || customerTypes.find(t => t.id === customer.customer_type)?.name_en || "N/A"}
+                          </TableCell>
+                          <TableCell className="font-medium">{customer.institution_name}</TableCell>
+                          <TableCell>{customer.contact_person || "N/A"}</TableCell>
+                          <TableCell>{customer.phone || "N/A"}</TableCell>
+                          <TableCell>{customer.email || "N/A"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              {/* Desktop view - separate buttons */}
+                              <div className="hidden sm:flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => openEditDialog(customer)}
+                                >
+                                  <Edit className="h-4 w-4" />
+                                  <span className="sr-only">Edit</span>
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive hover:text-destructive"
+                                  onClick={() => openDeleteDialog(customer.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  <span className="sr-only">Delete</span>
+                                </Button>
                               </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+
+                              {/* Mobile view - dropdown menu */}
+                              <div className="sm:hidden">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="outline" size="icon" className="h-8 w-8">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                      <span className="sr-only">Actions</span>
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuItem onClick={() => openEditDialog(customer)}>
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => openDeleteDialog(customer.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
 
                 {/* Pagination Controls */}
-                {!isLoading && customers.length > 0 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Items per page:</span>
-                      <Select
-                        value={itemsPerPage.toString()}
-                        onValueChange={handleItemsPerPageChange}
-                      >
-                        <SelectTrigger className="h-8 w-[70px]">
-                          <SelectValue placeholder={itemsPerPage} />
-                        </SelectTrigger>
-                        <SelectContent side="top">
-                          {[10, 20, 30, 40, 50].map((pageSize) => (
-                            <SelectItem key={pageSize} value={pageSize.toString()}>
-                              {pageSize}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        {startIndex + 1}-{Math.min(endIndex, totalItems)} of {totalItems}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handlePageChange(currentPage - 1)}
-                          disabled={currentPage === 1}
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          <span className="sr-only">Previous page</span>
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handlePageChange(currentPage + 1)}
-                          disabled={currentPage === totalPages}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                          <span className="sr-only">Next page</span>
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+                {!isLoading && totalCount > 0 && (
+                  <ListPagination
+                    currentPage={currentPage}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    disabled={isLoading}
+                    onPageChange={handlePageChange}
+                    onPageSizeChange={handlePageSizeChange}
+                  />
                 )}
               </div>
             </div>
@@ -783,44 +655,22 @@ export default function CustomerManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteCustomerId !== null && (
-                <>
-                  You are about to delete{" "}
-                  <strong>{customers.find((c) => c.id === deleteCustomerId)?.institution_name}</strong>. This action cannot be undone.
-                  This will permanently remove the customer from your system.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteCustomer}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          deleteCustomerId !== null ? (
+            <>
+              You are about to delete{" "}
+              <strong>{customers.find((c) => c.id === deleteCustomerId)?.institution_name}</strong>. This action cannot be undone.
+              This will permanently remove the customer from your system.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeleteCustomer}
+      />
+    </>
   )
 }
-
-

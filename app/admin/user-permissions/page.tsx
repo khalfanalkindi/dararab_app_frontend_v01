@@ -1,19 +1,14 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, DASHBOARD_CRUMB, ADMIN_CRUMB } from "@/components/page-breadcrumb"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -33,21 +28,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 type User = {
@@ -82,7 +68,6 @@ export default function UserBasedPermissions() {
   const [editingPermission, setEditingPermission] = useState<Permission | null>(null)
   const [isAddPermissionOpen, setIsAddPermissionOpen] = useState(false)
   const [isEditPermissionOpen, setIsEditPermissionOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null;
     message: string;
@@ -109,53 +94,7 @@ export default function UserBasedPermissions() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -171,11 +110,7 @@ export default function UserBasedPermissions() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
+    toast.error("Error", { description: errorMessage })
   }, [])
 
   // Update the newPermission state to match the model
@@ -336,11 +271,7 @@ export default function UserBasedPermissions() {
       const pageName = pages.find((p) => p.id.toString() === newPermission.page.toString())?.name || "Page"
 
       // Show toast notification
-      toast({
-        title: "Permission Added Successfully",
-        description: `Permission for ${userName} on ${pageName} has been added.`,
-        variant: "default",
-      })
+      toast.success("Permission Added Successfully", { description: "Permission for ${userName} on ${pageName} has been added." })
 
       // Show alert message
       showAlert("success", `New permission for ${userName} on ${pageName} has been successfully added.`)
@@ -380,11 +311,7 @@ export default function UserBasedPermissions() {
       const resourceName = editingPermission.resource
 
       // Show toast notification
-      toast({
-        title: "Permission Updated Successfully",
-        description: `Permission for ${userName} on ${resourceName} has been updated.`,
-        variant: "default",
-      })
+      toast.success("Permission Updated Successfully", { description: "Permission for ${userName} on ${resourceName} has been updated." })
 
       // Show alert message
       showAlert("success", `Permission for ${userName} on ${resourceName} has been successfully updated.`)
@@ -424,14 +351,9 @@ export default function UserBasedPermissions() {
       setUserPermissions(userPermissions.filter((perm) => perm.id !== permissionToDelete))
       setPermissionToDelete(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
 
       // Show toast notification
-      toast({
-        title: "Permission Deleted",
-        description: `Permission for ${userName} on ${resourceName} has been removed.`,
-        variant: "destructive",
-      })
+      toast.error("Permission Deleted", { description: "Permission for ${userName} on ${resourceName} has been removed." })
 
       // Show alert message
       showAlert("warning", `Permission for ${userName} on ${resourceName} has been permanently deleted.`)
@@ -483,26 +405,15 @@ export default function UserBasedPermissions() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+    <>
+      <DocumentTitle title="User Permissions" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>User Permissions</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, ADMIN_CRUMB, { label: "User Permissions" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -868,46 +779,26 @@ export default function UserBasedPermissions() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {permissionToDelete !== null && (
-                <>
-                  You are about to delete permission for{" "}
-                  <strong>
-                    {getUserName(userPermissions.find((p) => p.id === permissionToDelete)?.user || 0)} on{" "}
-                    {getPageName(userPermissions.find((p) => p.id === permissionToDelete)?.page || 0)}
-                  </strong>
-                  . This action cannot be undone and may affect this user's access to this resource.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeletePermission}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          permissionToDelete !== null ? (
+            <>
+              You are about to delete permission for{" "}
+              <strong>
+                {getUserName(userPermissions.find((p) => p.id === permissionToDelete)?.user || 0)} on{" "}
+                {getPageName(userPermissions.find((p) => p.id === permissionToDelete)?.page || 0)}
+              </strong>
+              . This action cannot be undone and may affect this user's access to this resource.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeletePermission}
+      />
+    </>
+  </ErrorBoundary>
   )
 }
-

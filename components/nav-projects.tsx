@@ -61,7 +61,7 @@ export function NavProjects({
                       <SidebarMenuButton tooltip={item.name} className="w-full">
                         <item.icon />
                         <span>{item.name}</span>
-                        <ChevronDown className="ml-auto h-4 w-4 transition-transform duration-200 group-data-[state=closed]/collapsible:rotate-[-90deg]" />
+                        <ChevronDown className="ms-auto h-4 w-4 transition-transform duration-200 group-data-[state=closed]/collapsible:rotate-[-90deg]" />
                       </SidebarMenuButton>
                     </CollapsibleTrigger>
                     <CollapsibleContent>

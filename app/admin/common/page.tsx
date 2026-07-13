@@ -1,24 +1,19 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, DASHBOARD_CRUMB, ADMIN_CRUMB } from "@/components/page-breadcrumb"
+
 import { useEffect, useState, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { fetchWithRetry } from "@/lib/apiClient"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Trash2, Edit, AlertCircle, CheckCircle2 } from "lucide-react"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
@@ -78,53 +73,7 @@ export default function ListManagementPage() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -140,11 +89,7 @@ export default function ListManagementPage() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
+    toast.error("Error", { description: errorMessage })
   }, [])
 
   // Show alert message
@@ -298,7 +243,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListTypes([...listTypes, data])
       setNewType({ name_en: "", name_ar: "", code: "" })
-      toast({ title: "Type Added" })
+      toast.success("Type Added")
       showAlert("success", `New list type "${data.name_en}" has been successfully added.`)
     } catch (error) {
       handleError(error, "Failed to add type")
@@ -327,7 +272,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListTypes(listTypes.map((t) => (t.id === data.id ? data : t)))
       setEditType(null)
-      toast({ title: "Type Updated" })
+      toast.success("Type Updated")
       showAlert("success", `List type "${data.name_en}" has been successfully updated.`)
     } catch (error) {
       handleError(error, "Failed to update type")
@@ -359,7 +304,7 @@ export default function ListManagementPage() {
         setListItems([])
       }
       setDeleteTypeId(null)
-      toast({ title: "Type Deleted" })
+      toast.success("Type Deleted")
       showAlert("warning", `List type "${typeToDelete?.name_en}" has been permanently deleted.`)
     } catch (error) {
       handleError(error, "Failed to delete type")
@@ -388,7 +333,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListItems([...listItems, data])
       setNewItem({ value: "", display_name_en: "", display_name_ar: "" })
-      toast({ title: "Item Added" })
+      toast.success("Item Added")
       showAlert("success", `New list item "${data.display_name_en}" has been successfully added.`)
     } catch (error) {
       handleError(error, "Failed to add item")
@@ -417,7 +362,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListItems(listItems.map((i) => (i.id === data.id ? data : i)))
       setEditItem(null)
-      toast({ title: "Item Updated" })
+      toast.success("Item Updated")
       showAlert("success", `List item "${data.display_name_en}" has been successfully updated.`)
     } catch (error) {
       handleError(error, "Failed to update item")
@@ -445,7 +390,7 @@ export default function ListManagementPage() {
       })
       setListItems(listItems.filter((i) => i.id !== deleteItemId))
       setDeleteItemId(null)
-      toast({ title: "Item Deleted" })
+      toast.success("Item Deleted")
       showAlert("warning", `List item "${itemToDelete?.display_name_en}" has been permanently deleted.`)
     } catch (error) {
       handleError(error, "Failed to delete item")
@@ -454,26 +399,14 @@ export default function ListManagementPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+      <ErrorBoundary>
+      <DocumentTitle title="Common Definitions" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>List Management</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, ADMIN_CRUMB, { label: "List Management" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -880,7 +813,6 @@ export default function ListManagementPage() {
           </AlertDialogContent>
         </AlertDialog>
       </SidebarInset>
-    </SidebarProvider>
-  )
+</ErrorBoundary>
+)
 }
-

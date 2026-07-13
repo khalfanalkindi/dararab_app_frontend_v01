@@ -1,10 +1,18 @@
 "use client"
 
 import type * as React from "react"
-import { BookOpen, CreditCard, ShoppingCart, SquareLibrary, BookCopy, Blocks,FileSpreadsheet, Settings2, SquareTerminal, LayoutDashboard, ReceiptText, ArrowRightLeft } from "lucide-react"
-import { useEffect, useState } from "react"
+import {
+  BarChart3,
+  Blocks,
+  BookCopy,
+  BookMarked,
+  LayoutDashboard,
+  Settings2,
+  ShoppingCart,
+} from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 
-import { NavMain } from "./nav-main"
+import { NavMain, type NavMainGroup } from "./nav-main"
 import { NavProjects } from "./nav-projects"
 import { NavUser } from "./nav-user"
 import {
@@ -17,258 +25,139 @@ import {
 } from "@/components/ui/sidebar"
 import { LanguageSwitcher } from "./language-switcher"
 import { LanguageIndicator } from "./language-indicator"
+import { ThemeToggle } from "./theme-toggle"
+import { usePermissionsOptional } from "@/components/permissions-provider"
+import { filterAdminNavByPermissions, filterNavByPermissions } from "@/lib/permissions"
 
-// This is sample data.
 const data = {
-  user: {
-    name: "Admin",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
-  navMain: [
+  navGroups: [
     {
-      title: "Dashboard",
-      url: "/dashboard",
-      icon: LayoutDashboard,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Projects",
-      url: "/projects",
-      icon: Blocks,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Projects Contracts",
-      url: "/projects-contracts",
-      icon: FileSpreadsheet,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Products",
-      url: "/products",
-      icon: BookCopy,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Products Inventory",
-      url: "/inventory",
-      icon: SquareLibrary,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Product Transfer",
-      url: "/transfer",
-      icon: ArrowRightLeft,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Sales",
-      url: "/pos",
-      icon: ShoppingCart,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Invoices",
-      url: "/invoices",
-      icon: ReceiptText,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Outstanding Payment",
-      url: "/outstanding-payment",
-      icon: CreditCard,
-      isActive: true,
-      items: [], // Empty items array means no submenu
-    },
-    {
-      title: "Definitions",
-      url: "/definitions",
-      icon: FileSpreadsheet,
-      isActive: true,
+      label: "Operations",
       items: [
         {
-          title: "Authors",
-          url: "/definitions/authors",
+          title: "Dashboard",
+          url: "/dashboard",
+          icon: LayoutDashboard,
+          items: [] as { title: string; url: string }[],
         },
-        {
-          title: "Translators",
-          url: "/definitions/translators",
-        },
-        {
-          title: "Warehouses",
-          url: "/definitions/warehouses",
-        },
-        {
-          title: "Customers",
-          url: "/definitions/customers",
-        },
-        {
-          title: "Rights Owners",
-          url: "/definitions/rights_owner",
-        },
-      ]
+      ],
     },
     {
-      title: "Reports",
-      url: "/reports",
-      icon: FileSpreadsheet,
-      isActive: true,
+      label: "Publishing",
       items: [
         {
-          title: "Warehouse Statistics",
-          url: "/reports/warehouse-stat",
+          title: "Publishing",
+          url: "/projects",
+          icon: Blocks,
+          items: [
+            { title: "Projects", url: "/projects" },
+            { title: "Project Contracts", url: "/projects-contracts" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Catalog",
+      items: [
+        {
+          title: "Catalog",
+          url: "/products",
+          icon: BookCopy,
+          items: [
+            { title: "Products", url: "/products" },
+            { title: "Inventory", url: "/inventory" },
+            { title: "Transfer", url: "/transfer" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Sales",
+      items: [
+        {
+          title: "Sales",
+          url: "/pos",
+          icon: ShoppingCart,
+          items: [
+            { title: "Point of Sale", url: "/pos" },
+            { title: "Invoices", url: "/invoices" },
+            { title: "Outstanding Payment", url: "/outstanding-payment" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Insights",
+      items: [
+        {
+          title: "Reports",
+          url: "/reports",
+          icon: BarChart3,
+          items: [
+            { title: "Overview", url: "/reports" },
+            { title: "Warehouse Statistics", url: "/reports/warehouse-stat" },
+            { title: "Royalties Calculation", url: "/reports/royalties" },
+          ],
         },
         {
-          title: "Royalties Calculation",
-          url: "/reports/royalties",
+          title: "Definitions",
+          url: "/definitions",
+          icon: BookMarked,
+          items: [
+            { title: "Overview", url: "/definitions" },
+            { title: "Authors", url: "/definitions/authors" },
+            { title: "Translators", url: "/definitions/translators" },
+            { title: "Warehouses", url: "/definitions/warehouses" },
+            { title: "Customers", url: "/definitions/customers" },
+            { title: "Rights Owners", url: "/definitions/rights_owner" },
+          ],
         },
-      ], // Empty items array means no submenu
+      ],
     },
-    
-    // {
-    //   title: "Playground",
-    //   url: "#",
-    //   icon: SquareTerminal,
-    //   items: [
-    //     {
-    //       title: "History",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Starred",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Settings",
-    //       url: "#",
-    //     },
-    //   ],
-    // },
-    // {
-    //   title: "Models",
-    //   url: "#",
-    //   icon: Bot,
-    //   items: [
-    //     {
-    //       title: "Genesis",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Explorer",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Quantum",
-    //       url: "#",
-    //     },
-    //   ],
-    // },
-    // {
-    //   title: "Documentation",
-    //   url: "#",
-    //   icon: BookOpen,
-    //   items: [
-    //     {
-    //       title: "Introduction",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Get Started",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Tutorials",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Changelog",
-    //       url: "#",
-    //     },
-    //   ],
-    // },
-    // {
-    //   title: "Settings",
-    //   url: "#",
-    //   icon: Settings2,
-    //   items: [
-    //     {
-    //       title: "General",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Team",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Billing",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Limits",
-    //       url: "#",
-    //     },
-    //   ],
-    // },
-  ],
+  ] satisfies NavMainGroup[],
   projects: [
     {
       name: "Admin",
       url: "/admin",
       icon: Settings2,
       items: [
-        {
-          title: "Users",
-          url: "/admin/users",
-        },
-        {
-          title: "Roles",
-          url: "/admin/roles",
-        },
-        {
-          title: "Pages",
-          url: "/admin/pages",
-        },
-        {
-          title: "Role Permissions",
-          url: "/admin/role-permissions",
-        },
-        {
-          title: "User Permissions",
-          url: "/admin/user-permissions",
-        },
-        {
-          title: "Common Definitions",
-          url: "/admin/common",
-        },
+        { title: "Users", url: "/admin/users" },
+        { title: "Roles", url: "/admin/roles" },
+        { title: "Pages", url: "/admin/pages" },
+        { title: "Role Permissions", url: "/admin/role-permissions" },
+        { title: "User Permissions", url: "/admin/user-permissions" },
+        { title: "Common Definitions", url: "/admin/common" },
       ],
     },
   ],
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  // Track the current language to determine sidebar position
   const [sidebarSide, setSidebarSide] = useState<"left" | "right">("left")
+  const perms = usePermissionsOptional()
 
-  // Listen for changes to the document direction
+  const navGroups = useMemo(() => {
+    return data.navGroups
+      .map((group) => ({
+        ...group,
+        items: filterNavByPermissions(group.items, perms?.permissions ?? null),
+      }))
+      .filter((group) => group.items.length > 0)
+  }, [perms?.permissions])
+
+  const projects = useMemo(
+    () => filterAdminNavByPermissions(data.projects, perms?.permissions ?? null),
+    [perms?.permissions],
+  )
+
   useEffect(() => {
     const handleDirChange = () => {
       const isRtl = document.documentElement.dir === "rtl"
       setSidebarSide(isRtl ? "right" : "left")
     }
 
-    // Set initial value
     handleDirChange()
 
-    // Create a MutationObserver to watch for changes to the dir attribute
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (mutation.attributeName === "dir") {
@@ -277,10 +166,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       })
     })
 
-    // Start observing the document element
     observer.observe(document.documentElement, { attributes: true })
-
-    // Clean up
     return () => observer.disconnect()
   }, [])
 
@@ -290,16 +176,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <LanguageIndicator />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavProjects projects={data.projects} />
+        <NavMain groups={navGroups} />
+        {projects.length > 0 ? <NavProjects projects={projects} /> : null}
       </SidebarContent>
       <SidebarFooter>
+        <ThemeToggle />
         <LanguageSwitcher />
         <SidebarSeparator />
-        <NavUser user={data.user} />
+        <NavUser />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )
 }
-

@@ -68,8 +68,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
       // Default fallback UI
       return (
-        <div className="flex items-center justify-center min-h-screen p-4">
-          <div className="max-w-md w-full">
+        <div className="flex min-h-[50vh] flex-1 items-center justify-center p-4">
+          <div className="w-full max-w-md">
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Something went wrong</AlertTitle>

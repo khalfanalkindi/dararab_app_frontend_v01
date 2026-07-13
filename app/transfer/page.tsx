@@ -1,29 +1,32 @@
 "use client"
 
-import Link from "next/link"
+import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AppSidebar } from "@/components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { MultiSelectProducts } from "@/components/multi-select-products"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { Progress } from "@/components/ui/progress"
+import { TableSkeleton } from "@/components/table-skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { toast } from "sonner"
 import { API_URL } from "@/lib/config"
 
 type Product = {
@@ -68,6 +71,12 @@ export default function ProductTransferPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [hasRequested, setHasRequested] = useState<boolean>(false)
   const [isSavingAll, setIsSavingAll] = useState<boolean>(false)
+  const [saveProgress, setSaveProgress] = useState<{
+    mode: "bulk" | "individual" | null
+    current: number
+    total: number
+    label: string
+  }>({ mode: null, current: 0, total: 0, label: "" })
 
   const [products, setProducts] = useState<Product[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -137,66 +146,7 @@ export default function ProductTransferPage() {
     }
   }, [])
 
-  // Exponential backoff retry utility
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        if (response.ok) {
-          return response
-        }
-        
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response
-        }
-        
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  useEffect(() => {
+useEffect(() => {
     setMounted(true)
     
     if (typeof window === "undefined") return
@@ -347,7 +297,7 @@ export default function ProductTransferPage() {
         if (process.env.NODE_ENV !== "production") {
           console.warn("No access token available for fetchLookups")
         }
-        toast({ title: "Error", description: "Authentication required. Please log in again.", variant: "destructive" })
+        toast.error("Error", { description: "Authentication required. Please log in again." })
         return
       }
       
@@ -357,7 +307,7 @@ export default function ProductTransferPage() {
       }
       
       const wRes = await fetchWithRetry(
-        `${API_URL}/inventory/warehouses/?page_size=1000`,
+        `${API_URL}/inventory/warehouses/?page_size=100`,
         { headers, signal: signal || abortControllerRef.current?.signal },
       )
       
@@ -388,7 +338,7 @@ export default function ProductTransferPage() {
       if (process.env.NODE_ENV !== "production") {
       console.error("Lookup fetch failed", e)
       }
-      toast({ title: "Error", description: "Failed to load warehouses", variant: "destructive" })
+      toast.error("Error", { description: "Failed to load warehouses" })
     }
   }
 
@@ -400,11 +350,7 @@ export default function ProductTransferPage() {
 
     // Validate warehouses are different
     if (fromWarehouseId === toWarehouseId) {
-      toast({ 
-        title: "Error", 
-        description: "From and To warehouses must be different", 
-        variant: "destructive" 
-      })
+      toast.error("Error", { description: "From and To warehouses must be different" })
         return
     }
 
@@ -456,7 +402,7 @@ export default function ProductTransferPage() {
       if (process.env.NODE_ENV !== "production") {
         console.error("Fetch transfer data failed", e)
       }
-      toast({ title: "Error", description: "Failed to load inventory data", variant: "destructive" })
+      toast.error("Error", { description: "Failed to load inventory data" })
       setTransferRows([])
     } finally {
       setIsLoading(false)
@@ -466,22 +412,22 @@ export default function ProductTransferPage() {
   // Handle search button click
   const handleSearch = () => {
     if (selectedProductIds.length === 0) {
-      toast({ title: "Error", description: "Please select at least one product", variant: "destructive" })
+      toast.error("Error", { description: "Please select at least one product" })
         return
     }
     
     if (!fromWarehouseId) {
-      toast({ title: "Error", description: "Please select From warehouse", variant: "destructive" })
+      toast.error("Error", { description: "Please select From warehouse" })
       return
     }
     
     if (!toWarehouseId) {
-      toast({ title: "Error", description: "Please select To warehouse", variant: "destructive" })
+      toast.error("Error", { description: "Please select To warehouse" })
       return
     }
     
     if (fromWarehouseId === toWarehouseId) {
-      toast({ title: "Error", description: "From and To warehouses must be different", variant: "destructive" })
+      toast.error("Error", { description: "From and To warehouses must be different" })
         return
     }
     
@@ -508,11 +454,7 @@ export default function ProductTransferPage() {
     
     // Validate: transfer quantity must be <= from quantity
     if (numValue > row.fromQuantity) {
-      toast({ 
-        title: "Error", 
-        description: `Transfer quantity cannot exceed available quantity (${row.fromQuantity})`, 
-        variant: "destructive" 
-      })
+      toast.error("Error", { description: "Transfer quantity cannot exceed available quantity (${row.fromQuantity})" })
         return
     }
     
@@ -522,180 +464,278 @@ export default function ProductTransferPage() {
     ))
   }
 
-  // Save all transfers
+  // Save all transfers — prefer bulk endpoint; fall back to per-item with progress
   const handleSaveAll = async () => {
     if (!fromWarehouseId || !toWarehouseId || transferRows.length === 0) {
       return
     }
 
-    // Validate all transfer quantities
-    const invalidRows = transferRows.filter(row => {
+    const invalidRows = transferRows.filter((row) => {
       const transferQty = transferQuantities[row.productId] || 0
       return transferQty > 0 && transferQty > row.fromQuantity
     })
 
     if (invalidRows.length > 0) {
-      toast({ 
-        title: "Error", 
-        description: "Some transfer quantities exceed available inventory", 
-        variant: "destructive" 
-      })
+      toast.error("Error", { description: "Some transfer quantities exceed available inventory" })
       return
     }
 
-    // Filter rows with transfer quantity > 0
-    const rowsToTransfer = transferRows.filter(row => {
+    const rowsToTransfer = transferRows.filter((row) => {
       const transferQty = transferQuantities[row.productId] || 0
       return transferQty > 0
     })
 
     if (rowsToTransfer.length === 0) {
-      toast({ title: "Error", description: "Please enter transfer quantities", variant: "destructive" })
+      toast.error("Error", { description: "Please enter transfer quantities" })
       return
     }
 
+    const transfers = rowsToTransfer.map((row) => ({
+      product_id: row.productId,
+      from_warehouse_id: fromWarehouseId,
+      to_warehouse_id: toWarehouseId,
+      quantity: transferQuantities[row.productId] || 0,
+      shipping_cost: 0,
+      transfer_date: new Date().toISOString().split("T")[0],
+    }))
+
+    const total = transfers.length
     setIsSavingAll(true)
-    
-    try {
-      // Prepare bulk transfer data
-      const transfers = rowsToTransfer.map(row => ({
-        product_id: row.productId,
-        from_warehouse_id: fromWarehouseId,
-        to_warehouse_id: toWarehouseId,
-        quantity: transferQuantities[row.productId] || 0,
-      }))
+    setSaveProgress({
+      mode: "bulk",
+      current: 0,
+      total,
+      label: `Bulk transfer: preparing ${total} item${total === 1 ? "" : "s"}…`,
+    })
+
+    const runIndividualFallback = async (reason: string) => {
+      setSaveProgress({
+        mode: "individual",
+        current: 0,
+        total,
+        label: `Individual transfer (fallback): 0 of ${total}`,
+      })
+      toast.success("Using individual transfers", { description: "${reason} Falling back to one request per product." })
 
       let successCount = 0
       let failedCount = 0
-      let useBulk = true
+      const errorMessages: string[] = []
 
-      // Try bulk transfer API first
-      try {
-        const res = await fetchWithRetry(`${API_URL}/inventory/transfers/bulk/`, {
-        method: "POST",
-        headers: authHeaders,
-          body: JSON.stringify({ transfers }),
-        signal: abortControllerRef.current?.signal
+      for (let i = 0; i < transfers.length; i++) {
+        const transfer = transfers[i]
+        setSaveProgress({
+          mode: "individual",
+          current: i,
+          total,
+          label: `Individual transfer (fallback): ${i} of ${total}`,
+        })
+
+        try {
+          const transferPayload = {
+            product: transfer.product_id,
+            from_warehouse: transfer.from_warehouse_id,
+            to_warehouse: transfer.to_warehouse_id,
+            quantity: transfer.quantity,
+            shipping_cost: 0,
+            transfer_date: transfer.transfer_date,
+          }
+
+          const res = await fetchWithRetry(`${API_URL}/inventory/transfers/`, {
+            method: "POST",
+            headers: authHeaders,
+            body: JSON.stringify(transferPayload),
+            signal: abortControllerRef.current?.signal,
+          })
+
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ detail: "Unknown error" }))
+            throw new Error(
+              typeof errorData.detail === "string"
+                ? errorData.detail
+                : JSON.stringify(errorData.detail || errorData) || `Transfer failed (${res.status})`,
+            )
+          }
+          successCount += 1
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") throw err
+          failedCount += 1
+          errorMessages.push(err instanceof Error ? err.message : "Unknown error")
+        }
+
+        setSaveProgress({
+          mode: "individual",
+          current: i + 1,
+          total,
+          label: `Individual transfer (fallback): ${i + 1} of ${total}`,
+        })
+      }
+
+      return { successCount, failedCount, errorMessages, mode: "individual" as const }
+    }
+
+    try {
+      let successCount = 0
+      let failedCount = 0
+      let mode: "bulk" | "individual" = "bulk"
+      let errorMessages: string[] = []
+
+      setSaveProgress({
+        mode: "bulk",
+        current: Math.max(1, Math.floor(total * 0.3)),
+        total,
+        label: `Bulk transfer: sending ${total} item${total === 1 ? "" : "s"}…`,
       })
 
-        // Check for 404 first (endpoint doesn't exist)
+      let useBulk = true
+      try {
+        const res = await fetchWithRetry(`${API_URL}/inventory/transfers/bulk/`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ transfers }),
+          signal: abortControllerRef.current?.signal,
+        })
+
         if (res.status === 404) {
-          // Bulk endpoint doesn't exist, fall back to individual transfers
           useBulk = false
-        } else if (res.ok) {
+        } else if (res.status === 201 || res.status === 207 || res.ok) {
           const ct = res.headers.get("content-type") || ""
           if (ct.includes("application/json")) {
             const data = await res.json()
-            successCount = data.success_count || rowsToTransfer.length
-            failedCount = data.failed_count || 0
+            const succeeded = Array.isArray(data.succeeded) ? data.succeeded : []
+            const failedRows = Array.isArray(data.failed) ? data.failed : []
+            successCount =
+              typeof data.success_count === "number"
+                ? data.success_count
+                : succeeded.length || total
+            failedCount =
+              typeof data.failed_count === "number" ? data.failed_count : failedRows.length
+            if (failedRows.length) {
+              errorMessages = failedRows.map(
+                (row: { id?: number | null; reason?: string; index?: number }, idx: number) => {
+                  const label =
+                    row.id != null
+                      ? `Product ${row.id}`
+                      : typeof row.index === "number"
+                        ? `Item ${row.index + 1}`
+                        : `Item ${idx + 1}`
+                  return `${label}: ${row.reason || "Unknown error"}`
+                },
+              )
+            } else if (Array.isArray(data.errors) && data.errors.length) {
+              // Legacy shape fallback
+              errorMessages = data.errors.map(
+                (err: { index?: number; errors?: unknown }, idx: number) => {
+                  const n = typeof err?.index === "number" ? err.index + 1 : idx + 1
+                  return `Item ${n}: ${JSON.stringify(err.errors ?? err)}`
+                },
+              )
+            }
           } else {
-            // Non-JSON response but OK status
-            successCount = rowsToTransfer.length
+            successCount = total
             failedCount = 0
           }
+          mode = "bulk"
+          setSaveProgress({
+            mode: "bulk",
+            current: total,
+            total,
+            label: `Bulk transfer: ${successCount} of ${total} completed`,
+          })
         } else {
-          // Other error status - read error message but don't throw yet
+          // All-failed bulk responses often return 400 with succeeded/failed body
+          const ct = res.headers.get("content-type") || ""
+          if (ct.includes("application/json")) {
+            const data = await res.json().catch(() => null)
+            if (data && (Array.isArray(data.failed) || Array.isArray(data.succeeded))) {
+              const succeeded = Array.isArray(data.succeeded) ? data.succeeded : []
+              const failedRows = Array.isArray(data.failed) ? data.failed : []
+              successCount =
+                typeof data.success_count === "number" ? data.success_count : succeeded.length
+              failedCount =
+                typeof data.failed_count === "number" ? data.failed_count : failedRows.length
+              errorMessages = failedRows.map(
+                (row: { id?: number | null; reason?: string }, idx: number) =>
+                  `${row.id != null ? `Product ${row.id}` : `Item ${idx + 1}`}: ${row.reason || "Unknown error"}`,
+              )
+              mode = "bulk"
+              setSaveProgress({
+                mode: "bulk",
+                current: total,
+                total,
+                label: `Bulk transfer: ${successCount} of ${total} completed`,
+              })
+            } else {
+              const errorMessage =
+                (data && (data.detail || data.message)) || `Bulk transfer failed (${res.status})`
+              throw new Error(
+                typeof errorMessage === "string" ? errorMessage : JSON.stringify(errorMessage),
+              )
+            }
+          } else {
           const text = await res.text().catch(() => "")
           let errorMessage = `Bulk transfer failed (${res.status})`
           try {
             const errorData = JSON.parse(text)
-          errorMessage = errorData.detail || errorData.message || errorMessage
-          if (errorData.errors) {
-            errorMessage += `: ${JSON.stringify(errorData.errors)}`
-          }
-        } catch {
-            if (text) {
-              errorMessage += `: ${text.slice(0, 200)}`
+            errorMessage = errorData.detail || errorData.message || errorMessage
+            if (errorData.errors) {
+              errorMessage += `: ${JSON.stringify(errorData.errors)}`
             }
+          } catch {
+            if (text) errorMessage += `: ${text.slice(0, 200)}`
+          }
+          throw new Error(errorMessage)
+          }
         }
-        throw new Error(errorMessage)
-      }
       } catch (e) {
-        // Check if it's a 404 error (endpoint doesn't exist)
-        if (e instanceof Error && (e.message.includes('404') || e.message.includes('Not Found'))) {
-          useBulk = false
-        } else if (e instanceof TypeError && e.message.includes('fetch')) {
-          // Network error, try fallback
+        if (e instanceof Error && e.name === "AbortError") throw e
+        const isMissingEndpoint =
+          e instanceof Error &&
+          (e.message.includes("404") || e.message.toLowerCase().includes("not found"))
+        const isNetwork =
+          e instanceof TypeError ||
+          (e instanceof Error && /failed to fetch|network/i.test(e.message))
+
+        if (isMissingEndpoint || isNetwork) {
           useBulk = false
         } else {
-          // Re-throw other errors
           throw e
         }
       }
 
-      // Fallback to individual transfers if bulk endpoint doesn't exist
       if (!useBulk) {
-        const results = await Promise.allSettled(
-          transfers.map(async (transfer) => {
-            // Create transfer record
-            const transferPayload = {
-              product: transfer.product_id,
-              from_warehouse: transfer.from_warehouse_id,
-              to_warehouse: transfer.to_warehouse_id,
-              quantity: transfer.quantity,
-              shipping_cost: 0,
-              transfer_date: new Date().toISOString().split('T')[0],
-            }
-
-            const res = await fetchWithRetry(`${API_URL}/inventory/transfers/`, {
-              method: "POST",
-              headers: authHeaders,
-              body: JSON.stringify(transferPayload),
-        signal: abortControllerRef.current?.signal
-      })
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ detail: "Unknown error" }))
-              throw new Error(errorData.detail || `Transfer failed (${res.status})`)
-            }
-
-            return await res.json()
-          })
+        const result = await runIndividualFallback(
+          "Bulk endpoint unavailable (404) or unreachable.",
         )
-
-        successCount = results.filter(r => r.status === 'fulfilled').length
-        failedCount = results.filter(r => r.status === 'rejected').length
-
-        if (failedCount > 0) {
-          const errors = results
-            .filter(r => r.status === 'rejected')
-            .map(r => r.status === 'rejected' ? r.reason?.message || 'Unknown error' : '')
-            .join(', ')
-          
-          if (process.env.NODE_ENV !== "production") {
-            console.error("Transfer errors:", errors)
-          }
-        }
+        successCount = result.successCount
+        failedCount = result.failedCount
+        errorMessages = result.errorMessages
+        mode = "individual"
       }
 
       if (failedCount > 0) {
-        toast({ 
-          title: "Partial Success", 
-          description: `Transferred ${successCount} products. ${failedCount} failed.`,
-          variant: "destructive"
-        })
+        toast.error(mode === "bulk" ? `Bulk transfer: ${successCount} of ${total}` : `Individual transfer (fallback): ${successCount} of ${total}`, { description: "${failedCount} failed." })
       } else {
-        toast({ 
-          title: "Success", 
-          description: `Successfully transferred ${successCount} product${successCount === 1 ? '' : 's'}` 
+        toast.success("Transfer complete", {
+          description:
+            mode === "bulk"
+              ? `Moved ${successCount} item${successCount === 1 ? "" : "s"} between warehouses`
+              : `Moved ${successCount} item${successCount === 1 ? "" : "s"} (one request per product)`,
+          duration: 4500,
         })
       }
 
-      // Refresh data
       await fetchTransferData()
-      
-      // Clear transfer quantities
       setTransferQuantities({})
-      setTransferRows(prev => prev.map(r => ({ ...r, transferQuantity: 0 })))
+      setTransferRows((prev) => prev.map((r) => ({ ...r, transferQuantity: 0 })))
     } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        setIsSavingAll(false)
+      if (e instanceof Error && e.name === "AbortError") {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save transfers"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast.error("Error", { description: msg })
     } finally {
       setIsSavingAll(false)
+      setSaveProgress({ mode: null, current: 0, total: 0, label: "" })
     }
   }
 
@@ -724,7 +764,7 @@ export default function ProductTransferPage() {
       // Ensure we have a fresh token
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
-        toast({ title: "Error", description: "Authentication required. Please log in again.", variant: "destructive" })
+        toast.error("Error", { description: "Authentication required. Please log in again." })
         return []
       }
       
@@ -753,7 +793,7 @@ export default function ProductTransferPage() {
       // Ensure we have a fresh token
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
-        toast({ title: "Error", description: "Authentication required. Please log in again.", variant: "destructive" })
+        toast.error("Error", { description: "Authentication required. Please log in again." })
         return []
       }
       
@@ -878,26 +918,13 @@ export default function ProductTransferPage() {
 
   return (
     <ErrorBoundary>
-    <SidebarProvider>
-      <AppSidebar />
+      <DocumentTitle title="Transfer" />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                    <BreadcrumbPage>Product Transfer</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Product Transfer" }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1037,111 +1064,114 @@ export default function ProductTransferPage() {
 
                 {/* Save All Changes Section */}
               {hasRequested && (
-                <div className="border-t bg-background px-4 py-3 flex justify-end">
-                    <Button 
-                      variant="default" 
-                      disabled={isLoading || isSavingAll} 
+                <div className="border-t bg-background px-4 py-3 space-y-3">
+                  {isSavingAll && saveProgress.mode && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                        <span>{saveProgress.label}</span>
+                        <span>
+                          {saveProgress.total > 0
+                            ? `${Math.min(saveProgress.current, saveProgress.total)}/${saveProgress.total}`
+                            : ""}
+                        </span>
+                      </div>
+                      <Progress
+                        value={
+                          saveProgress.total > 0
+                            ? Math.round((saveProgress.current / saveProgress.total) * 100)
+                            : 10
+                        }
+                      />
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <Button
+                      variant="default"
+                      disabled={isLoading || isSavingAll}
                       onClick={() => void handleSaveAll()}
                     >
                       {isSavingAll ? "Transferring..." : "Save All Changes"}
-                  </Button>
+                    </Button>
+                  </div>
                 </div>
               )}
 
-                {/* Results Grid */}
+              {/* Results Grid */}
               <div className="p-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                      <thead>
-                      <tr className="text-sm border-b">
-                          <th className="text-left font-medium p-2">Products</th>
-                          <th className="text-left font-medium p-2">From</th>
-                          <th className="text-left font-medium p-2">To</th>
-                          <th className="text-left font-medium p-2">Transfer</th>
-                      </tr>
-                    </thead>
-                      <tbody>
-                      {!hasRequested ? (
-                        <tr>
-                            <td colSpan={4} className="py-8 text-center text-muted-foreground">
-                              Select products and warehouses, then click Search to load data
-                          </td>
-                        </tr>
-                      ) : isLoading ? (
-                          Array.from({ length: 5 }).map((_, index) => (
-                            <tr key={`skeleton-${index}`} className="border-b last:border-0">
-                              <td className="p-2">
-                                <Skeleton className="h-5 w-32" />
-                              </td>
-                              <td className="p-2">
-                                <Skeleton className="h-5 w-20" />
-                              </td>
-                              <td className="p-2">
-                                <Skeleton className="h-5 w-20" />
-                              </td>
-                              <td className="p-2">
-                                <Skeleton className="h-8 w-24" />
-                          </td>
-                        </tr>
-                          ))
-                        ) : transferRows.length === 0 ? (
-                        <tr>
-                            <td colSpan={4} className="py-8 text-center">
-                              No products selected
-                          </td>
-                        </tr>
-                        ) : (
-                          transferRows.map((row) => {
-                            const transferQty = transferQuantities[row.productId] || 0
-                            const isValid = transferQty <= row.fromQuantity
-                            const fromWarehouseName = getWarehouseName(fromWarehouseId) || `Warehouse ${fromWarehouseId}`
-                            const toWarehouseName = getWarehouseName(toWarehouseId) || `Warehouse ${toWarehouseId}`
-                            
-                              return (
-                              <tr key={row.productId} className="border-b last:border-0 hover:bg-muted/50">
-                                <td className="p-2 font-medium">{row.productName}</td>
-                                  <td className="p-2">
-                                  <div className="flex flex-col">
-                                    <span className="text-sm font-medium">{row.fromQuantity}</span>
-                                    <span className="text-xs text-muted-foreground">{fromWarehouseName}</span>
-                                  </div>
-                                  </td>
-                                <td className="p-2">
-                                  <div className="flex flex-col">
-                                    <span className="text-sm font-medium">{row.toQuantity}</span>
-                                    <span className="text-xs text-muted-foreground">{toWarehouseName}</span>
-                                    </div>
-                                  </td>
-                            <td className="p-2">
-                                <Input
-                                  type="number"
-                                    className={`h-8 w-24 ${!isValid && transferQty > 0 ? 'border-destructive' : ''}`}
-                                    value={transferQty}
-                                    onChange={(e) => handleTransferQuantityChange(row.productId, Number(e.target.value || 0))}
-                                    min="0"
-                                    max={row.fromQuantity}
-                                    step="1"
-                                    placeholder="0"
-                                  />
-                                  {!isValid && transferQty > 0 && (
-                                    <p className="text-xs text-destructive mt-1">
-                                      Max: {row.fromQuantity}
-                                    </p>
-                                  )}
-                            </td>
-                          </tr>
-                            )
-                          })
-                      )}
-                    </tbody>
-                  </table>
-                  </div>
-                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Products</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead>To</TableHead>
+                      <TableHead>Transfer</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {!hasRequested ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                          Select products and warehouses, then click Search to load data
+                        </TableCell>
+                      </TableRow>
+                    ) : isLoading ? (
+                      <TableSkeleton columns={4} rows={5} />
+                    ) : transferRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-8 text-center">
+                          No products selected
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      transferRows.map((row) => {
+                        const transferQty = transferQuantities[row.productId] || 0
+                        const isValid = transferQty <= row.fromQuantity
+                        const fromWarehouseName = getWarehouseName(fromWarehouseId) || `Warehouse ${fromWarehouseId}`
+                        const toWarehouseName = getWarehouseName(toWarehouseId) || `Warehouse ${toWarehouseId}`
+                        
+                        return (
+                          <TableRow key={row.productId}>
+                            <TableCell className="font-medium">{row.productName}</TableCell>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">{row.fromQuantity}</span>
+                                <span className="text-xs text-muted-foreground">{fromWarehouseName}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">{row.toQuantity}</span>
+                                <span className="text-xs text-muted-foreground">{toWarehouseName}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="number"
+                                className={`h-8 w-24 ${!isValid && transferQty > 0 ? 'border-destructive' : ''}`}
+                                value={transferQty}
+                                onChange={(e) => handleTransferQuantityChange(row.productId, Number(e.target.value || 0))}
+                                min="0"
+                                max={row.fromQuantity}
+                                step="1"
+                                placeholder="0"
+                              />
+                              {!isValid && transferQty > 0 && (
+                                <p className="text-xs text-destructive mt-1">
+                                  Max: {row.fromQuantity}
+                                </p>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </div>
         </div>
       </SidebarInset>
-    </SidebarProvider>
-    </ErrorBoundary>
+</ErrorBoundary>
   )
 }
