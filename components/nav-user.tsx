@@ -132,17 +132,20 @@ export function NavUser() {
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
+              tooltip={user.name}
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <Avatar className="h-8 w-8 rounded-lg">
+              <Avatar className="h-8 w-8 rounded-lg group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4">
                 {user.avatar ? <AvatarImage src={user.avatar} alt={user.name} /> : null}
-                <AvatarFallback className="rounded-lg">{initials(user.name)}</AvatarFallback>
+                <AvatarFallback className="rounded-lg text-[10px] group-data-[collapsible=icon]:text-[8px]">
+                  {initials(user.name)}
+                </AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-start text-sm leading-tight">
                 <span className="truncate font-semibold">{user.name}</span>
                 <span className="truncate text-xs">{user.email}</span>
               </div>
-              <ChevronsUpDown className="ms-auto size-4" />
+              <ChevronsUpDown className="ms-auto size-4 group-data-[collapsible=icon]:hidden" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent

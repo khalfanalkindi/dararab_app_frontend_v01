@@ -48,6 +48,9 @@ export function canAccessPath(
   if (!payload) return false
   if (payload.unrestricted) return true
 
+  // No page grants configured yet → fail-open (same spirit as empty Page table on BE)
+  if (!payload.permissions?.length) return true
+
   const exact = payload.permissions.find((p) => normalizePath(p.url) === normalized)
   if (exact?.[action]) return true
 

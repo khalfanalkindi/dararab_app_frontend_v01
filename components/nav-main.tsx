@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ChevronDown, type LucideIcon } from "lucide-react"
+import { ChevronRight, type LucideIcon } from "lucide-react"
 import { usePathname } from "next/navigation"
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -28,7 +28,8 @@ export type NavMainItem = {
 }
 
 export type NavMainGroup = {
-  label: string
+  /** Optional section heading; omit to avoid duplicate labels like "Publishing / Publishing". */
+  label?: string
   items: NavMainItem[]
 }
 
@@ -43,9 +44,9 @@ export function NavMain({ groups }: { groups: NavMainGroup[] }) {
 
   return (
     <>
-      {groups.map((group) => (
-        <SidebarGroup key={group.label}>
-          <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+      {groups.map((group, groupIndex) => (
+        <SidebarGroup key={group.label ?? `group-${groupIndex}`}>
+          {group.label ? <SidebarGroupLabel>{group.label}</SidebarGroupLabel> : null}
           <SidebarMenu>
             {group.items.map((item) => {
               const hasSubItems = Boolean(item.items && item.items.length > 0)
@@ -58,26 +59,16 @@ export function NavMain({ groups }: { groups: NavMainGroup[] }) {
                   <Collapsible
                     key={item.title}
                     defaultOpen={isActive}
-                    className="group/collapsible w-full"
+                    className="group/collapsible"
                   >
                     <SidebarMenuItem>
-                      <div className="flex w-full items-center">
-                        <SidebarMenuButton
-                          asChild
-                          tooltip={item.title}
-                          isActive={isItemActive}
-                          className="flex-1"
-                        >
-                          <Link href={item.url}>
-                            {item.icon && <item.icon />}
-                            <span>{item.title}</span>
-                          </Link>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton tooltip={item.title} isActive={isActive}>
+                          {item.icon && <item.icon />}
+                          <span>{item.title}</span>
+                          <ChevronRight className="ms-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden" />
                         </SidebarMenuButton>
-                        <CollapsibleTrigger className="inline-flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-sidebar-accent">
-                          <ChevronDown className="h-4 w-4 transition-transform duration-200 group-data-[state=closed]/collapsible:rotate-[-90deg]" />
-                          <span className="sr-only">Toggle {item.title}</span>
-                        </CollapsibleTrigger>
-                      </div>
+                      </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
                           {item.items?.map((subItem) => (

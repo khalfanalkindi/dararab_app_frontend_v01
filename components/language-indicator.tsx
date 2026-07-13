@@ -12,7 +12,6 @@ export function LanguageIndicator() {
     setLanguage(normalizeLanguage(localStorage.getItem(LANGUAGE_COOKIE)))
   }, [])
 
-  // Listen for language changes from the main language switcher
   React.useEffect(() => {
     const handleLanguageChange = () => {
       setLanguage(document.documentElement.lang)
@@ -36,13 +35,15 @@ export function LanguageIndicator() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" className="pointer-events-none">
-          <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-black text-white">
-            <SquareLibrary className="size-4" />
-          </div>
+        <SidebarMenuButton size="lg" className="pointer-events-none" tooltip="DarArab">
+          <SquareLibrary className="size-4 shrink-0" />
           <div className="grid flex-1 text-start text-sm leading-tight">
-            <span className="truncate font-semibold">{language === "en" ? "DarArab" : "دار عرب"}</span>
-            <span className="truncate text-xs">{language === "en" ? "Management System" : "نظام الإدارة"}</span>
+            <span className="truncate font-semibold">
+              {language === "en" ? "DarArab" : "دار عرب"}
+            </span>
+            <span className="truncate text-xs">
+              {language === "en" ? "Management System" : "نظام الإدارة"}
+            </span>
           </div>
         </SidebarMenuButton>
       </SidebarMenuItem>

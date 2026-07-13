@@ -6,6 +6,7 @@ import {
   Blocks,
   BookCopy,
   BookMarked,
+  FileText,
   LayoutDashboard,
   Settings2,
   ShoppingCart,
@@ -31,8 +32,8 @@ import { filterAdminNavByPermissions, filterNavByPermissions } from "@/lib/permi
 
 const data = {
   navGroups: [
+    // One-click access — Dashboard + POS
     {
-      label: "Operations",
       items: [
         {
           title: "Dashboard",
@@ -40,10 +41,16 @@ const data = {
           icon: LayoutDashboard,
           items: [] as { title: string; url: string }[],
         },
+        {
+          title: "Point of Sale",
+          url: "/pos",
+          icon: ShoppingCart,
+          items: [] as { title: string; url: string }[],
+        },
       ],
     },
+    // Sections: icon + title once, then children (no duplicate group label)
     {
-      label: "Publishing",
       items: [
         {
           title: "Publishing",
@@ -54,11 +61,6 @@ const data = {
             { title: "Project Contracts", url: "/projects-contracts" },
           ],
         },
-      ],
-    },
-    {
-      label: "Catalog",
-      items: [
         {
           title: "Catalog",
           url: "/products",
@@ -69,26 +71,15 @@ const data = {
             { title: "Transfer", url: "/transfer" },
           ],
         },
-      ],
-    },
-    {
-      label: "Sales",
-      items: [
         {
           title: "Sales",
-          url: "/pos",
-          icon: ShoppingCart,
+          url: "/invoices",
+          icon: FileText,
           items: [
-            { title: "Point of Sale", url: "/pos" },
             { title: "Invoices", url: "/invoices" },
             { title: "Outstanding Payment", url: "/outstanding-payment" },
           ],
         },
-      ],
-    },
-    {
-      label: "Insights",
-      items: [
         {
           title: "Reports",
           url: "/reports",

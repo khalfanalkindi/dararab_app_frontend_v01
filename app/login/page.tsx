@@ -22,6 +22,7 @@ import {
   persistLanguage,
 } from "@/lib/language"
 import { cacheUserData } from "@/lib/user-profile"
+import { ThemeToggleButton } from "@/components/theme-toggle"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -169,6 +170,7 @@ export default function LoginPage() {
       <DocumentTitle title="Login" />
       {/* Language Switcher — logical `end` mirrors to left in RTL */}
       <div className="absolute top-4 end-4 z-10 flex items-center gap-2 md:top-8 md:end-8">
+        <ThemeToggleButton />
         <Select value={language} onValueChange={handleLanguageChange}>
           <SelectTrigger
             className="w-[180px]"

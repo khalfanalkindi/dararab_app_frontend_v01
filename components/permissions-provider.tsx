@@ -61,7 +61,10 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
       return
     }
 
-    setLoading(true)
+    // Stale-while-revalidate: keep showing cached permissions during refresh.
+    if (!readCached()) {
+      setLoading(true)
+    }
     setError(null)
     try {
       const res = await fetch(`${API_URL}/auth/my-permissions/`, {
