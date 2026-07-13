@@ -66,7 +66,7 @@ export function NavMain({ groups }: { groups: NavMainGroup[] }) {
                         <SidebarMenuButton tooltip={item.title} isActive={isActive}>
                           {item.icon && <item.icon />}
                           <span>{item.title}</span>
-                          <ChevronRight className="ms-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden" />
+                          <ChevronRight className="ms-auto transition-transform duration-200 rtl:rotate-180 group-data-[state=open]/collapsible:rotate-90 group-data-[state=open]/collapsible:rtl:-rotate-90 group-data-[collapsible=icon]:hidden" />
                         </SidebarMenuButton>
                       </CollapsibleTrigger>
                       <CollapsibleContent>

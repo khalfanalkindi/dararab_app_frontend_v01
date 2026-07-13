@@ -36,7 +36,7 @@ export default async function RootLayout({
     <html lang={lang} dir={dir} suppressHydrationWarning>
       <body>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <LanguageProvider>
+          <LanguageProvider initialLanguage={lang}>
             <AuthCheck>
               <AppShell>{children}</AppShell>
               <Toaster />

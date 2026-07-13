@@ -190,10 +190,9 @@
   }
 
   /*
-   * Do NOT remap physical left/right inset utilities under RTL.
-   * shadcn Sidebar positions with an explicit side prop; remapping left/right
-   * double-flips the rail and leaves icons mis-seated in Arabic.
-   * Prefer logical start/end on sidebar chrome (already used).
+   * Sidebar chrome uses physical left/right for the `side` prop (shadcn).
+   * Do not remap .left-* / .right-* under RTL — that double-flips the rail.
+   * Prefer logical ms/me, ps/pe, start/end for padding/margins in content UI.
    */
 
   [dir="rtl"] .text-left {

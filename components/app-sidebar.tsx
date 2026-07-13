@@ -11,7 +11,7 @@ import {
   Settings2,
   ShoppingCart,
 } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 
 import { NavMain, type NavMainGroup } from "./nav-main"
 import { NavProjects } from "./nav-projects"
@@ -27,6 +27,7 @@ import {
 import { LanguageSwitcher } from "./language-switcher"
 import { LanguageIndicator } from "./language-indicator"
 import { ThemeToggle } from "./theme-toggle"
+import { useLanguage } from "./language-context"
 import { usePermissionsOptional } from "@/components/permissions-provider"
 import { filterAdminNavByPermissions, filterNavByPermissions } from "@/lib/permissions"
 
@@ -124,8 +125,9 @@ const data = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const [sidebarSide, setSidebarSide] = useState<"left" | "right">("left")
+  const { dir } = useLanguage()
   const perms = usePermissionsOptional()
+  const sidebarSide = dir === "rtl" ? "right" : "left"
 
   const navGroups = useMemo(() => {
     return data.navGroups
@@ -140,26 +142,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     () => filterAdminNavByPermissions(data.projects, perms?.permissions ?? null),
     [perms?.permissions],
   )
-
-  useEffect(() => {
-    const handleDirChange = () => {
-      const isRtl = document.documentElement.dir === "rtl"
-      setSidebarSide(isRtl ? "right" : "left")
-    }
-
-    handleDirChange()
-
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === "dir") {
-          handleDirChange()
-        }
-      })
-    })
-
-    observer.observe(document.documentElement, { attributes: true })
-    return () => observer.disconnect()
-  }, [])
 
   return (
     <Sidebar collapsible="icon" side={sidebarSide} {...props}>

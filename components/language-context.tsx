@@ -1,7 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { LANGUAGE_COOKIE, languageDir, normalizeLanguage, type AppLanguage } from "@/lib/language"
+import {
+  LANGUAGE_COOKIE,
+  languageDir,
+  normalizeLanguage,
+  type AppLanguage,
+} from "@/lib/language"
 
 type LanguageContextValue = {
   language: AppLanguage
@@ -15,8 +20,14 @@ const LanguageContext = React.createContext<LanguageContextValue>({
   dir: "ltr",
 })
 
-export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguage] = React.useState<AppLanguage>("en")
+export function LanguageProvider({
+  children,
+  initialLanguage = "en",
+}: {
+  children: React.ReactNode
+  initialLanguage?: AppLanguage
+}) {
+  const [language, setLanguage] = React.useState<AppLanguage>(initialLanguage)
 
   React.useEffect(() => {
     const sync = () => {

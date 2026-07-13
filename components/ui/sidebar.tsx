@@ -234,14 +234,15 @@ const Sidebar = React.forwardRef<
         />
         <div
           className={cn(
-            "duration-200 fixed inset-y-0 z-10 hidden h-svh w-[--sidebar-width] transition-[inset-inline-start,inset-inline-end,width] ease-linear md:flex",
-            // Logical inset: correct in LTR and RTL without global left/right remaps.
+            "duration-200 fixed inset-y-0 z-10 hidden h-svh w-[--sidebar-width] transition-[left,right,width] ease-linear md:flex",
+            // `side` is physical left/right. Do not use start/end here —
+            // under dir=rtl, end-0 maps to the left edge and mis-seats the rail.
             side === "left"
-              ? "start-0 group-data-[collapsible=offcanvas]:[inset-inline-start:calc(var(--sidebar-width)*-1)]"
-              : "end-0 group-data-[collapsible=offcanvas]:[inset-inline-end:calc(var(--sidebar-width)*-1)]",
+              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
+              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]"
-              : "group-data-[collapsible=icon]:w-[--sidebar-width-icon] group-data-[side=left]:border-e group-data-[side=right]:border-s",
+              : "group-data-[collapsible=icon]:w-[--sidebar-width-icon] group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className
           )}
           {...props}
@@ -278,7 +279,7 @@ const SidebarTrigger = React.forwardRef<
       }}
       {...props}
     >
-      <PanelLeft />
+      <PanelLeft className="rtl:rotate-180" />
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   )
@@ -301,13 +302,14 @@ const SidebarRail = React.forwardRef<
       title="Toggle Sidebar"
       className={cn(
         "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex",
-        "group-data-[side=left]:-end-4 group-data-[side=left]:translate-x-1/2 rtl:group-data-[side=left]:-translate-x-1/2",
-        "group-data-[side=right]:start-0 group-data-[side=right]:-translate-x-1/2 rtl:group-data-[side=right]:translate-x-1/2",
+        "ltr:-translate-x-1/2 rtl:translate-x-1/2",
+        "group-data-[side=left]:-right-4",
+        "group-data-[side=right]:left-0",
         "[[data-side=left]_&]:cursor-w-resize [[data-side=right]_&]:cursor-e-resize",
         "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
         "group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:start-full group-data-[collapsible=offcanvas]:hover:bg-sidebar",
-        "[[data-side=left][data-collapsible=offcanvas]_&]:-end-2",
-        "[[data-side=right][data-collapsible=offcanvas]_&]:-start-2",
+        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
+        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
         className
       )}
       {...props}
