@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { AuthCheck } from "@/components/auth-check"
 import { AppShell } from "@/components/app-shell"
 import { ThemeProvider } from "@/components/theme-provider"
+import { LanguageProvider } from "@/components/language-context"
 import {
   LANGUAGE_COOKIE,
   languageDir,
@@ -35,10 +36,12 @@ export default async function RootLayout({
     <html lang={lang} dir={dir} suppressHydrationWarning>
       <body>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <AuthCheck>
-            <AppShell>{children}</AppShell>
-            <Toaster />
-          </AuthCheck>
+          <LanguageProvider>
+            <AuthCheck>
+              <AppShell>{children}</AppShell>
+              <Toaster />
+            </AuthCheck>
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

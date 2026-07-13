@@ -135,9 +135,9 @@ export function NavUser() {
               tooltip={user.name}
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <Avatar className="h-8 w-8 rounded-lg group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4">
+              <Avatar className="h-8 w-8 rounded-lg">
                 {user.avatar ? <AvatarImage src={user.avatar} alt={user.name} /> : null}
-                <AvatarFallback className="rounded-lg text-[10px] group-data-[collapsible=icon]:text-[8px]">
+                <AvatarFallback className="rounded-lg text-[10px]">
                   {initials(user.name)}
                 </AvatarFallback>
               </Avatar>
@@ -145,7 +145,7 @@ export function NavUser() {
                 <span className="truncate font-semibold">{user.name}</span>
                 <span className="truncate text-xs">{user.email}</span>
               </div>
-              <ChevronsUpDown className="ms-auto size-4 group-data-[collapsible=icon]:hidden" />
+              <ChevronsUpDown className="ms-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent

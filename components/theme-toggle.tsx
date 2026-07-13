@@ -43,10 +43,12 @@ export function ThemeToggle() {
             <SidebarMenuButton
               size="lg"
               tooltip="Theme"
-              className="relative data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <Sun className="size-4 shrink-0 dark:hidden" />
-              <Moon className="hidden size-4 shrink-0 dark:block" />
+              <span className="relative flex size-4 shrink-0 items-center justify-center">
+                <Sun className="size-4 dark:hidden" />
+                <Moon className="absolute size-4 hidden dark:block" />
+              </span>
               <div className="grid flex-1 text-start text-sm leading-tight">
                 <span className="truncate font-semibold">Theme</span>
                 <span className="truncate text-xs capitalize text-muted-foreground">
@@ -57,7 +59,13 @@ export function ThemeToggle() {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="w-[--radix-dropdown-menu-trigger-width] min-w-40 rounded-lg"
-            side={isMobile ? "bottom" : "right"}
+            side={
+              isMobile
+                ? "bottom"
+                : typeof document !== "undefined" && document.documentElement.dir === "rtl"
+                  ? "left"
+                  : "right"
+            }
             align="end"
             sideOffset={4}
           >

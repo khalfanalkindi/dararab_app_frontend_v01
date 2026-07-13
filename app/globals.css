@@ -189,54 +189,12 @@
     padding-left: 2.5rem;
   }
 
-  [dir="rtl"] .left-0 {
-    left: unset;
-    right: 0;
-  }
-  [dir="rtl"] .right-0 {
-    right: unset;
-    left: 0;
-  }
-  [dir="rtl"] .left-1 {
-    left: unset;
-    right: 0.25rem;
-  }
-  [dir="rtl"] .right-1 {
-    right: unset;
-    left: 0.25rem;
-  }
-  [dir="rtl"] .left-2 {
-    left: unset;
-    right: 0.5rem;
-  }
-  [dir="rtl"] .right-2 {
-    right: unset;
-    left: 0.5rem;
-  }
-  [dir="rtl"] .left-2\.5 {
-    left: unset;
-    right: 0.625rem;
-  }
-  [dir="rtl"] .right-2\.5 {
-    right: unset;
-    left: 0.625rem;
-  }
-  [dir="rtl"] .left-3 {
-    left: unset;
-    right: 0.75rem;
-  }
-  [dir="rtl"] .right-3 {
-    right: unset;
-    left: 0.75rem;
-  }
-  [dir="rtl"] .left-4 {
-    left: unset;
-    right: 1rem;
-  }
-  [dir="rtl"] .right-4 {
-    right: unset;
-    left: 1rem;
-  }
+  /*
+   * Do NOT remap physical left/right inset utilities under RTL.
+   * shadcn Sidebar positions with an explicit side prop; remapping left/right
+   * double-flips the rail and leaves icons mis-seated in Arabic.
+   * Prefer logical start/end on sidebar chrome (already used).
+   */
 
   [dir="rtl"] .text-left {
     text-align: right;
