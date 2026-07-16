@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table"
 import { FileText, Trash2, Receipt, Loader2, FileSpreadsheet, MoreHorizontal } from "lucide-react"
 import { format } from "date-fns"
+import { useLanguage } from "@/components/language-context"
 
 import type { Invoice, RowAction } from "./types"
 
@@ -61,6 +62,8 @@ export function InvoiceTable({
   onExportExcel,
   onDeleteClick,
 }: InvoiceTableProps) {
+  const { t } = useLanguage()
+
   return (
     <>
       {selectedTotal > 0 && (
@@ -87,14 +90,14 @@ export function InvoiceTable({
                     checked={invoices.length > 0 && invoices.every((invoice) => invoice.selected)}
                   />
                 </TableHead>
-                <TableHead>Invoice #</TableHead>
-                <TableHead>Composite ID</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Warehouse</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="text-right w-[1%] whitespace-nowrap">Actions</TableHead>
+                <TableHead>{t("invoices.table.invoiceNumber")}</TableHead>
+                <TableHead>{t("invoices.table.compositeId")}</TableHead>
+                <TableHead>{t("invoices.table.customer")}</TableHead>
+                <TableHead>{t("invoices.table.warehouse")}</TableHead>
+                <TableHead>{t("invoices.table.type")}</TableHead>
+                <TableHead>{t("invoices.table.date")}</TableHead>
+                <TableHead className="text-right">{t("invoices.table.amount")}</TableHead>
+                <TableHead className="text-right w-[1%] whitespace-nowrap">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -103,7 +106,7 @@ export function InvoiceTable({
               ) : invoices.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="py-8 text-center">
-                    No invoices found
+                    {t("invoices.table.empty")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -124,20 +127,19 @@ export function InvoiceTable({
                       />
                     </TableCell>
                     <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
-                    <TableCell className="font-mono text-sm">{invoice.composite_id || "N/A"}</TableCell>
-                    <TableCell>{invoice.customer?.institution_name || "No Customer"}</TableCell>
-                    <TableCell>{invoice.warehouse?.name_en || "No Warehouse"}</TableCell>
+                    <TableCell className="font-mono text-sm">{invoice.composite_id || t("common.na")}</TableCell>
+                    <TableCell>{invoice.customer?.institution_name || t("outstanding.table.noCustomer")}</TableCell>
+                    <TableCell>{invoice.warehouse?.name_en || t("outstanding.table.noWarehouse")}</TableCell>
                     <TableCell>
                       <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                        {invoice.invoice_type?.display_name_en || "No Type"}
+                        {invoice.invoice_type?.display_name_en || t("common.na")}
                       </span>
                     </TableCell>
                     <TableCell>
-                      {invoice.created_at ? format(new Date(invoice.created_at), "PPP") : "No Date"}
+                      {invoice.created_at ? format(new Date(invoice.created_at), "PPP") : t("outstanding.table.noDate")}
                     </TableCell>
                     <TableCell className="text-right">{(invoice.total_amount || 0).toFixed(3)} $</TableCell>
                     <TableCell className="text-right">
-                      {/* Mobile / tablet: single Actions menu */}
                       <div className="lg:hidden inline-flex justify-end">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -152,26 +154,26 @@ export function InvoiceTable({
                               ) : (
                                 <>
                                   <MoreHorizontal className="h-4 w-4 mr-1" />
-                                  Actions
+                                  {t("common.actions")}
                                 </>
                               )}
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                             <DropdownMenuItem
                               disabled={viewLoading}
                               onClick={() => onViewInvoice(invoice)}
                             >
                               <FileText className="h-4 w-4 mr-2" />
-                              View
+                              {t("invoices.table.view")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={receiptLoading}
                               onClick={() => onViewReceipt(invoice)}
                             >
                               <Receipt className="h-4 w-4 mr-2" />
-                              Receipt
+                              {t("invoices.table.receipt")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={exportLoading}
@@ -187,13 +189,12 @@ export function InvoiceTable({
                               onClick={() => onDeleteClick(invoice)}
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
+                              {t("common.delete")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
 
-                      {/* Desktop: full action buttons */}
                       <div className="hidden lg:inline-flex flex-nowrap items-center justify-end gap-1">
                         <Button
                           variant="outline"
@@ -207,7 +208,7 @@ export function InvoiceTable({
                           ) : (
                             <>
                               <FileText className="h-4 w-4 mr-1" />
-                              View
+                              {t("invoices.table.view")}
                             </>
                           )}
                         </Button>
@@ -224,7 +225,7 @@ export function InvoiceTable({
                           ) : (
                             <>
                               <Receipt className="h-4 w-4 mr-1" />
-                              Receipt
+                              {t("invoices.table.receipt")}
                             </>
                           )}
                         </Button>
@@ -249,8 +250,8 @@ export function InvoiceTable({
                           variant="destructive"
                           size="icon"
                           className="h-8 w-8 shrink-0"
-                          title="Delete invoice"
-                          aria-label="Delete invoice"
+                          title={t("common.delete")}
+                          aria-label={t("common.delete")}
                           disabled={deleteLoading}
                           onClick={() => onDeleteClick(invoice)}
                         >

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ReceiptContent, type ReceiptItem } from "@/components/receipt/ReceiptContent"
+import { useLanguage } from "@/components/language-context"
 import type {
   CartItem,
   Customer,
@@ -105,6 +106,8 @@ export function PosCheckout({
   appliesGlobalDiscountPerLine,
   taxPercentage,
 }: PosCheckoutProps) {
+  const { t } = useLanguage()
+
   return (
     <>
       {cartLength > 0 && (
@@ -122,42 +125,42 @@ export function PosCheckout({
       <Dialog open={confirmSaleOpen} onOpenChange={onConfirmSaleOpenChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirm Sale</DialogTitle>
+            <DialogTitle>{t("pos.checkout.confirmTitle")}</DialogTitle>
             <DialogDescription>
-              Review the sale details before completing the transaction.
+              {t("pos.checkout.confirmDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Customer</span>
+                <span className="text-sm text-muted-foreground">{t("pos.cart.customer")}</span>
                 <span className="font-medium">
-                  {selectedCustomer?.institution_name || "Walk-in Customer"}
+                  {selectedCustomer?.institution_name || t("pos.cart.walkIn")}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Items</span>
+                <span className="text-sm text-muted-foreground">{t("pos.cart.items")}</span>
                 <span className="font-medium">{cartLength}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Subtotal</span>
+                <span className="text-sm text-muted-foreground">{t("pos.payments.subtotal")}</span>
                 <span className="font-medium">{formatMoney(uiSubtotal)}</span>
               </div>
               {discountPercentage > 0 && (
                 <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">Discount</span>
+                  <span className="text-sm text-muted-foreground">{t("pos.payments.discount")}</span>
                   <span className="font-medium text-green-600">
                     -{uiGlobalDiscountAmount.toFixed(3)} {getCurrencyLabel()}
                   </span>
                 </div>
               )}
               <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Tax</span>
+                <span className="text-sm text-muted-foreground">{t("pos.payments.tax")}</span>
                 <span className="font-medium">{formatMoney(uiTax)}</span>
               </div>
               <Separator />
               <div className="flex justify-between items-center">
-                <span className="font-semibold">Total</span>
+                <span className="font-semibold">{t("pos.payments.total")}</span>
                 <span className="font-bold text-lg">{formatMoney(uiTotal)}</span>
               </div>
 
@@ -166,11 +169,11 @@ export function PosCheckout({
                   <Separator />
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Amount Paid</span>
+                      <span className="text-sm text-muted-foreground">{t("pos.checkout.amountPaid")}</span>
                       <span className="font-medium text-green-600">{formatMoney(uiTotalPaidAmount)}</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Amount Due</span>
+                      <span className="text-sm text-muted-foreground">{t("pos.checkout.amountDue")}</span>
                       <span className="font-medium text-red-600">{formatMoney(uiTotalUnpaidAmount)}</span>
                     </div>
                   </div>
@@ -180,7 +183,7 @@ export function PosCheckout({
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => onConfirmSaleOpenChange(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               type="button"
@@ -201,13 +204,15 @@ export function PosCheckout({
               {isSubmitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Processing...
+                  {t("pos.payments.processing")}
                 </>
               ) : (
                 <div className="flex items-center justify-between w-full">
-                  <span>Confirm Sale</span>
+                  <span>{t("pos.checkout.confirmTitle")}</span>
                   <span className="text-sm">
-                    {uiTotalUnpaidAmount > 0 ? `Pay ${formatMoney(uiTotalUnpaidAmount)}` : "Fully Paid"}
+                    {uiTotalUnpaidAmount > 0
+                      ? t("pos.payments.payAmount", { amount: formatMoney(uiTotalUnpaidAmount) })
+                      : t("pos.payments.fullyPaid")}
                   </span>
                 </div>
               )}
@@ -229,8 +234,8 @@ export function PosCheckout({
         <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
           <div className="shrink-0">
             <DialogHeader>
-              <DialogTitle>Receipt</DialogTitle>
-              <DialogDescription>View, print, or download your receipt.</DialogDescription>
+              <DialogTitle>{t("pos.checkout.receiptTitle")}</DialogTitle>
+              <DialogDescription>{t("pos.checkout.receiptDescription")}</DialogDescription>
             </DialogHeader>
           </div>
           {receiptData && (
@@ -241,22 +246,22 @@ export function PosCheckout({
                 customer_name:
                   (receiptData.customer_name as string) ||
                   selectedCustomer?.institution_name ||
-                  "Walk-in Customer",
+                  t("pos.cart.walkIn"),
                 customer_contact:
                   (receiptData.customer_contact as string) || selectedCustomer?.contact_person || "",
                 warehouse_name:
                   (receiptData.warehouse_name as string) ||
                   warehouses.find((w) => w.id === selectedWarehouse)?.name_en ||
-                  "N/A",
+                  t("common.na"),
                 warehouse_location: warehouses.find((w) => w.id === selectedWarehouse)?.location || "",
                 invoice_type_name:
                   (receiptData.invoice_type_name as string) ||
-                  invoiceTypes.find((t) => t.id === selectedInvoiceType)?.display_name_en ||
-                  "N/A",
+                  invoiceTypes.find((type) => type.id === selectedInvoiceType)?.display_name_en ||
+                  t("common.na"),
                 payment_method_name:
                   (receiptData.payment_method_name as string) ||
                   paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en ||
-                  "N/A",
+                  t("common.na"),
                 items: cart.map((item, idx) => ({
                   id: idx,
                   product_name: item.product.title_en,

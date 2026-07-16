@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 import { TableSkeleton } from "@/components/table-skeleton"
 import {
   Table,
@@ -65,6 +66,8 @@ interface Warehouse {
 }
 
 export default function WarehouseManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [warehouseTypes, setWarehouseTypes] = useState<ListItem[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
@@ -142,8 +145,8 @@ export default function WarehouseManagement() {
     }
 
     // Show toast notification
-    toast.error(options?.title || "Error", { description: errorMessage })
-  }, [])
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   useEffect(() => {
     fetchWarehouses(currentPage, pageSize)
@@ -268,7 +271,7 @@ export default function WarehouseManagement() {
       await fetchWarehouses(1, pageSize)
 
       // Show toast notification
-      toast.success("Warehouse Added Successfully", { description: "${data.name_ar} / ${data.name_en} has been added to the system." })
+      toast.success(t("definitionsToasts.added", { entity: t("definitions.warehouses.title") }))
 
       // Show alert message
       showAlert("success", `New warehouse "${data.name_ar} / ${data.name_en}" has been successfully added to the system.`)
@@ -304,7 +307,7 @@ export default function WarehouseManagement() {
       await fetchWarehouses(currentPage, pageSize)
 
       // Show toast notification
-      toast.success("Warehouse Updated Successfully", { description: "${responseData.name_ar} / ${responseData.name_en} has been updated." })
+      toast.success(t("definitionsToasts.updated", { entity: t("definitions.warehouses.title") }))
 
       // Show alert message
       showAlert("success", `Warehouse "${responseData.name_ar} / ${responseData.name_en}" has been successfully updated.`)
@@ -344,7 +347,7 @@ export default function WarehouseManagement() {
       await fetchWarehouses(nextPage, pageSize)
 
       // Show toast notification
-      toast.error("Warehouse Deleted", { description: "${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en} has been permanently removed from the system." })
+      toast.success(t("definitionsToasts.deleted", { entity: t("definitions.warehouses.title") }), { description: t("definitionsToasts.deletedDesc", { name: `${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en}` }) })
 
       // Show alert message
       showAlert("warning", `Warehouse "${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en}" has been permanently deleted from the system.`)
@@ -371,13 +374,13 @@ export default function WarehouseManagement() {
 
   return (
     <>
-      <DocumentTitle title="Warehouses" />
+      <DocumentTitle title={t("definitions.warehouses.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Warehouses" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, definitionsCrumb, { label: t("nav.warehouses") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -404,27 +407,27 @@ export default function WarehouseManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Warehouse Management</h2>
-            <p className="mb-6">Manage warehouses and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("definitions.warehouses.management")}</h2>
+            <p className="mb-6">{t("definitions.warehouses.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Warehouses</h3>
+                <h3 className="font-medium">{t("definitions.warehouses.title")}</h3>
                 <Dialog open={isAddWarehouseOpen} onOpenChange={setIsAddWarehouseOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Warehouse
+                      {t("definitions.warehouses.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Warehouse</DialogTitle>
-                      <DialogDescription>Create a new warehouse entry.</DialogDescription>
+                      <DialogTitle>{t("definitions.warehouses.addNew")}</DialogTitle>
+                      <DialogDescription>{t("definitions.warehouses.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name_en">English Name</Label>
+                        <Label htmlFor="name_en">{t("definitions.warehouses.nameEn")}</Label>
                         <Input
                           id="name_en"
                           value={newWarehouse.name_en}
@@ -433,7 +436,7 @@ export default function WarehouseManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="name_ar">Arabic Name</Label>
+                        <Label htmlFor="name_ar">{t("definitions.warehouses.nameAr")}</Label>
                         <Input
                           id="name_ar"
                           value={newWarehouse.name_ar}
@@ -442,7 +445,7 @@ export default function WarehouseManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="type">Type</Label>
+                        <Label htmlFor="type">{t("definitions.warehouses.type")}</Label>
                         <Select
                           value={newWarehouse.type?.id?.toString()}
                           onValueChange={(value) => {
@@ -463,7 +466,7 @@ export default function WarehouseManagement() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="location">Location</Label>
+                        <Label htmlFor="location">{t("definitions.warehouses.location")}</Label>
                         <Input
                           id="location"
                           value={newWarehouse.location}
@@ -474,9 +477,9 @@ export default function WarehouseManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddWarehouseOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddWarehouse}>Add Warehouse</Button>
+                      <Button onClick={handleAddWarehouse}>{t("definitions.warehouses.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -485,10 +488,10 @@ export default function WarehouseManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name (AR/EN)</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("common.name")}</TableHead>
+                      <TableHead>{t("definitions.warehouses.type")}</TableHead>
+                      <TableHead>{t("definitions.warehouses.location")}</TableHead>
+                      <TableHead className="text-right">{t("common.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -497,7 +500,7 @@ export default function WarehouseManagement() {
                     ) : warehouses.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={4} className="py-8 text-center">
-                          No warehouses found
+                          {t("definitions.warehouses.empty")}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -519,7 +522,7 @@ export default function WarehouseManagement() {
                                   onClick={() => openEditDialog(warehouse)}
                                 >
                                   <Edit className="h-4 w-4" />
-                                  <span className="sr-only">Edit</span>
+                                  <span className="sr-only">{t("common.edit")}</span>
                                 </Button>
                                 <Button
                                   variant="outline"
@@ -528,7 +531,7 @@ export default function WarehouseManagement() {
                                   onClick={() => openDeleteDialog(warehouse.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />
-                                  <span className="sr-only">Delete</span>
+                                  <span className="sr-only">{t("common.delete")}</span>
                                 </Button>
                               </div>
 
@@ -538,14 +541,14 @@ export default function WarehouseManagement() {
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="outline" size="icon" className="h-8 w-8">
                                       <MoreHorizontal className="h-4 w-4" />
-                                      <span className="sr-only">Actions</span>
+                                      <span className="sr-only">{t("common.actions")}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => openEditDialog(warehouse)}>
                                       <Edit className="h-4 w-4 mr-2" />
-                                      Edit
+                                      {t("common.edit")}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
@@ -553,7 +556,7 @@ export default function WarehouseManagement() {
                                       onClick={() => openDeleteDialog(warehouse.id)}
                                     >
                                       <Trash2 className="h-4 w-4 mr-2" />
-                                      Delete
+                                      {t("common.delete")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -587,13 +590,13 @@ export default function WarehouseManagement() {
       <Dialog open={isEditWarehouseOpen} onOpenChange={setIsEditWarehouseOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Warehouse</DialogTitle>
-            <DialogDescription>Update warehouse information.</DialogDescription>
+            <DialogTitle>{t("definitions.warehouses.editTitle")}</DialogTitle>
+            <DialogDescription>{t("definitions.warehouses.editDescription")}</DialogDescription>
           </DialogHeader>
           {editWarehouse && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_en">English Name</Label>
+                <Label htmlFor="edit-name_en">{t("definitions.warehouses.nameEn")}</Label>
                 <Input
                   id="edit-name_en"
                   value={editWarehouse.name_en}
@@ -601,7 +604,7 @@ export default function WarehouseManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_ar">Arabic Name</Label>
+                <Label htmlFor="edit-name_ar">{t("definitions.warehouses.nameAr")}</Label>
                 <Input
                   id="edit-name_ar"
                   value={editWarehouse.name_ar}
@@ -609,7 +612,7 @@ export default function WarehouseManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-type">Type</Label>
+                <Label htmlFor="edit-type">{t("definitions.warehouses.type")}</Label>
                 <Select
                   value={editWarehouse.type?.id?.toString()}
                   onValueChange={(value) => {
@@ -630,7 +633,7 @@ export default function WarehouseManagement() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-location">Location</Label>
+                <Label htmlFor="edit-location">{t("definitions.warehouses.location")}</Label>
                 <Input
                   id="edit-location"
                   value={editWarehouse.location}
@@ -641,9 +644,9 @@ export default function WarehouseManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditWarehouseOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateWarehouse}>Save Changes</Button>
+            <Button onClick={handleUpdateWarehouse}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

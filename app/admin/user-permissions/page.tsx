@@ -2,7 +2,8 @@
 
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
-import { PageBreadcrumb, DASHBOARD_CRUMB, ADMIN_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { API_URL } from "@/lib/config"
@@ -60,6 +61,8 @@ type Permission = {
 }
 
 export default function UserBasedPermissions() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [userPermissions, setUserPermissions] = useState<Permission[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [pages, setPages] = useState<Page[]>([])
@@ -110,8 +113,8 @@ export default function UserBasedPermissions() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast.error("Error", { description: errorMessage })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Update the newPermission state to match the model
   const [newPermission, setNewPermission] = useState({
@@ -271,7 +274,7 @@ export default function UserBasedPermissions() {
       const pageName = pages.find((p) => p.id.toString() === newPermission.page.toString())?.name || "Page"
 
       // Show toast notification
-      toast.success("Permission Added Successfully", { description: "Permission for ${userName} on ${pageName} has been added." })
+      toast.success(t("adminToasts.added", { entity: t("admin.permissions.permissions") }))
 
       // Show alert message
       showAlert("success", `New permission for ${userName} on ${pageName} has been successfully added.`)
@@ -311,7 +314,7 @@ export default function UserBasedPermissions() {
       const resourceName = editingPermission.resource
 
       // Show toast notification
-      toast.success("Permission Updated Successfully", { description: "Permission for ${userName} on ${resourceName} has been updated." })
+      toast.success(t("adminToasts.updated", { entity: t("admin.permissions.permissions") }))
 
       // Show alert message
       showAlert("success", `Permission for ${userName} on ${resourceName} has been successfully updated.`)
@@ -353,7 +356,7 @@ export default function UserBasedPermissions() {
       setIsDeleteAlertOpen(false)
 
       // Show toast notification
-      toast.error("Permission Deleted", { description: "Permission for ${userName} on ${resourceName} has been removed." })
+      toast.success(t("adminToasts.deleted", { entity: t("admin.permissions.permissions") }))
 
       // Show alert message
       showAlert("warning", `Permission for ${userName} on ${resourceName} has been permanently deleted.`)
@@ -407,13 +410,13 @@ export default function UserBasedPermissions() {
   return (
     <ErrorBoundary>
     <>
-      <DocumentTitle title="User Permissions" />
+      <DocumentTitle title={t("nav.userPermissions")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, ADMIN_CRUMB, { label: "User Permissions" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("nav.userPermissions") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -440,33 +443,33 @@ export default function UserBasedPermissions() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">User-Based Permissions</h2>
-            <p className="mb-6">Manage specific permissions for individual users in your application.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.userPermissions.title")}</h2>
+            <p className="mb-6">{t("admin.userPermissions.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">User Permissions</h3>
+                <h3 className="font-medium">{t("nav.userPermissions")}</h3>
                 <Dialog open={isAddPermissionOpen} onOpenChange={setIsAddPermissionOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Permission
+                      {t("admin.userPermissions.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New User Permission</DialogTitle>
+                      <DialogTitle>{t("admin.userPermissions.addNew")}</DialogTitle>
                       <DialogDescription>Define permissions for a specific user.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="user">User</Label>
+                        <Label htmlFor="user">{t("admin.permissions.user")}</Label>
                         <Select
                           value={newPermission.user}
                           onValueChange={(value) => setNewPermission({ ...newPermission, user: value })}
                         >
                           <SelectTrigger id="user">
-                            <SelectValue placeholder="Select user" />
+                            <SelectValue placeholder={t("admin.permissions.selectUser")} />
                           </SelectTrigger>
                           <SelectContent>
                             {users.map((user) => (
@@ -480,13 +483,13 @@ export default function UserBasedPermissions() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="page">Page</Label>
+                        <Label htmlFor="page">{t("admin.permissions.page")}</Label>
                         <Select
                           value={newPermission.page}
                           onValueChange={(value) => setNewPermission({ ...newPermission, page: value })}
                         >
                           <SelectTrigger id="page">
-                            <SelectValue placeholder="Select page" />
+                            <SelectValue placeholder={t("admin.permissions.selectPage")} />
                           </SelectTrigger>
                           <SelectContent>
                             {pages.map((page) => (
@@ -498,7 +501,7 @@ export default function UserBasedPermissions() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label>Permissions</Label>
+                        <Label>{t("admin.permissions.permissions")}</Label>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="flex items-center space-x-2">
                             <Checkbox
@@ -510,7 +513,7 @@ export default function UserBasedPermissions() {
                               htmlFor="can_view"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can View
+                              {t("admin.permissions.canView")}
                             </label>
                           </div>
                           <div className="flex items-center space-x-2">
@@ -523,7 +526,7 @@ export default function UserBasedPermissions() {
                               htmlFor="can_add"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can Add
+                              {t("admin.permissions.canAdd")}
                             </label>
                           </div>
                           <div className="flex items-center space-x-2">
@@ -536,7 +539,7 @@ export default function UserBasedPermissions() {
                               htmlFor="can_edit"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can Edit
+                              {t("admin.permissions.canEdit")}
                             </label>
                           </div>
                           <div className="flex items-center space-x-2">
@@ -549,7 +552,7 @@ export default function UserBasedPermissions() {
                               htmlFor="can_delete"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can Delete
+                              {t("admin.permissions.canDelete")}
                             </label>
                           </div>
                         </div>
@@ -557,24 +560,24 @@ export default function UserBasedPermissions() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddPermissionOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddPermission}>Add Permission</Button>
+                      <Button onClick={handleAddPermission}>{t("admin.userPermissions.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-7 font-medium text-sm mb-2 border-b pb-2">
-                  <div className="col-span-2">User</div>
-                  <div className="col-span-2">Page</div>
-                  <div className="col-span-2">Permissions</div>
-                  <div className="text-right">Actions</div>
+                  <div className="col-span-2">{t("admin.permissions.user")}</div>
+                  <div className="col-span-2">{t("admin.permissions.page")}</div>
+                  <div className="col-span-2">{t("admin.permissions.permissions")}</div>
+                  <div className="text-right">{t("common.actions")}</div>
                 </div>
                 {isLoading ? (
-                  <div className="py-8 text-center">Loading permissions...</div>
+                  <div className="py-8 text-center">{t("admin.userPermissions.loading")}</div>
                 ) : userPermissions.length === 0 ? (
-                  <div className="py-8 text-center">No permissions found</div>
+                  <div className="py-8 text-center">{t("admin.userPermissions.empty")}</div>
                 ) : (
                   userPermissions.map((permission) => (
                     <div
@@ -617,7 +620,7 @@ export default function UserBasedPermissions() {
                             onClick={() => openEditDialog(permission)}
                           >
                             <Edit className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
+                            <span className="sr-only">{t("common.edit")}</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -626,7 +629,7 @@ export default function UserBasedPermissions() {
                             onClick={() => openDeleteDialog(permission.id)}
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete</span>
+                            <span className="sr-only">{t("common.delete")}</span>
                           </Button>
                         </div>
 
@@ -636,14 +639,14 @@ export default function UserBasedPermissions() {
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon" className="h-8 w-8">
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions</span>
+                                <span className="sr-only">{t("common.actions")}</span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => openEditDialog(permission)}>
                                 <Edit className="h-4 w-4 mr-2" />
-                                Edit
+                                {t("common.edit")}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
@@ -651,7 +654,7 @@ export default function UserBasedPermissions() {
                                 onClick={() => openDeleteDialog(permission.id)}
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
+                                {t("common.delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -670,19 +673,19 @@ export default function UserBasedPermissions() {
       <Dialog open={isEditPermissionOpen} onOpenChange={setIsEditPermissionOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit User Permission</DialogTitle>
+            <DialogTitle>{t("common.edit")}</DialogTitle>
             <DialogDescription>Update permissions for this user.</DialogDescription>
           </DialogHeader>
           {editingPermission && (
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-user">User</Label>
+                <Label htmlFor="edit-user">{t("admin.permissions.user")}</Label>
                 <Select
                   value={editingPermission.user?.toString() || ""}
                   onValueChange={(value) => setEditingPermission({ ...editingPermission, user: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-user">
-                    <SelectValue placeholder="Select user" />
+                    <SelectValue placeholder={t("admin.permissions.selectUser")} />
                   </SelectTrigger>
                   <SelectContent>
                     {users.map((user) => (
@@ -694,13 +697,13 @@ export default function UserBasedPermissions() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-page">Page</Label>
+                <Label htmlFor="edit-page">{t("admin.permissions.page")}</Label>
                 <Select
                   value={editingPermission.page?.toString() || ""}
                   onValueChange={(value) => setEditingPermission({ ...editingPermission, page: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-page">
-                    <SelectValue placeholder="Select page" />
+                    <SelectValue placeholder={t("admin.permissions.selectPage")} />
                   </SelectTrigger>
                   <SelectContent>
                     {pages.map((page) => (
@@ -712,7 +715,7 @@ export default function UserBasedPermissions() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label>Permissions</Label>
+                <Label>{t("admin.permissions.permissions")}</Label>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex items-center space-x-2">
                     <Checkbox
@@ -724,7 +727,7 @@ export default function UserBasedPermissions() {
                       htmlFor="edit-can_view"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can View
+                      {t("admin.permissions.canView")}
                     </label>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -737,7 +740,7 @@ export default function UserBasedPermissions() {
                       htmlFor="edit-can_add"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can Add
+                      {t("admin.permissions.canAdd")}
                     </label>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -750,7 +753,7 @@ export default function UserBasedPermissions() {
                       htmlFor="edit-can_edit"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can Edit
+                      {t("admin.permissions.canEdit")}
                     </label>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -763,7 +766,7 @@ export default function UserBasedPermissions() {
                       htmlFor="edit-can_delete"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can Delete
+                      {t("admin.permissions.canDelete")}
                     </label>
                   </div>
                 </div>
@@ -772,9 +775,9 @@ export default function UserBasedPermissions() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditPermissionOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdatePermission}>Save Changes</Button>
+            <Button onClick={handleUpdatePermission}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

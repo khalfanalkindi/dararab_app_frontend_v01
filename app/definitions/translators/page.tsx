@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 import { TableSkeleton } from "@/components/table-skeleton"
 import {
   Table,
@@ -51,6 +52,8 @@ interface Translator {
 }
 
 export default function TranslatorManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [translators, setTranslators] = useState<Translator[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteTranslatorId, setDeleteTranslatorId] = useState<number | null>(null)
@@ -124,8 +127,8 @@ export default function TranslatorManagement() {
     }
 
     // Show toast notification
-    toast.error(options?.title || "Error", { description: errorMessage })
-  }, [])
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   useEffect(() => {
     fetchTranslators(currentPage, pageSize)
@@ -219,7 +222,7 @@ export default function TranslatorManagement() {
       await fetchTranslators(1, pageSize)
 
       // Show toast notification
-      toast.success("Translator Added Successfully", { description: "${data.name} has been added to the system." })
+      toast.success(t("definitionsToasts.added", { entity: t("definitions.translators.title") }))
 
       // Show alert message
       showAlert("success", `New translator "${data.name}" has been successfully added to the system.`)
@@ -255,7 +258,7 @@ export default function TranslatorManagement() {
       await fetchTranslators(currentPage, pageSize)
 
       // Show toast notification
-      toast.success("Translator Updated Successfully", { description: "${responseData.name} has been updated." })
+      toast.success(t("definitionsToasts.updated", { entity: t("definitions.translators.title") }))
 
       // Show alert message
       showAlert("success", `Translator "${responseData.name}" has been successfully updated.`)
@@ -295,7 +298,7 @@ export default function TranslatorManagement() {
       await fetchTranslators(nextPage, pageSize)
 
       // Show toast notification
-      toast.error("Translator Deleted", { description: "${translatorToDelete.name} has been permanently removed from the system." })
+      toast.success(t("definitionsToasts.deleted", { entity: t("definitions.translators.title") }), { description: t("definitionsToasts.deletedDesc", { name: translatorToDelete.name }) })
 
       // Show alert message
       showAlert("warning", `Translator "${translatorToDelete.name}" has been permanently deleted from the system.`)
@@ -322,13 +325,13 @@ export default function TranslatorManagement() {
 
   return (
     <>
-      <DocumentTitle title="Translators" />
+      <DocumentTitle title={t("definitions.translators.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Translators" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, definitionsCrumb, { label: t("nav.translators") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -355,27 +358,27 @@ export default function TranslatorManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Translator Management</h2>
-            <p className="mb-6">Manage translators and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("definitions.translators.management")}</h2>
+            <p className="mb-6">{t("definitions.translators.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Translators</h3>
+                <h3 className="font-medium">{t("definitions.translators.title")}</h3>
                 <Dialog open={isAddTranslatorOpen} onOpenChange={setIsAddTranslatorOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Translator
+                      {t("definitions.translators.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Translator</DialogTitle>
-                      <DialogDescription>Create a new translator entry.</DialogDescription>
+                      <DialogTitle>{t("definitions.translators.addNew")}</DialogTitle>
+                      <DialogDescription>{t("definitions.translators.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Name</Label>
+                        <Label htmlFor="name">{t("definitions.translators.name")}</Label>
                         <Input
                           id="name"
                           value={newTranslator.name}
@@ -384,7 +387,7 @@ export default function TranslatorManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="bio">Bio</Label>
+                        <Label htmlFor="bio">{t("definitions.translators.bio")}</Label>
                         <Textarea
                           id="bio"
                           value={newTranslator.bio || ""}
@@ -395,9 +398,9 @@ export default function TranslatorManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddTranslatorOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddTranslator}>Add Translator</Button>
+                      <Button onClick={handleAddTranslator}>{t("definitions.translators.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -406,9 +409,9 @@ export default function TranslatorManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Bio</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("definitions.translators.name")}</TableHead>
+                      <TableHead>{t("definitions.translators.bio")}</TableHead>
+                      <TableHead className="text-right">{t("common.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -417,7 +420,7 @@ export default function TranslatorManagement() {
                     ) : translators.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={3} className="py-8 text-center">
-                          No translators found
+                          {t("definitions.translators.empty")}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -436,7 +439,7 @@ export default function TranslatorManagement() {
                                   onClick={() => openEditDialog(translator)}
                                 >
                                   <Edit className="h-4 w-4" />
-                                  <span className="sr-only">Edit</span>
+                                  <span className="sr-only">{t("common.edit")}</span>
                                 </Button>
                                 <Button
                                   variant="outline"
@@ -445,7 +448,7 @@ export default function TranslatorManagement() {
                                   onClick={() => openDeleteDialog(translator.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />
-                                  <span className="sr-only">Delete</span>
+                                  <span className="sr-only">{t("common.delete")}</span>
                                 </Button>
                               </div>
 
@@ -455,14 +458,14 @@ export default function TranslatorManagement() {
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="outline" size="icon" className="h-8 w-8">
                                       <MoreHorizontal className="h-4 w-4" />
-                                      <span className="sr-only">Actions</span>
+                                      <span className="sr-only">{t("common.actions")}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => openEditDialog(translator)}>
                                       <Edit className="h-4 w-4 mr-2" />
-                                      Edit
+                                      {t("common.edit")}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
@@ -470,7 +473,7 @@ export default function TranslatorManagement() {
                                       onClick={() => openDeleteDialog(translator.id)}
                                     >
                                       <Trash2 className="h-4 w-4 mr-2" />
-                                      Delete
+                                      {t("common.delete")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -504,13 +507,13 @@ export default function TranslatorManagement() {
       <Dialog open={isEditTranslatorOpen} onOpenChange={setIsEditTranslatorOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Translator</DialogTitle>
-            <DialogDescription>Update translator information.</DialogDescription>
+            <DialogTitle>{t("definitions.translators.editTitle")}</DialogTitle>
+            <DialogDescription>{t("definitions.translators.editDescription")}</DialogDescription>
           </DialogHeader>
           {editTranslator && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Name</Label>
+                <Label htmlFor="edit-name">{t("definitions.translators.name")}</Label>
                 <Input
                   id="edit-name"
                   value={editTranslator.name}
@@ -518,7 +521,7 @@ export default function TranslatorManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-bio">Bio</Label>
+                <Label htmlFor="edit-bio">{t("definitions.translators.bio")}</Label>
                 <Textarea
                   id="edit-bio"
                   value={editTranslator.bio || ""}
@@ -529,9 +532,9 @@ export default function TranslatorManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditTranslatorOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateTranslator}>Save Changes</Button>
+            <Button onClick={handleUpdateTranslator}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useLanguage } from "@/components/language-context"
 import { cn } from "@/lib/utils"
 import type { CartItem, Customer, InvoiceType, PaymentMethod, Warehouse } from "./types"
 
@@ -88,10 +89,12 @@ export function PosPayments({
   totalUnpaidAmount,
   onCompleteSale,
 }: PosPaymentsProps) {
+  const { t } = useLanguage()
+
   return (
     <>
       <div className="space-y-2">
-        <Label>Invoice Settings</Label>
+        <Label>{t("pos.payments.invoiceSettings")}</Label>
         <div className="space-y-2">
           <div className="flex items-center gap-4">
             <div className="flex-1">
@@ -99,7 +102,7 @@ export function PosPayments({
                 <span className="text-sm">
                   {selectedWarehouse
                     ? warehouses.find((w) => w.id === selectedWarehouse)?.name_en
-                    : "No warehouse selected"}
+                    : t("pos.payments.noWarehouse")}
                 </span>
               </div>
             </div>
@@ -108,7 +111,7 @@ export function PosPayments({
                 <span className="text-sm">
                   {selectedInvoiceType
                     ? invoiceTypes.find((type) => type.id === selectedInvoiceType)?.display_name_en
-                    : "No invoice type selected"}
+                    : t("pos.payments.noInvoiceType")}
                 </span>
               </div>
             </div>
@@ -119,7 +122,7 @@ export function PosPayments({
             disabled={isIndividualCustomer}
           >
             <SelectTrigger className={isIndividualCustomer ? "bg-muted cursor-not-allowed" : ""}>
-              <SelectValue placeholder="Select payment method" />
+              <SelectValue placeholder={t("pos.payments.selectMethod")} />
             </SelectTrigger>
             <SelectContent>
               {paymentMethods
@@ -135,9 +138,9 @@ export function PosPayments({
       </div>
 
       <div className="space-y-2">
-        <Label>Notes</Label>
+        <Label>{t("pos.payments.notes")}</Label>
         <Input
-          placeholder="Add notes to invoice..."
+          placeholder={t("pos.payments.notesPlaceholder")}
           value={invoiceNotes}
           onChange={(e) => onInvoiceNotesChange(e.target.value)}
         />
@@ -145,12 +148,12 @@ export function PosPayments({
 
       <div className="space-y-2 bg-muted p-4 rounded-lg">
         <div className="flex justify-between">
-          <span>Subtotal</span>
+          <span>{t("pos.payments.subtotal")}</span>
           <span>{formatMoney(uiSubtotal)}</span>
         </div>
 
         <div className="flex justify-between items-center">
-          <span>Discount</span>
+          <span>{t("pos.payments.discount")}</span>
           <div className="flex items-center gap-2">
             <Select
               value={discountPercentage.toString()}
@@ -196,7 +199,7 @@ export function PosPayments({
         </div>
 
         <div className="flex justify-between items-center">
-          <span>Tax</span>
+          <span>{t("pos.payments.tax")}</span>
           <div className="flex items-center gap-2">
             <Select
               value={taxPercentage.toString()}
@@ -219,7 +222,7 @@ export function PosPayments({
 
         <Separator />
         <div className="flex justify-between font-bold text-lg">
-          <span>Total</span>
+          <span>{t("pos.payments.total")}</span>
           <span>{formatMoney(uiTotal)}</span>
         </div>
 
@@ -228,14 +231,14 @@ export function PosPayments({
             <Separator />
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Payment Summary</span>
+                <span className="text-sm font-medium">{t("pos.payments.summary")}</span>
               </div>
 
               {paidItems.length > 0 && (
                 <div className="flex justify-between items-center text-sm">
                   <span className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-green-500 rounded-full" />
-                    Paid Items ({paidItems.length})
+                    {t("pos.payments.paidItems")} ({paidItems.length})
                   </span>
                   <span className="text-green-600 font-medium">{formatMoney(uiTotalPaidAmount)}</span>
                 </div>
@@ -245,7 +248,7 @@ export function PosPayments({
                 <div className="flex justify-between items-center text-sm">
                   <span className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-red-500 rounded-full" />
-                    Unpaid Items ({unpaidItems.length})
+                    {t("pos.payments.unpaidItems")} ({unpaidItems.length})
                   </span>
                   <span className="text-red-600 font-medium">{formatMoney(uiTotalUnpaidAmount)}</span>
                 </div>
@@ -255,7 +258,7 @@ export function PosPayments({
                 <div className="flex justify-between items-center text-sm">
                   <span className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-orange-500 rounded-full" />
-                    Partial Payments
+                    {t("pos.payments.partialPayments")}
                   </span>
                   <span className="text-orange-600 font-medium">
                     {
@@ -265,8 +268,7 @@ export function PosPayments({
                         const difference = Math.abs(paidAmount - target)
                         return paidAmount > 0.001 && difference >= 0.001 && paidAmount < target
                       }).length
-                    }{" "}
-                    items
+                    }
                   </span>
                 </div>
               )}
@@ -276,7 +278,7 @@ export function PosPayments({
 
         <Separator />
         <div className="flex justify-between font-bold text-lg">
-          <span>Amount Due</span>
+          <span>{t("pos.payments.amountDue")}</span>
           <span className={uiTotalUnpaidAmount > 0 ? "text-red-600" : "text-green-600"}>
             {formatMoney(uiTotalUnpaidAmount)}
           </span>
@@ -305,13 +307,15 @@ export function PosPayments({
         {isSubmitting ? (
           <>
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            Processing...
+            {t("pos.payments.processing")}
           </>
         ) : (
           <div className="flex items-center justify-between w-full">
-            <span>Complete Sale</span>
+            <span>{t("pos.payments.completeSale")}</span>
             <span className="text-sm">
-              {uiTotalUnpaidAmount > 0 ? `Pay ${formatMoney(uiTotalUnpaidAmount)}` : "Fully Paid"}
+              {uiTotalUnpaidAmount > 0
+                ? t("pos.payments.payAmount", { amount: formatMoney(uiTotalUnpaidAmount) })
+                : t("pos.payments.fullyPaid")}
             </span>
           </div>
         )}

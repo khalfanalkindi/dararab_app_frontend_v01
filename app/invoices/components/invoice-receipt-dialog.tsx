@@ -10,6 +10,7 @@ import {
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 import { Loader2 } from "lucide-react"
+import { useLanguage } from "@/components/language-context"
 
 type InvoiceReceiptDialogProps = {
   open: boolean
@@ -26,18 +27,20 @@ export function InvoiceReceiptDialog({
   isLoading,
   onClose,
 }: InvoiceReceiptDialogProps) {
+  const { t } = useLanguage()
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
         <DialogHeader className="shrink-0 space-y-1 pb-2">
-          <DialogTitle>Receipt</DialogTitle>
-          <DialogDescription>View, print, or download your receipt.</DialogDescription>
+          <DialogTitle>{t("invoices.receipt.title")}</DialogTitle>
+          <DialogDescription>{t("invoices.receipt.description")}</DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-1 flex-col">
           {isLoading && !receiptPayload ? (
             <div className="flex flex-1 items-center justify-center gap-2 py-8">
               <Loader2 className="h-6 w-6 animate-spin" />
-              <span>Loading receipt...</span>
+              <span>{t("invoices.receipt.loading")}</span>
             </div>
           ) : receiptPayload ? (
             <ReceiptContent

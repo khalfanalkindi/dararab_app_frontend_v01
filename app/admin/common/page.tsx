@@ -2,7 +2,8 @@
 
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
-import { PageBreadcrumb, DASHBOARD_CRUMB, ADMIN_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import { API_URL } from "@/lib/config"
@@ -30,6 +31,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export default function ListManagementPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [listTypes, setListTypes] = useState<any[]>([])
   const [listItems, setListItems] = useState<any[]>([])
   const [selectedType, setSelectedType] = useState<any>(null)
@@ -89,8 +92,8 @@ export default function ListManagementPage() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast.error("Error", { description: errorMessage })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Show alert message
   const showAlert = (type: "success" | "error" | "warning", message: string) => {
@@ -243,7 +246,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListTypes([...listTypes, data])
       setNewType({ name_en: "", name_ar: "", code: "" })
-      toast.success("Type Added")
+      toast.success(t("adminToasts.added", { entity: t("common.type") }))
       showAlert("success", `New list type "${data.name_en}" has been successfully added.`)
     } catch (error) {
       handleError(error, "Failed to add type")
@@ -272,7 +275,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListTypes(listTypes.map((t) => (t.id === data.id ? data : t)))
       setEditType(null)
-      toast.success("Type Updated")
+      toast.success(t("adminToasts.updated", { entity: t("common.type") }))
       showAlert("success", `List type "${data.name_en}" has been successfully updated.`)
     } catch (error) {
       handleError(error, "Failed to update type")
@@ -304,7 +307,7 @@ export default function ListManagementPage() {
         setListItems([])
       }
       setDeleteTypeId(null)
-      toast.success("Type Deleted")
+      toast.success(t("adminToasts.deleted", { entity: t("common.type") }))
       showAlert("warning", `List type "${typeToDelete?.name_en}" has been permanently deleted.`)
     } catch (error) {
       handleError(error, "Failed to delete type")
@@ -333,7 +336,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListItems([...listItems, data])
       setNewItem({ value: "", display_name_en: "", display_name_ar: "" })
-      toast.success("Item Added")
+      toast.success(t("adminToasts.added", { entity: t("outstanding.dialog.items") }))
       showAlert("success", `New list item "${data.display_name_en}" has been successfully added.`)
     } catch (error) {
       handleError(error, "Failed to add item")
@@ -362,7 +365,7 @@ export default function ListManagementPage() {
       const data = await res.json()
       setListItems(listItems.map((i) => (i.id === data.id ? data : i)))
       setEditItem(null)
-      toast.success("Item Updated")
+      toast.success(t("adminToasts.updated", { entity: t("outstanding.dialog.items") }))
       showAlert("success", `List item "${data.display_name_en}" has been successfully updated.`)
     } catch (error) {
       handleError(error, "Failed to update item")
@@ -390,7 +393,7 @@ export default function ListManagementPage() {
       })
       setListItems(listItems.filter((i) => i.id !== deleteItemId))
       setDeleteItemId(null)
-      toast.success("Item Deleted")
+      toast.success(t("adminToasts.deleted", { entity: t("outstanding.dialog.items") }))
       showAlert("warning", `List item "${itemToDelete?.display_name_en}" has been permanently deleted.`)
     } catch (error) {
       handleError(error, "Failed to delete item")
@@ -400,13 +403,13 @@ export default function ListManagementPage() {
 
   return (
       <ErrorBoundary>
-      <DocumentTitle title="Common Definitions" />
+      <DocumentTitle title={t("nav.commonDefinitions")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, ADMIN_CRUMB, { label: "List Management" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("admin.common.management") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -433,13 +436,13 @@ export default function ListManagementPage() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">List Management</h2>
-            <p className="mb-6">Manage list types and their items for your application.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.common.management")}</h2>
+            <p className="mb-6">{t("admin.common.description")}</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>List Types</CardTitle>
+                  <CardTitle>{t("admin.common.listTypes")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {isLoading ? (
@@ -485,35 +488,35 @@ export default function ListManagementPage() {
                   )}
                   <Separator className="my-4" />
                   <div className="space-y-2">
-                    <Label htmlFor="name_en">English Name</Label>
+                    <Label htmlFor="name_en">{t("admin.common.nameEn")}</Label>
                     <Input
                       id="name_en"
-                      placeholder="English Name"
+                      placeholder={t("admin.common.nameEn")}
                       value={newType.name_en}
                       onChange={(e) => setNewType({ ...newType, name_en: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="name_ar">Arabic Name</Label>
+                    <Label htmlFor="name_ar">{t("admin.common.nameAr")}</Label>
                     <Input
                       id="name_ar"
-                      placeholder="Arabic Name"
+                      placeholder={t("admin.common.nameAr")}
                       value={newType.name_ar}
                       onChange={(e) => setNewType({ ...newType, name_ar: e.target.value })}
                       dir="rtl"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="code">Code</Label>
+                    <Label htmlFor="code">{t("admin.common.code")}</Label>
                     <Input
                       id="code"
-                      placeholder="Code"
+                      placeholder={t("admin.common.code")}
                       value={newType.code}
                       onChange={(e) => setNewType({ ...newType, code: e.target.value })}
                     />
                   </div>
                   <Button onClick={addListType} className="w-full mt-4">
-                    Add List Type
+                    {t("admin.common.addListType")}
                   </Button>
                 </CardContent>
               </Card>
@@ -552,10 +555,10 @@ export default function ListManagementPage() {
                       )}
                       <Separator className="my-4" />
                       <div className="space-y-2">
-                        <Label htmlFor="value">Value</Label>
+                        <Label htmlFor="value">{t("admin.common.value")}</Label>
                         <Input
                           id="value"
-                          placeholder="Value"
+                          placeholder={t("admin.common.value")}
                           value={newItem.value}
                           onChange={(e) => setNewItem({ ...newItem, value: e.target.value })}
                         />
@@ -580,7 +583,7 @@ export default function ListManagementPage() {
                         />
                       </div>
                       <Button onClick={addListItem} className="w-full mt-4">
-                        Add List Item
+                        {t("admin.common.addListItem")}
                       </Button>
                     </>
                   ) : (
@@ -592,7 +595,7 @@ export default function ListManagementPage() {
               {/* Genre and Status Options */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Genre and Status Options</CardTitle>
+                  <CardTitle>{t("admin.common.genreOptions")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
@@ -631,7 +634,7 @@ export default function ListManagementPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Filter</CardTitle>
+                  <CardTitle>{t("admin.common.filter")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Select value={selectedGenre || ""} onValueChange={(value) => setSelectedGenre(value || null)}>
@@ -639,7 +642,7 @@ export default function ListManagementPage() {
                       <SelectValue placeholder="Filter by genre" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Genres</SelectItem>
+                      <SelectItem value="all">{t("admin.common.allGenres")}</SelectItem>
                       {genreOptions.map((genre) => (
                         <SelectItem key={genre.id} value={genre.id.toString()}>
                           {genre.display_name_en}
@@ -652,7 +655,7 @@ export default function ListManagementPage() {
                       <SelectValue placeholder="Filter by status" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Statuses</SelectItem>
+                      <SelectItem value="all">{t("admin.common.allStatuses")}</SelectItem>
                       {statusOptions.map((status) => (
                         <SelectItem key={status.id} value={status.id.toString()}>
                           {status.display_name_en}
@@ -670,7 +673,7 @@ export default function ListManagementPage() {
         <Dialog open={!!editType} onOpenChange={(open) => !open && setEditType(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Edit List Type</DialogTitle>
+              <DialogTitle>{t("admin.common.editListType")}</DialogTitle>
             </DialogHeader>
             {editType && (
               <div className="grid gap-4 py-4">
@@ -706,9 +709,9 @@ export default function ListManagementPage() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditType(null)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
-              <Button onClick={updateListType}>Save Changes</Button>
+              <Button onClick={updateListType}>{t("common.saveChanges")}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -716,7 +719,7 @@ export default function ListManagementPage() {
         <Dialog open={!!editItem} onOpenChange={(open) => !open && setEditItem(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Edit List Item</DialogTitle>
+              <DialogTitle>{t("admin.common.editListItem")}</DialogTitle>
             </DialogHeader>
             {editItem && (
               <div className="grid gap-4 py-4">
@@ -752,9 +755,9 @@ export default function ListManagementPage() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditItem(null)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
-              <Button onClick={updateListItem}>Save Changes</Button>
+              <Button onClick={updateListItem}>{t("common.saveChanges")}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -774,7 +777,7 @@ export default function ListManagementPage() {
               )}
             </AlertDialogDescription>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={deleteListType}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
@@ -802,7 +805,7 @@ export default function ListManagementPage() {
               )}
             </AlertDialogDescription>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={deleteListItem}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"

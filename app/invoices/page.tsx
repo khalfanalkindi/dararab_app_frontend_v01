@@ -2,7 +2,8 @@
 
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { fetchWithRetry } from "@/lib/apiClient"
@@ -79,6 +80,8 @@ const calculateInvoiceStatus = (
 }
 
 export default function InvoicesPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [customers, setCustomers] = useState<CustomerOption[]>([])
@@ -145,7 +148,7 @@ export default function InvoicesPage() {
       options.onError(error)
     }
 
-    toast.error(options?.title || "Error", { description: errorMessage })
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
   }
 
   useEffect(() => {
@@ -282,8 +285,8 @@ export default function InvoicesPage() {
 
       downloadInvoiceDetailAsExcel(receiptData, currencyLabel, filename)
 
-      toast.success("Excel exported", {
-        description: `Invoice ${receiptData.composite_id || invoice.id} downloaded.`,
+      toast.success(t("invoicesToasts.excelExported"), {
+        description: t("invoicesToasts.excelExportedDesc"),
       })
     } catch (error) {
       handleError(error, "Failed to export invoice to Excel")
@@ -604,13 +607,13 @@ export default function InvoicesPage() {
         const errorData = await res.json().catch(() => ({}))
         const parsed = parseDeleteError(errorData as Record<string, unknown>, res.status)
         setDeleteError(parsed)
-        toast.error("Could not delete invoice", { description: parsed.message })
+        toast.error(t("invoicesToasts.deleteFailed"), { description: parsed.message })
         return
       }
 
       setInvoices((prev) => prev.filter((i) => i.id !== invoiceToDelete.id))
       setTotalCount((prev) => Math.max(0, prev - 1))
-      toast.success("Invoice Deleted", { description: "Invoice deleted and items returned to warehouse." })
+      toast.success(t("invoicesToasts.deleted"), { description: t("invoicesToasts.deletedDesc") })
       setInvoiceToDelete(null)
       setDeleteConfirmation("")
       setActiveDialog(null)
@@ -627,7 +630,7 @@ export default function InvoicesPage() {
         product_ids: [],
         errors: [message],
       })
-      handleError(error, message, { title: "Error" })
+      handleError(error, message, { title: t("toasts.error") })
     } finally {
       setLoadingAction(null)
     }
@@ -687,20 +690,20 @@ export default function InvoicesPage() {
   return (
     <ErrorBoundary>
     <>
-      <DocumentTitle title="Invoices" />
+      <DocumentTitle title={t("invoices.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Invoices" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("invoices.title") }]} />
           </div>
         </header>
 
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Invoice Management</h2>
-            <p className="mb-6">View and manage sales invoices.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("invoices.management")}</h2>
+            <p className="mb-6">{t("invoices.description")}</p>
 
             <InvoiceFilters
               warehouses={warehouses}

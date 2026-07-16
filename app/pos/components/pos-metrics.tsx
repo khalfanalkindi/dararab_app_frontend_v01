@@ -3,6 +3,7 @@
 import { TrendingUp, ChevronUp, ChevronDown, Coins, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { useLanguage } from "@/components/language-context"
 
 type PosMetricsProps = {
   showMetrics: boolean
@@ -19,6 +20,8 @@ export function PosMetrics({
   totalCustomers,
   popularProduct,
 }: PosMetricsProps) {
+  const { t } = useLanguage()
+
   return (
     <>
       <div className="mb-4">
@@ -29,7 +32,7 @@ export function PosMetrics({
         >
           <span className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4" />
-            <span>Sales Metrics</span>
+            <span>{t("pos.metrics.title")}</span>
           </span>
           {showMetrics ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </Button>
@@ -40,7 +43,7 @@ export function PosMetrics({
           <Card>
             <CardContent className="p-6 flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Today&apos;s Sales</p>
+                <p className="text-sm text-muted-foreground">{t("pos.metrics.todaySales")}</p>
                 <h3 className="text-2xl font-bold">{todaySalesFormatted}</h3>
               </div>
               <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -51,7 +54,7 @@ export function PosMetrics({
           <Card>
             <CardContent className="p-6 flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Total Customers</p>
+                <p className="text-sm text-muted-foreground">{t("pos.metrics.totalCustomers")}</p>
                 <h3 className="text-2xl font-bold">{totalCustomers}</h3>
               </div>
               <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -62,8 +65,10 @@ export function PosMetrics({
           <Card>
             <CardContent className="p-6 flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Popular Product</p>
-                <h3 className="text-2xl font-bold">{popularProduct}</h3>
+                <p className="text-sm text-muted-foreground">{t("pos.metrics.popularProduct")}</p>
+                <h3 className="text-2xl font-bold">
+                  {popularProduct === "N/A" ? t("common.na") : popularProduct}
+                </h3>
               </div>
               <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                 <TrendingUp className="h-6 w-6 text-primary" />

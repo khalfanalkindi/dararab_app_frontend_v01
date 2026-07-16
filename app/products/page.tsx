@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 
 import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
@@ -197,6 +198,8 @@ export interface NewInventory {
 }
 
 export default function BookManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   // State for books and filters
   const [productSummaries, setProductSummaries] = useState<ProductSummary[]>([]);
   const [genres, setGenres] = useState<Genre[]>([])
@@ -1977,13 +1980,13 @@ async function handleUpdateInventory() {
 
   return (
     <ErrorBoundary>
-      <DocumentTitle title="Products" />
+      <DocumentTitle title={t("products.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Books" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("products.books") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">

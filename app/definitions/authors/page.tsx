@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 import { TableSkeleton } from "@/components/table-skeleton"
 import {
   Table,
@@ -51,6 +52,8 @@ interface Author {
 }
 
 export default function AuthorManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [authors, setAuthors] = useState<Author[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteAuthorId, setDeleteAuthorId] = useState<number | null>(null)
@@ -124,8 +127,8 @@ export default function AuthorManagement() {
     }
 
     // Show toast notification
-    toast.error(options?.title || "Error", { description: errorMessage })
-  }, [])
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   useEffect(() => {
     fetchAuthors(currentPage, pageSize)
@@ -219,7 +222,7 @@ export default function AuthorManagement() {
       await fetchAuthors(1, pageSize)
 
       // Show toast notification
-      toast.success("Author Added Successfully", { description: "${data.name} has been added to the system." })
+      toast.success(t("definitionsToasts.added", { entity: t("definitions.authors.title") }))
 
       // Show alert message
       showAlert("success", `New author "${data.name}" has been successfully added to the system.`)
@@ -255,7 +258,7 @@ export default function AuthorManagement() {
       await fetchAuthors(currentPage, pageSize)
 
       // Show toast notification
-      toast.success("Author Updated Successfully", { description: "${responseData.name} has been updated." })
+      toast.success(t("definitionsToasts.updated", { entity: t("definitions.authors.title") }))
 
       // Show alert message
       showAlert("success", `Author "${responseData.name}" has been successfully updated.`)
@@ -295,7 +298,7 @@ export default function AuthorManagement() {
       await fetchAuthors(nextPage, pageSize)
 
       // Show toast notification
-      toast.error("Author Deleted", { description: "${authorToDelete.name} has been permanently removed from the system." })
+      toast.success(t("definitionsToasts.deleted", { entity: t("definitions.authors.title") }), { description: t("definitionsToasts.deletedDesc", { name: authorToDelete.name }) })
 
       // Show alert message
       showAlert("warning", `Author "${authorToDelete.name}" has been permanently deleted from the system.`)
@@ -322,13 +325,13 @@ export default function AuthorManagement() {
 
   return (
     <>
-      <DocumentTitle title="Authors" />
+      <DocumentTitle title={t("definitions.authors.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Authors" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, definitionsCrumb, { label: t("nav.authors") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -355,27 +358,27 @@ export default function AuthorManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Author Management</h2>
-            <p className="mb-6">Manage authors and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("definitions.authors.management")}</h2>
+            <p className="mb-6">{t("definitions.authors.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Authors</h3>
+                <h3 className="font-medium">{t("definitions.authors.title")}</h3>
                 <Dialog open={isAddAuthorOpen} onOpenChange={setIsAddAuthorOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Author
+                      {t("definitions.authors.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Author</DialogTitle>
-                      <DialogDescription>Create a new author entry.</DialogDescription>
+                      <DialogTitle>{t("definitions.authors.addNew")}</DialogTitle>
+                      <DialogDescription>{t("definitions.authors.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Name</Label>
+                        <Label htmlFor="name">{t("definitions.authors.name")}</Label>
                         <Input
                           id="name"
                           value={newAuthor.name}
@@ -384,7 +387,7 @@ export default function AuthorManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="bio">Bio</Label>
+                        <Label htmlFor="bio">{t("definitions.authors.bio")}</Label>
                         <Textarea
                           id="bio"
                           value={newAuthor.bio || ""}
@@ -395,9 +398,9 @@ export default function AuthorManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddAuthorOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddAuthor}>Add Author</Button>
+                      <Button onClick={handleAddAuthor}>{t("definitions.authors.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -406,9 +409,9 @@ export default function AuthorManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Bio</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("definitions.authors.name")}</TableHead>
+                      <TableHead>{t("definitions.authors.bio")}</TableHead>
+                      <TableHead className="text-right">{t("common.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -417,7 +420,7 @@ export default function AuthorManagement() {
                     ) : authors.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={3} className="py-8 text-center">
-                          No authors found
+                          {t("definitions.authors.empty")}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -436,7 +439,7 @@ export default function AuthorManagement() {
                                   onClick={() => openEditDialog(author)}
                                 >
                                   <Edit className="h-4 w-4" />
-                                  <span className="sr-only">Edit</span>
+                                  <span className="sr-only">{t("common.edit")}</span>
                                 </Button>
                                 <Button
                                   variant="outline"
@@ -445,7 +448,7 @@ export default function AuthorManagement() {
                                   onClick={() => openDeleteDialog(author.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />
-                                  <span className="sr-only">Delete</span>
+                                  <span className="sr-only">{t("common.delete")}</span>
                                 </Button>
                               </div>
 
@@ -455,14 +458,14 @@ export default function AuthorManagement() {
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="outline" size="icon" className="h-8 w-8">
                                       <MoreHorizontal className="h-4 w-4" />
-                                      <span className="sr-only">Actions</span>
+                                      <span className="sr-only">{t("common.actions")}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => openEditDialog(author)}>
                                       <Edit className="h-4 w-4 mr-2" />
-                                      Edit
+                                      {t("common.edit")}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
@@ -470,7 +473,7 @@ export default function AuthorManagement() {
                                       onClick={() => openDeleteDialog(author.id)}
                                     >
                                       <Trash2 className="h-4 w-4 mr-2" />
-                                      Delete
+                                      {t("common.delete")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -504,13 +507,13 @@ export default function AuthorManagement() {
       <Dialog open={isEditAuthorOpen} onOpenChange={setIsEditAuthorOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Author</DialogTitle>
-            <DialogDescription>Update author information.</DialogDescription>
+            <DialogTitle>{t("definitions.authors.editTitle")}</DialogTitle>
+            <DialogDescription>{t("definitions.authors.editDescription")}</DialogDescription>
           </DialogHeader>
           {editAuthor && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Name</Label>
+                <Label htmlFor="edit-name">{t("definitions.authors.name")}</Label>
                 <Input
                   id="edit-name"
                   value={editAuthor.name}
@@ -518,7 +521,7 @@ export default function AuthorManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-bio">Bio</Label>
+                <Label htmlFor="edit-bio">{t("definitions.authors.bio")}</Label>
                 <Textarea
                   id="edit-bio"
                   value={editAuthor.bio || ""}
@@ -529,9 +532,9 @@ export default function AuthorManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditAuthorOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateAuthor}>Save Changes</Button>
+            <Button onClick={handleUpdateAuthor}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

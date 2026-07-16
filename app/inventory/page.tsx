@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -74,6 +75,8 @@ type Inventory = {
 }
 
 export default function InventoryManagementPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [mounted, setMounted] = useState<boolean>(false)
   const [items, setItems] = useState<Inventory[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -429,7 +432,7 @@ useEffect(() => {
         if (process.env.NODE_ENV !== "production") {
           console.warn("No access token available for fetchLookups")
         }
-        toast.error("Error", { description: "Authentication required. Please log in again." })
+        toast.error(t("toasts.error"), { description: t("toasts.authRequired") })
         return
       }
 
@@ -480,7 +483,7 @@ useEffect(() => {
       if (process.env.NODE_ENV !== "production") {
         console.error("Lookup fetch failed", e)
       }
-      toast.error("Error", { description: "Failed to load warehouses" })
+      toast.error(t("toasts.error"), { description: t("toasts.loadWarehousesFailed") })
     }
   }
 
@@ -533,7 +536,7 @@ useEffect(() => {
       setItems([])
       setCount(0)
       setTotalPages(0)
-      toast.error("Error", { description: "Failed to load inventory list" })
+      toast.error(t("toasts.error"), { description: t("inventoryToasts.loadFailed") })
     } finally {
       setIsLoading(false)
     }
@@ -548,7 +551,7 @@ useEffect(() => {
       
       // Validate warehouse and quantity
       if (!newInventory.warehouse_id) {
-        toast.error("Error", { description: "Please select a warehouse" })
+        toast.error(t("toasts.error"), { description: t("inventoryToasts.selectWarehouse") })
         setIsCreating(false)
         return
       }
@@ -645,7 +648,7 @@ useEffect(() => {
         }
 
         setIsCreating(false)
-        toast.success("Inventory saved", { description: message })
+        toast.success(t("inventoryToasts.saved"), { description: message })
         // Refresh to ensure consistency
         await fetchInventory(currentPage, pageSize)
       } else if (newInventory.product_id) {
@@ -698,11 +701,11 @@ useEffect(() => {
         })
 
         setIsCreating(false)
-      toast.success("Inventory saved", { description: "Entry created/updated successfully" })
+      toast.success(t("inventoryToasts.saved"), { description: t("inventoryToasts.savedDesc") })
         // Refresh to ensure consistency
         await fetchInventory(currentPage, pageSize)
       } else {
-        toast.error("Error", { description: "Please select at least one product" })
+        toast.error(t("toasts.error"), { description: t("toasts.selectProduct") })
         setIsCreating(false)
       }
     } catch (e) {
@@ -712,7 +715,7 @@ useEffect(() => {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save inventory"
-      toast.error("Error", { description: msg })
+      toast.error(t("toasts.error"), { description: msg })
       setIsCreating(false)
     }
   }
@@ -760,7 +763,7 @@ useEffect(() => {
       // Replace with server response
       setItems(prev => prev.map(item => item.id === data.id ? data : item))
       
-      toast.success("Inventory updated", { description: "Entry updated successfully" })
+      toast.success(t("inventoryToasts.updated"), { description: t("inventoryToasts.updatedDesc") })
       // Refresh to ensure consistency
       await fetchInventory(currentPage, pageSize)
     } catch (e) {
@@ -770,7 +773,7 @@ useEffect(() => {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to update inventory"
-      toast.error("Error", { description: msg })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsUpdating(false)
     }
@@ -805,7 +808,7 @@ useEffect(() => {
         throw new Error(`Delete failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
       }
       
-      toast.error("Inventory deleted", { description: "Inventory entry deleted successfully" })
+      toast.success(t("inventoryToasts.deleted"), { description: t("inventoryToasts.deletedDesc") })
       
       // If we deleted the last item on the page and it's not page 1, go to previous page
       if (originalItems.length === 1 && currentPage > 1) {
@@ -823,7 +826,7 @@ useEffect(() => {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to delete inventory"
-      toast.error("Error", { description: msg })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsDeleting(false)
     }
@@ -1050,7 +1053,7 @@ useEffect(() => {
       // Replace with server response
       setItems(prev => prev.map(item => item.id === data.id ? data : item))
       
-      toast.success("Saved", { description: "Inventory updated" })
+      toast.success(t("inventoryToasts.rowSaved"), { description: t("inventoryToasts.updated") })
       // Refresh to ensure consistency
       await fetchInventory(currentPage, pageSize)
     } catch (e) {
@@ -1060,7 +1063,7 @@ useEffect(() => {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save"
-      toast.error("Error", { description: msg })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsUpdatingRow(null)
     }
@@ -1084,7 +1087,7 @@ useEffect(() => {
       })
 
       if (changes.length === 0) {
-        toast.success("No changes", { description: "No changes to save" })
+        toast.success(t("inventoryToasts.noChanges"), { description: t("inventoryToasts.noChangesDesc") })
         setIsSavingAll(false)
         return
       }
@@ -1163,8 +1166,8 @@ useEffect(() => {
       const resultsMap = new Map(results.map((item: any) => [item.id, item as Inventory]))
       setItems(prev => prev.map(item => (resultsMap.get(item.id) || item) as Inventory))
 
-      toast.success("All changes saved", {
-        description: `Successfully updated ${results.length} inventory ${results.length === 1 ? "item" : "items"}`,
+      toast.success(t("inventoryToasts.allSaved"), {
+        description: t("inventoryToasts.allSavedDesc", { count: results.length }),
         duration: 4000,
       })
       // Refresh to ensure consistency
@@ -1176,7 +1179,7 @@ useEffect(() => {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save changes"
-      toast.error("Error", { description: msg })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsSavingAll(false)
     }
@@ -1440,13 +1443,13 @@ useEffect(() => {
 
   return (
     <ErrorBoundary>
-      <DocumentTitle title="Inventory" />
+      <DocumentTitle title={t("inventory.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Inventory" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("inventory.title") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1454,7 +1457,7 @@ useEffect(() => {
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-semibold">Inventory Management</h2>
+                <h2 className="text-xl font-semibold">{t("inventory.management")}</h2>
                 <p className="text-sm text-muted-foreground">Manage product stock per warehouse.</p>
               </div>
               <div className="flex gap-2">
@@ -1475,7 +1478,7 @@ useEffect(() => {
                 >
                 <DialogTrigger asChild>
                   <Button size="sm" className="bg-primary text-primary-foreground">
-                    <PlusCircle className="h-4 w-4 mr-2" /> Add Inventory
+                    <PlusCircle className="h-4 w-4 mr-2" /> {t("inventory.add")}
                   </Button>
                 </DialogTrigger>
                 </Dialog>
@@ -1497,14 +1500,14 @@ useEffect(() => {
               >
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Add Inventory (Bulk)</DialogTitle>
+                    <DialogTitle>{t("inventory.add")}</DialogTitle>
                     <DialogDescription>
                       Select multiple products and set inventory quantity for a warehouse. All selected products will be created with the same quantity.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 py-4">
                     <div className="grid gap-2">
-                      <Label>Products (Select Multiple)</Label>
+                      <Label>{t("inventory.product")}</Label>
                       <MultiSelectProducts
                         selectedIds={selectedProducts}
                         onSelectionChange={setSelectedProducts}
@@ -1520,16 +1523,16 @@ useEffect(() => {
                       )}
                     </div>
                     <div className="grid gap-2">
-                      <Label>Warehouse *</Label>
+                      <Label>{t("inventory.warehouse")} *</Label>
                       <SearchableCombobox
                         value={newInventory.warehouse_id?.toString()}
                         onChange={(v) => setNewInventory((s) => ({ ...s, warehouse_id: Number(v) }))}
                         items={warehouseOptions}
-                        placeholder="Select warehouse"
+                        placeholder={t("inventory.warehouse")}
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label>Quantity *</Label>
+                      <Label>{t("inventory.quantity")} *</Label>
                       <Input 
                         type="number" 
                         value={newInventory.quantity ?? 0} 
@@ -1553,7 +1556,7 @@ useEffect(() => {
                         setIsCreating(false)
                       }}
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </Button>
                     <Button 
                       onClick={handleCreate}
@@ -1571,7 +1574,7 @@ useEffect(() => {
               <div className="bg-muted p-4">
                 <div className="grid gap-4 md:grid-cols-4 md:gap-4">
                   <div className="grid gap-2">
-                    <Label>Filter by Products (Multi-select)</Label>
+                    <Label>{t("transfer.products")}</Label>
                     <MultiSelectProducts
                       selectedIds={selectedProductIds}
                       onSelectionChange={setSelectedProductIds}
@@ -1582,12 +1585,12 @@ useEffect(() => {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label>Filter by Warehouse</Label>
+                    <Label>{t("inventory.warehouse")}</Label>
                     <SearchableCombobox
                       value={filterWarehouseId || "all"}
                       onChange={(v) => setFilterWarehouseId(v === "all" ? "" : v)}
                       items={warehouseOptions}
-                      placeholder="All warehouses"
+                      placeholder={t("common.allWarehouses")}
                       allowAll
                       onOpen={() => { if (!warehouses.length) void fetchLookups() }}
                     />
@@ -1595,13 +1598,13 @@ useEffect(() => {
                   <div className="flex gap-2 items-end">
                     <Button disabled={isSavingAll} onClick={() => { 
                       if (selectedProductIds.length === 0 && !filterWarehouseId) { 
-                        toast.success("Select a filter", { description: "Choose products or warehouse, then click Search." })
+                        toast.success(t("inventoryToasts.selectFilter"), { description: t("inventoryToasts.selectFilterDesc") })
                         return
                       }
                       setHasRequested(true)
                       setCurrentPage(1) // Reset to first page on new search
                       void fetchInventory(1, pageSize)
-                    }}>Search</Button>
+                    }}>{t("common.search")}</Button>
                     <Button variant="outline" disabled={isSavingAll} onClick={() => { 
                       setSelectedProductIds([])
                       setProductLabelById({})
@@ -1614,7 +1617,7 @@ useEffect(() => {
                       setSortField("-created_at")
                       setSortOrder("desc")
                     }}>
-                      Reset
+                      {t("common.reset")}
                     </Button>
                   </div>
                 </div>
@@ -1673,7 +1676,7 @@ useEffect(() => {
               {hasRequested && (
                 <div className="border-t bg-background px-4 py-3 flex justify-end">
                   <Button variant="default" disabled={isLoading || isSavingAll} onClick={() => void saveAll()}>
-                    {isSavingAll ? "Saving..." : "Save All Changes"}
+                    {isSavingAll ? t("common.loading") : t("common.saveChanges")}
                   </Button>
                 </div>
               )}
@@ -1696,7 +1699,7 @@ useEffect(() => {
                             onClick={() => handleSort("product")}
                           >
                             <div className="flex items-center">
-                              Product
+                              {t("inventory.product")}
                               {getSortIndicator("product")}
                             </div>
                           </TableHead>
@@ -1705,7 +1708,7 @@ useEffect(() => {
                             onClick={() => handleSort("warehouse")}
                           >
                             <div className="flex items-center">
-                              Warehouse
+                              {t("inventory.warehouse")}
                               {getSortIndicator("warehouse")}
                             </div>
                           </TableHead>
@@ -1714,7 +1717,7 @@ useEffect(() => {
                             onClick={() => handleSort("quantity")}
                           >
                             <div className="flex items-center">
-                              Quantity
+                              {t("inventory.quantity")}
                               {getSortIndicator("quantity")}
                             </div>
                           </TableHead>
@@ -1723,11 +1726,11 @@ useEffect(() => {
                             onClick={() => handleSort("updated_at")}
                           >
                             <div className="flex items-center">
-                              Updated At
+                              {t("inventory.updatedAt")}
                               {getSortIndicator("updated_at")}
                             </div>
                           </TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                        <TableHead className="text-right">{t("common.actions")}</TableHead>
                       </TableRow>
                     </TableHeader>
                       <TableBody style={{ position: 'relative', height: shouldVirtualize && totalSize > 0 ? `${totalSize}px` : 'auto' }}>
@@ -1742,7 +1745,7 @@ useEffect(() => {
                       ) : mergedRows.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={5} className="py-8 text-center">
-                            No inventory entries found
+                            {t("inventory.empty")}
                           </TableCell>
                         </TableRow>
                         ) : shouldVirtualize && virtualItems.length > 0 ? (
@@ -1786,11 +1789,11 @@ useEffect(() => {
                                       <div className="hidden sm:flex gap-2">
                                         <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
                                           <Edit className="h-4 w-4" />
-                                          <span className="sr-only">Edit</span>
+                                          <span className="sr-only">{t("common.edit")}</span>
                                         </Button>
                                         <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
                                           <Trash2 className="h-4 w-4" />
-                                          <span className="sr-only">Delete</span>
+                                          <span className="sr-only">{t("common.delete")}</span>
                                         </Button>
                                       </div>
                                       <div className="sm:hidden">
@@ -1798,17 +1801,17 @@ useEffect(() => {
                                           <DropdownMenuTrigger asChild>
                                             <Button variant="outline" size="icon" className="h-8 w-8">
                                               <MoreHorizontal className="h-4 w-4" />
-                                              <span className="sr-only">Actions</span>
+                                              <span className="sr-only">{t("common.actions")}</span>
                                             </Button>
                                           </DropdownMenuTrigger>
                                           <DropdownMenuContent align="end">
-                                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                            <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                             <DropdownMenuItem onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
-                                              <Edit className="h-4 w-4 mr-2" /> Edit
+                                              <Edit className="h-4 w-4 mr-2" /> {t("common.edit")}
                                             </DropdownMenuItem>
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
-                                              <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                              <Trash2 className="h-4 w-4 mr-2" /> {t("common.delete")}
                                             </DropdownMenuItem>
                                           </DropdownMenuContent>
                                         </DropdownMenu>
@@ -1839,11 +1842,11 @@ useEffect(() => {
                                 <div className="hidden sm:flex gap-2">
                                     <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
                                     <Edit className="h-4 w-4" />
-                                    <span className="sr-only">Edit</span>
+                                    <span className="sr-only">{t("common.edit")}</span>
                                   </Button>
                                     <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
                                     <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Delete</span>
+                                    <span className="sr-only">{t("common.delete")}</span>
                                   </Button>
                                 </div>
                                 <div className="sm:hidden">
@@ -1851,17 +1854,17 @@ useEffect(() => {
                                     <DropdownMenuTrigger asChild>
                                       <Button variant="outline" size="icon" className="h-8 w-8">
                                         <MoreHorizontal className="h-4 w-4" />
-                                        <span className="sr-only">Actions</span>
+                                        <span className="sr-only">{t("common.actions")}</span>
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
-                                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                      <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                         <DropdownMenuItem onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
-                                        <Edit className="h-4 w-4 mr-2" /> Edit
+                                        <Edit className="h-4 w-4 mr-2" /> {t("common.edit")}
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
                                         <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
-                                        <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                        <Trash2 className="h-4 w-4 mr-2" /> {t("common.delete")}
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
@@ -1924,43 +1927,43 @@ useEffect(() => {
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Inventory</DialogTitle>
+            <DialogTitle>{t("common.edit")}</DialogTitle>
             <DialogDescription>Update quantity or change associations.</DialogDescription>
           </DialogHeader>
           {editItem && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label>Product</Label>
+                <Label>{t("inventory.product")}</Label>
                 <AsyncSearchableCombobox
                   value={(editItem.product?.id ?? editItem.product_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, product: { id: Number(v), name: getProductName(v) || "" } } : s))}
                   fetchItems={fetchProductsForDropdown}
                   isLoading={isLoadingProducts}
                   getItemName={getProductNameAsync}
-                  placeholder="Select product"
+                  placeholder={t("inventory.product")}
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Warehouse</Label>
+                <Label>{t("inventory.warehouse")}</Label>
                 <SearchableCombobox
                   value={(editItem.warehouse?.id ?? editItem.warehouse_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, warehouse: { id: Number(v), name: getWarehouseName(v) || "" } } : s))}
                   items={warehouseOptions}
-                  placeholder="Select warehouse"
+                  placeholder={t("inventory.warehouse")}
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Quantity</Label>
+                <Label>{t("inventory.quantity")}</Label>
                 <Input type="number" value={editItem.quantity} onChange={(e) => setEditItem((s) => (s ? { ...s, quantity: Number(e.target.value || 0) } : s))} />
               </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleEdit} disabled={isUpdating}>
-              {isUpdating ? "Saving..." : "Save Changes"}
+              {isUpdating ? t("common.loading") : t("common.saveChanges")}
             </Button>
           </DialogFooter>
         </DialogContent>

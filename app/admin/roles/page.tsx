@@ -2,7 +2,8 @@
 
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
-import { PageBreadcrumb, DASHBOARD_CRUMB, ADMIN_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { API_URL } from "@/lib/config"
@@ -41,6 +42,8 @@ type Role = {
 }
 
 export default function RolesPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [roles, setRoles] = useState<Role[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [roleToDelete, setRoleToDelete] = useState<number | null>(null)
@@ -87,8 +90,8 @@ export default function RolesPage() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast.error("Error", { description: errorMessage })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Form state for new role
   const [newRole, setNewRole] = useState({
@@ -172,7 +175,7 @@ export default function RolesPage() {
       setIsAddRoleOpen(false)
 
       // Show toast notification
-      toast.success("Role Added Successfully", { description: "${addedRole.name} has been added to the system." })
+      toast.success(t("adminToasts.added", { entity: t("admin.permissions.role") }))
 
       // Show alert message
       showAlert("success", `New role "${addedRole.name}" has been successfully added to the system.`)
@@ -208,7 +211,7 @@ export default function RolesPage() {
       setIsEditRoleOpen(false)
 
       // Show toast notification
-      toast.success("Role Updated Successfully", { description: "${updatedRole.name} has been updated." })
+      toast.success(t("adminToasts.updated", { entity: t("admin.permissions.role") }))
 
       // Show alert message
       showAlert("success", `Role "${updatedRole.name}" has been successfully updated.`)
@@ -247,7 +250,7 @@ export default function RolesPage() {
       setIsDeleteAlertOpen(false)
 
       // Show toast notification
-      toast.error("Role Deleted", { description: "${roleToDeleteData.name} has been permanently removed from the system." })
+      toast.success(t("adminToasts.deleted", { entity: t("admin.permissions.role") }))
 
       // Show alert message
       showAlert("warning", `Role "${roleToDeleteData.name}" has been permanently deleted from the system.`)
@@ -271,13 +274,13 @@ export default function RolesPage() {
   return (
     <ErrorBoundary>
     <>
-      <DocumentTitle title="Roles" />
+      <DocumentTitle title={t("nav.roles")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, ADMIN_CRUMB, { label: "Roles" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("nav.roles") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -304,64 +307,64 @@ export default function RolesPage() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Role Management</h2>
-            <p className="mb-6">Configure user roles and permission sets for your application.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.roles.management")}</h2>
+            <p className="mb-6">{t("admin.roles.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Roles</h3>
+                <h3 className="font-medium">{t("nav.roles")}</h3>
                 <Dialog open={isAddRoleOpen} onOpenChange={setIsAddRoleOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Role
+                      {t("admin.roles.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Role</DialogTitle>
+                      <DialogTitle>{t("admin.roles.addNew")}</DialogTitle>
                       <DialogDescription>Create a new role with specific permissions.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Role Name (English)</Label>
+                        <Label htmlFor="name">{t("admin.roles.nameEn")}</Label>
                         <Input
                           id="name"
                           value={newRole.name}
                           onChange={(e) => setNewRole({ ...newRole, name: e.target.value })}
-                          placeholder="Enter role name in English"
+                          placeholder={t("admin.roles.nameEn")}
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="name_ar">Role Name (Arabic)</Label>
+                        <Label htmlFor="name_ar">{t("admin.roles.nameAr")}</Label>
                         <Input
                           id="name_ar"
                           value={newRole.name_ar}
                           onChange={(e) => setNewRole({ ...newRole, name_ar: e.target.value })}
-                          placeholder="Enter role name in Arabic"
+                          placeholder={t("admin.roles.nameAr")}
                           dir="rtl"
                         />
                       </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddRoleOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddRole}>Add Role</Button>
+                      <Button onClick={handleAddRole}>{t("admin.roles.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-4 font-medium text-sm mb-2 border-b pb-2">
-                  <div>Role Name (English)</div>
-                  <div className="col-span-2">Role Name (Arabic)</div>
-                  <div className="text-right">Actions</div>
+                  <div>{t("admin.roles.nameEn")}</div>
+                  <div className="col-span-2">{t("admin.roles.nameAr")}</div>
+                  <div className="text-right">{t("common.actions")}</div>
                 </div>
                 {isLoading ? (
-                  <div className="py-8 text-center">Loading roles...</div>
+                  <div className="py-8 text-center">{t("admin.roles.loading")}</div>
                 ) : roles.length === 0 ? (
-                  <div className="py-8 text-center">No roles found</div>
+                  <div className="py-8 text-center">{t("admin.roles.empty")}</div>
                 ) : (
                   roles.map((role) => (
                     <div key={role.id} className="grid grid-cols-4 text-sm py-3 border-b last:border-0 items-center">
@@ -379,7 +382,7 @@ export default function RolesPage() {
                             onClick={() => openEditDialog(role)}
                           >
                             <Edit className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
+                            <span className="sr-only">{t("common.edit")}</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -388,7 +391,7 @@ export default function RolesPage() {
                             onClick={() => openDeleteDialog(role.id)}
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete</span>
+                            <span className="sr-only">{t("common.delete")}</span>
                           </Button>
                         </div>
 
@@ -398,19 +401,19 @@ export default function RolesPage() {
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon" className="h-8 w-8">
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions</span>
+                                <span className="sr-only">{t("common.actions")}</span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => openEditDialog(role)}>
                                 <Edit className="h-4 w-4 mr-2" />
-                                Edit
+                                {t("common.edit")}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(role.id)}>
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
+                                {t("common.delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -429,13 +432,13 @@ export default function RolesPage() {
       <Dialog open={isEditRoleOpen} onOpenChange={setIsEditRoleOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Role</DialogTitle>
+            <DialogTitle>{t("admin.roles.editTitle")}</DialogTitle>
             <DialogDescription>Update role information.</DialogDescription>
           </DialogHeader>
           {editingRole && (
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Role Name (English)</Label>
+                <Label htmlFor="edit-name">{t("admin.roles.nameEn")}</Label>
                 <Input
                   id="edit-name"
                   value={editingRole.name || ""}
@@ -443,7 +446,7 @@ export default function RolesPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_ar">Role Name (Arabic)</Label>
+                <Label htmlFor="edit-name_ar">{t("admin.roles.nameAr")}</Label>
                 <Input
                   id="edit-name_ar"
                   value={editingRole.name_ar || ""}
@@ -455,9 +458,9 @@ export default function RolesPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditRoleOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateRole}>Save Changes</Button>
+            <Button onClick={handleUpdateRole}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

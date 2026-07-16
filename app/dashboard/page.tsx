@@ -4,6 +4,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { PageBreadcrumb } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 
 import { API_URL } from "@/lib/config"
 import { fetchWithRetry } from "@/lib/apiClient"
@@ -125,6 +126,7 @@ function formatChangePercent(value: number, mode: "previous_month" | "previous_p
 }
 
 export default function Dashboard() {
+  const { t } = useLanguage()
   const [stats, setStats] = useState<DashboardStats>({
     totalProjects: 0,
     approvedProjects: 0,
@@ -342,7 +344,7 @@ export default function Dashboard() {
       setSalesByGenre([])
       setComparisonMode("previous_month")
       setHasDateFilter(false)
-      toast.error("Dashboard failed to load", { description: message })
+      toast.error(t("dashboard.loadFailedToast"), { description: message })
     } finally {
       setIsLoading(false)
     }
@@ -379,29 +381,29 @@ export default function Dashboard() {
 
   return (
       <ErrorBoundary>
-      <DocumentTitle title="Dashboard" />
+      <DocumentTitle title={t("dashboard.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[{ label: "Dashboard" }]} />
+            <PageBreadcrumb items={[{ label: t("dashboard.title") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-xl font-semibold">Dashboard</h2>
-                <p className="text-muted-foreground">Welcome to your project management dashboard.</p>
+                <h2 className="text-xl font-semibold">{t("dashboard.title")}</h2>
+                <p className="text-muted-foreground">{t("dashboard.welcome")}</p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
                   <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="All warehouses" />
+                    <SelectValue placeholder={t("common.allWarehouses")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All warehouses</SelectItem>
+                    <SelectItem value="all">{t("common.allWarehouses")}</SelectItem>
                     {warehouses.map((warehouse) => (
                       <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
                         {warehouse.name_en}
@@ -414,20 +416,20 @@ export default function Dashboard() {
                   onDateChange={(range) => setDateRange(range ?? null)}
                 />
                 <Button onClick={handleApplyFilters} disabled={isLoading}>
-                  {isLoading ? "Loading..." : "Apply Filters"}
+                  {isLoading ? t("common.loading") : t("common.applyFilters")}
                 </Button>
                 <Button
                   variant="outline"
                   onClick={handleClearFilters}
                   disabled={isLoading || (!hasActiveFilters && !hasPendingFilterChanges)}
                 >
-                  Clear
+                  {t("common.clear")}
                 </Button>
               </div>
             </div>
 
             {isLoading ? (
-              <div className="space-y-8" aria-busy="true" aria-label="Loading dashboard data">
+              <div className="space-y-8" aria-busy="true" aria-label={t("dashboard.loadingAria")}>
                 <OverviewCardSkeleton metrics={3} />
                 <CardSkeleton count={4} />
                 <OverviewCardSkeleton metrics={4} />
@@ -439,7 +441,7 @@ export default function Dashboard() {
             ) : fetchError ? (
               <Alert variant="destructive" className="mb-6">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Could not load dashboard</AlertTitle>
+                <AlertTitle>{t("dashboard.loadFailed")}</AlertTitle>
                 <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <span>{fetchError}</span>
                   <Button
@@ -448,18 +450,18 @@ export default function Dashboard() {
                     className="shrink-0 border-destructive/40 bg-background"
                     onClick={() => fetchStats(appliedWarehouse, appliedDateRange)}
                   >
-                    Retry
+                    {t("common.retry")}
                   </Button>
                 </AlertDescription>
               </Alert>
             ) : isEmptyDashboard ? (
               <Alert className="mb-6">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>No data in this range</AlertTitle>
+                <AlertTitle>{t("dashboard.emptyTitle")}</AlertTitle>
                 <AlertDescription>
                   {hasActiveFilters
-                    ? "Nothing matched the selected warehouse or dates. Try clearing filters or widening the date range."
-                    : "There is no project or sales activity to show yet."}
+                    ? t("dashboard.emptyFiltered")
+                    : t("dashboard.emptyDefault")}
                 </AlertDescription>
               </Alert>
             ) : (
@@ -470,28 +472,28 @@ export default function Dashboard() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <FileText className="h-5 w-5" />
-                        Projects Overview
+                        {t("dashboard.projectsOverview")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="grid gap-4 md:grid-cols-3">
                         <div className="text-center">
                           <div className="text-3xl font-bold text-blue-600">{stats.totalProjects}</div>
-                          <p className="text-sm text-muted-foreground">Total Projects</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.totalProjects")}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {stats.approvedProjects} approved, {stats.pendingProjects} pending
                           </p>
                         </div>
                         <div className="text-center">
                           <div className="text-3xl font-bold text-green-600">{stats.approvedProjects}</div>
-                          <p className="text-sm text-muted-foreground">Approved Projects</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.approvedProjects")}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {stats.approvedPercentage}% of total projects
                           </p>
                         </div>
                         <div className="text-center">
                           <div className="text-3xl font-bold text-yellow-600">{stats.pendingProjects}</div>
-                          <p className="text-sm text-muted-foreground">Pending Projects</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.pendingProjects")}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {stats.pendingPercentage}% of total projects
                           </p>
@@ -506,7 +508,7 @@ export default function Dashboard() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">
-                        {hasDateFilter ? "Bills in Period" : "Total Bills"}
+                        {hasDateFilter ? "Bills in Period" : t("dashboard.totalBills")}
                       </CardTitle>
                       <Receipt className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
@@ -521,7 +523,7 @@ export default function Dashboard() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">
-                        {hasDateFilter ? "Period Revenue" : "Total Revenue"}
+                        {hasDateFilter ? "Period Revenue" : t("dashboard.totalRevenue")}
                       </CardTitle>
                       <Coins className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
@@ -536,7 +538,7 @@ export default function Dashboard() {
                   {!hasDateFilter && (
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Monthly Revenue</CardTitle>
+                      <CardTitle className="text-sm font-medium">{t("dashboard.monthlyRevenue")}</CardTitle>
                       <TrendingUp className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
@@ -551,7 +553,7 @@ export default function Dashboard() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">
-                        {hasDateFilter ? "Books Sold in Period" : "Books Sold"}
+                        {hasDateFilter ? "Books Sold in Period" : t("dashboard.booksSold")}
                       </CardTitle>
                       <BookOpen className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
@@ -570,26 +572,26 @@ export default function Dashboard() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Users className="h-5 w-5" />
-                        People Overview
+                        {t("dashboard.peopleOverview")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="grid gap-4 md:grid-cols-4">
                         <div className="text-center">
                           <div className="text-2xl font-bold text-purple-600">{stats.totalAuthors}</div>
-                          <p className="text-sm text-muted-foreground">Authors</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.authors")}</p>
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-indigo-600">{stats.totalTranslators}</div>
-                          <p className="text-sm text-muted-foreground">Translators</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.translators")}</p>
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-pink-600">{stats.totalRightsOwners}</div>
-                          <p className="text-sm text-muted-foreground">Rights Owners</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.rightsOwners")}</p>
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-orange-600">{stats.totalReviewers}</div>
-                          <p className="text-sm text-muted-foreground">Reviewers</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.reviewers")}</p>
                         </div>
                       </div>
                     </CardContent>
@@ -601,7 +603,7 @@ export default function Dashboard() {
                   {/* Project Status Pie Chart */}
                   <Card>
                     <CardHeader>
-                      <CardTitle>Project Status Distribution</CardTitle>
+                      <CardTitle>{t("dashboard.projectStatus")}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="h-[400px] w-full">

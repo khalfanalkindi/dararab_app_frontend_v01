@@ -2,6 +2,7 @@
 
 import { Search } from "lucide-react"
 
+import { useLanguage } from "@/components/language-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -37,13 +38,15 @@ export function ProductFilters({
   statusOptions,
   onResetFilters,
 }: ProductFiltersProps) {
+  const { t } = useLanguage()
+
   return (
     <div className="flex flex-col md:flex-row gap-4 mb-6">
       <div className="flex-1">
         <div className="relative">
           <Search className="absolute start-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by ISBN, title, author or translator..."
+            placeholder={t("products.searchPlaceholder")}
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             className="ps-8"
@@ -58,10 +61,10 @@ export function ProductFilters({
           }}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Filter by genre" />
+            <SelectValue placeholder={t("products.genre")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Genres</SelectItem>
+            <SelectItem value="all">{t("products.allGenres")}</SelectItem>
             {genres.map((genre) => (
               <SelectItem key={genre.id} value={genre.id.toString()}>
                 {genre.display_name_en}
@@ -78,10 +81,10 @@ export function ProductFilters({
           }}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Filter by status" />
+            <SelectValue placeholder={t("products.status")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="all">{t("products.allStatuses")}</SelectItem>
             {statusOptions.map((status) => (
               <SelectItem key={status.id} value={status.id.toString()}>
                 {status.display_name_en}
@@ -91,7 +94,7 @@ export function ProductFilters({
         </Select>
       </div>
       <Button variant="outline" onClick={onResetFilters}>
-        Reset Filters
+        {t("products.clearFilters")}
       </Button>
     </div>
   )

@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { fetchWithRetry } from "@/lib/apiClient"
@@ -67,6 +68,8 @@ type TransferRow = {
 }
 
 export default function ProductTransferPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [mounted, setMounted] = useState<boolean>(false)
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [hasRequested, setHasRequested] = useState<boolean>(false)
@@ -297,7 +300,7 @@ useEffect(() => {
         if (process.env.NODE_ENV !== "production") {
           console.warn("No access token available for fetchLookups")
         }
-        toast.error("Error", { description: "Authentication required. Please log in again." })
+        toast.error(t("toasts.error"), { description: t("toasts.authRequired") })
         return
       }
       
@@ -338,7 +341,7 @@ useEffect(() => {
       if (process.env.NODE_ENV !== "production") {
       console.error("Lookup fetch failed", e)
       }
-      toast.error("Error", { description: "Failed to load warehouses" })
+      toast.error(t("toasts.error"), { description: t("toasts.loadWarehousesFailed") })
     }
   }
 
@@ -350,7 +353,7 @@ useEffect(() => {
 
     // Validate warehouses are different
     if (fromWarehouseId === toWarehouseId) {
-      toast.error("Error", { description: "From and To warehouses must be different" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.sameWarehouse") })
         return
     }
 
@@ -402,7 +405,7 @@ useEffect(() => {
       if (process.env.NODE_ENV !== "production") {
         console.error("Fetch transfer data failed", e)
       }
-      toast.error("Error", { description: "Failed to load inventory data" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.loadFailed") })
       setTransferRows([])
     } finally {
       setIsLoading(false)
@@ -412,22 +415,22 @@ useEffect(() => {
   // Handle search button click
   const handleSearch = () => {
     if (selectedProductIds.length === 0) {
-      toast.error("Error", { description: "Please select at least one product" })
+      toast.error(t("toasts.error"), { description: t("toasts.selectProduct") })
         return
     }
     
     if (!fromWarehouseId) {
-      toast.error("Error", { description: "Please select From warehouse" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.selectFrom") })
       return
     }
     
     if (!toWarehouseId) {
-      toast.error("Error", { description: "Please select To warehouse" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.selectTo") })
       return
     }
     
     if (fromWarehouseId === toWarehouseId) {
-      toast.error("Error", { description: "From and To warehouses must be different" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.sameWarehouse") })
         return
     }
     
@@ -454,7 +457,7 @@ useEffect(() => {
     
     // Validate: transfer quantity must be <= from quantity
     if (numValue > row.fromQuantity) {
-      toast.error("Error", { description: "Transfer quantity cannot exceed available quantity (${row.fromQuantity})" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.qtyExceeds") })
         return
     }
     
@@ -476,7 +479,7 @@ useEffect(() => {
     })
 
     if (invalidRows.length > 0) {
-      toast.error("Error", { description: "Some transfer quantities exceed available inventory" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.someExceed") })
       return
     }
 
@@ -486,7 +489,7 @@ useEffect(() => {
     })
 
     if (rowsToTransfer.length === 0) {
-      toast.error("Error", { description: "Please enter transfer quantities" })
+      toast.error(t("toasts.error"), { description: t("transferToasts.enterQty") })
       return
     }
 
@@ -713,13 +716,15 @@ useEffect(() => {
       }
 
       if (failedCount > 0) {
-        toast.error(mode === "bulk" ? `Bulk transfer: ${successCount} of ${total}` : `Individual transfer (fallback): ${successCount} of ${total}`, { description: "${failedCount} failed." })
+        toast.error(
+          mode === "bulk"
+            ? t("transferToasts.partialBulk", { ok: successCount, total })
+            : t("transferToasts.partialBulk", { ok: successCount, total }),
+          { description: t("toasts.tryAgain") },
+        )
       } else {
-        toast.success("Transfer complete", {
-          description:
-            mode === "bulk"
-              ? `Moved ${successCount} item${successCount === 1 ? "" : "s"} between warehouses`
-              : `Moved ${successCount} item${successCount === 1 ? "" : "s"} (one request per product)`,
+        toast.success(t("transferToasts.complete"), {
+          description: t("transferToasts.completeDesc", { count: successCount }),
           duration: 4500,
         })
       }
@@ -732,7 +737,7 @@ useEffect(() => {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save transfers"
-      toast.error("Error", { description: msg })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsSavingAll(false)
       setSaveProgress({ mode: null, current: 0, total: 0, label: "" })
@@ -764,7 +769,7 @@ useEffect(() => {
       // Ensure we have a fresh token
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
-        toast.error("Error", { description: "Authentication required. Please log in again." })
+        toast.error(t("toasts.error"), { description: t("toasts.authRequired") })
         return []
       }
       
@@ -793,7 +798,7 @@ useEffect(() => {
       // Ensure we have a fresh token
       const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
       if (!token) {
-        toast.error("Error", { description: "Authentication required. Please log in again." })
+        toast.error(t("toasts.error"), { description: t("toasts.authRequired") })
         return []
       }
       
@@ -918,19 +923,19 @@ useEffect(() => {
 
   return (
     <ErrorBoundary>
-      <DocumentTitle title="Transfer" />
+      <DocumentTitle title={t("transfer.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Product Transfer" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("transfer.management") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
               <div className="mb-4">
-                <h2 className="text-xl font-semibold">Product Transfer</h2>
+                <h2 className="text-xl font-semibold">{t("transfer.management")}</h2>
                 <p className="text-sm text-muted-foreground">Transfer products between warehouses.</p>
                       </div>
 
@@ -939,7 +944,7 @@ useEffect(() => {
                 <div className="bg-muted p-4">
                   <div className="grid gap-4 md:grid-cols-4 md:gap-4">
                           <div className="grid gap-2">
-                      <Label>Products (Multi-select)</Label>
+                      <Label>{t("transfer.products")}</Label>
                       <MultiSelectProducts
                         selectedIds={selectedProductIds}
                         onSelectionChange={setSelectedProductIds}
@@ -950,7 +955,7 @@ useEffect(() => {
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label>From Warehouse</Label>
+                      <Label>{t("transfer.fromWarehouse")}</Label>
                       <WarehouseSearchableCombobox
                         value={fromWarehouseId}
                         onChange={(val) => {
@@ -962,7 +967,7 @@ useEffect(() => {
                             setHasRequested(false)
                           }
                         }}
-                        placeholder="Select from warehouse"
+                        placeholder={t("transfer.fromWarehouse")}
                         items={warehouseOptions}
                         onOpen={() => {
                           // Ensure warehouses are loaded when dropdown opens
@@ -973,7 +978,7 @@ useEffect(() => {
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label>To Warehouse</Label>
+                      <Label>{t("transfer.toWarehouse")}</Label>
                       <WarehouseSearchableCombobox
                         value={toWarehouseId}
                         onChange={(val) => {
@@ -985,7 +990,7 @@ useEffect(() => {
                             setHasRequested(false)
                           }
                         }}
-                        placeholder="Select to warehouse"
+                        placeholder={t("transfer.toWarehouse")}
                         items={warehouseOptions}
                         onOpen={() => {
                           // Ensure warehouses are loaded when dropdown opens
@@ -1000,14 +1005,14 @@ useEffect(() => {
                         disabled={isSavingAll || isLoading} 
                         onClick={handleSearch}
                       >
-                        Search
+                        {t("common.search")}
                     </Button>
                     <Button 
                         variant="outline" 
                         disabled={isSavingAll} 
                         onClick={handleReset}
                       >
-                      Reset
+                      {t("common.reset")}
                     </Button>
                   </div>
                 </div>
@@ -1090,7 +1095,7 @@ useEffect(() => {
                       disabled={isLoading || isSavingAll}
                       onClick={() => void handleSaveAll()}
                     >
-                      {isSavingAll ? "Transferring..." : "Save All Changes"}
+                      {isSavingAll ? t("common.loading") : t("common.saveChanges")}
                     </Button>
                   </div>
                 </div>
@@ -1101,10 +1106,10 @@ useEffect(() => {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Products</TableHead>
-                      <TableHead>From</TableHead>
-                      <TableHead>To</TableHead>
-                      <TableHead>Transfer</TableHead>
+                      <TableHead>{t("transfer.products")}</TableHead>
+                      <TableHead>{t("transfer.from")}</TableHead>
+                      <TableHead>{t("transfer.to")}</TableHead>
+                      <TableHead>{t("transfer.transfer")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

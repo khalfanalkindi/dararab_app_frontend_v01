@@ -20,6 +20,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useLanguage } from "@/components/language-context"
 import { cn } from "@/lib/utils"
 import type { Genre, Product, Warehouse } from "./types"
 
@@ -64,6 +65,7 @@ function PaginationControls({
   PosProductGridProps,
   "currentPage" | "pageSize" | "totalPages" | "totalCount" | "onPageChange" | "onPageSizeChange"
 >) {
+  const { t } = useLanguage()
   const startItem = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0
   const endItem = Math.min(currentPage * pageSize, totalCount)
 
@@ -71,11 +73,13 @@ function PaginationControls({
     <div className="flex items-center justify-between mt-4">
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">
-          {totalCount > 0 ? (
-            <>Showing {startItem}-{endItem} of {totalCount} products</>
-          ) : (
-            <>No products found</>
-          )}
+          {totalCount > 0
+            ? t("pos.products.showingCount", {
+                start: startItem,
+                end: endItem,
+                total: totalCount,
+              })
+            : t("pos.products.noProducts")}
         </span>
         <Select
           value={pageSize.toString()}
@@ -109,7 +113,7 @@ function PaginationControls({
           onClick={() => onPageChange(Math.max(1, currentPage - 1))}
           disabled={currentPage === 1}
         >
-          Previous
+          {t("common.previous")}
         </Button>
         <Button
           variant="outline"
@@ -117,7 +121,7 @@ function PaginationControls({
           onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
           disabled={currentPage === totalPages}
         >
-          Next
+          {t("common.next")}
         </Button>
         <Button
           variant="outline"
@@ -161,6 +165,7 @@ export function PosProductGrid({
   getAvailableStock,
   onImageError,
 }: PosProductGridProps) {
+  const { t } = useLanguage()
   const selectedWarehouseName = selectedWarehouse
     ? warehouses.find((w) => w.id === selectedWarehouse)?.name_en
     : null
@@ -168,7 +173,7 @@ export function PosProductGrid({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Products</CardTitle>
+        <CardTitle>{t("pos.products.title")}</CardTitle>
         <div className="flex items-center gap-2" />
       </CardHeader>
       <CardContent>
@@ -178,7 +183,7 @@ export function PosProductGrid({
               <div className="relative flex-1">
                 <Search className="absolute start-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search products by title, ISBN..."
+                  placeholder={t("pos.products.searchPlaceholder")}
                   value={searchInput}
                   onChange={(e) => onSearchInputChange(e.target.value)}
                   className="ps-8"
@@ -191,15 +196,15 @@ export function PosProductGrid({
                     size="sm"
                     onClick={() => onWarehouseDropdownOpenChange(true)}
                   >
-                    {selectedWarehouseName || "Select Warehouse"}
+                    {selectedWarehouseName || t("pos.products.selectWarehouse")}
                     <ChevronDown className="ml-2 h-4 w-4" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[200px] p-0">
                   <Command>
-                    <CommandInput placeholder="Search warehouses..." />
+                    <CommandInput placeholder={t("pos.products.searchWarehouses")} />
                     <CommandList>
-                      <CommandEmpty>No warehouse found.</CommandEmpty>
+                      <CommandEmpty>{t("pos.products.noWarehouse")}</CommandEmpty>
                       <CommandGroup>
                         {warehouses.map((warehouse) => (
                           <CommandItem
@@ -230,15 +235,15 @@ export function PosProductGrid({
                     size="sm"
                     onClick={() => onGenreDropdownOpenChange(true)}
                   >
-                    {selectedGenre ? selectedGenre.display_name_en : "All Genres"}
+                    {selectedGenre ? selectedGenre.display_name_en : t("pos.products.allGenres")}
                     <ChevronDown className="ml-2 h-4 w-4" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[200px] p-0">
                   <Command>
-                    <CommandInput placeholder="Search genres..." />
+                    <CommandInput placeholder={t("pos.products.searchGenres")} />
                     <CommandList>
-                      <CommandEmpty>No genre found.</CommandEmpty>
+                      <CommandEmpty>{t("pos.products.noGenre")}</CommandEmpty>
                       <CommandGroup>
                         <CommandItem
                           onSelect={() => {
@@ -252,7 +257,7 @@ export function PosProductGrid({
                               selectedGenre === null ? "opacity-100" : "opacity-0",
                             )}
                           />
-                          All Genres
+                          {t("pos.products.allGenres")}
                         </CommandItem>
                         {genres.map((genre) => (
                           <CommandItem
@@ -313,22 +318,22 @@ export function PosProductGrid({
                   <ShoppingCart className="h-8 w-8 text-muted-foreground" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold">Select a Warehouse</h3>
-                  <p className="text-muted-foreground">Please select a warehouse to view available products</p>
+                  <h3 className="text-lg font-semibold">{t("pos.products.selectWarehouseTitle")}</h3>
+                  <p className="text-muted-foreground">{t("pos.products.selectWarehouseHint")}</p>
                 </div>
               </div>
             </div>
           ) : isLoading ? (
             <div className="flex justify-center items-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <span className="ml-2">Loading products for {selectedWarehouseName}...</span>
+              <span className="ml-2">{t("common.loading")}</span>
             </div>
           ) : products.length === 0 ? (
             <div className="text-center py-12">
               <div className="flex flex-col items-center gap-4">
-                <p className="text-muted-foreground">No products found in this warehouse</p>
+                <p className="text-muted-foreground">{t("pos.products.noProducts")}</p>
                 <Button variant="outline" size="sm" onClick={onRetryLoadProducts}>
-                  Retry Load Products
+                  {t("pos.products.retry")}
                 </Button>
               </div>
             </div>
@@ -362,23 +367,33 @@ export function PosProductGrid({
                                 const displayPrice = getDisplayPrice(product)
                                 return displayPrice
                                   ? `${parseFloat(displayPrice).toFixed(3)} ${getCurrencyLabel()}`
-                                  : "N/A"
+                                  : t("common.na")
                               })()}
                             </p>
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <p className="text-xs text-muted-foreground cursor-help">
-                                    Stock: {getAvailableStock(product)}
+                                    {t("pos.products.currentStock")}: {getAvailableStock(product)}
                                   </p>
                                 </TooltipTrigger>
                                 <TooltipContent>
                                   <div className="space-y-1">
-                                    <p className="font-medium">Stock Information</p>
-                                    <p>Current Stock: {getAvailableStock(product)}</p>
-                                    <p>ISBN: {product.isbn || "N/A"}</p>
-                                    <p>Author: {product.author_name || "N/A"}</p>
-                                    <p>Translator: {product.translator_name || "N/A"}</p>
+                                    <p className="font-medium">{t("pos.products.stockInfo")}</p>
+                                    <p>
+                                      {t("pos.products.currentStock")}: {getAvailableStock(product)}
+                                    </p>
+                                    <p>
+                                      {t("pos.products.isbn")}: {product.isbn || t("common.na")}
+                                    </p>
+                                    <p>
+                                      {t("pos.products.author")}:{" "}
+                                      {product.author_name || t("common.na")}
+                                    </p>
+                                    <p>
+                                      {t("pos.products.translator")}:{" "}
+                                      {product.translator_name || t("common.na")}
+                                    </p>
                                   </div>
                                 </TooltipContent>
                               </Tooltip>
@@ -390,7 +405,7 @@ export function PosProductGrid({
                             disabled={getAvailableStock(product) < 1}
                             onClick={() => onAddToCart(product)}
                           >
-                            Add
+                            {t("common.add")}
                           </Button>
                         </div>
                       </div>

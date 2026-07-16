@@ -30,117 +30,119 @@ import { ThemeToggle } from "./theme-toggle"
 import { useLanguage } from "./language-context"
 import { usePermissionsOptional } from "@/components/permissions-provider"
 import { filterAdminNavByPermissions, filterNavByPermissions } from "@/lib/permissions"
+import type { TranslateFn } from "@/lib/i18n"
 
-const data = {
-  navGroups: [
-    // One-click access — Dashboard + POS
+function buildNavGroups(t: TranslateFn): NavMainGroup[] {
+  return [
     {
       items: [
         {
-          title: "Dashboard",
+          title: t("nav.dashboard"),
           url: "/dashboard",
           icon: LayoutDashboard,
-          items: [] as { title: string; url: string }[],
+          items: [],
         },
         {
-          title: "Point of Sale",
+          title: t("nav.pos"),
           url: "/pos",
           icon: ShoppingCart,
-          items: [] as { title: string; url: string }[],
+          items: [],
         },
       ],
     },
-    // Sections: icon + title once, then children (no duplicate group label)
     {
       items: [
         {
-          title: "Publishing",
+          title: t("nav.publishing"),
           url: "/projects",
           icon: Blocks,
           items: [
-            { title: "Projects", url: "/projects" },
-            { title: "Project Contracts", url: "/projects-contracts" },
+            { title: t("nav.projects"), url: "/projects" },
+            { title: t("nav.projectContracts"), url: "/projects-contracts" },
           ],
         },
         {
-          title: "Catalog",
+          title: t("nav.catalog"),
           url: "/products",
           icon: BookCopy,
           items: [
-            { title: "Products", url: "/products" },
-            { title: "Inventory", url: "/inventory" },
-            { title: "Transfer", url: "/transfer" },
+            { title: t("nav.products"), url: "/products" },
+            { title: t("nav.inventory"), url: "/inventory" },
+            { title: t("nav.transfer"), url: "/transfer" },
           ],
         },
         {
-          title: "Sales",
+          title: t("nav.sales"),
           url: "/invoices",
           icon: FileText,
           items: [
-            { title: "Invoices", url: "/invoices" },
-            { title: "Outstanding Payment", url: "/outstanding-payment" },
+            { title: t("nav.invoices"), url: "/invoices" },
+            { title: t("nav.outstandingPayment"), url: "/outstanding-payment" },
           ],
         },
         {
-          title: "Reports",
+          title: t("nav.reports"),
           url: "/reports",
           icon: BarChart3,
           items: [
-            { title: "Overview", url: "/reports" },
-            { title: "Warehouse Statistics", url: "/reports/warehouse-stat" },
-            { title: "Royalties Calculation", url: "/reports/royalties" },
+            { title: t("nav.reportsOverview"), url: "/reports" },
+            { title: t("nav.warehouseStatistics"), url: "/reports/warehouse-stat" },
+            { title: t("nav.royaltiesCalculation"), url: "/reports/royalties" },
           ],
         },
         {
-          title: "Definitions",
+          title: t("nav.definitions"),
           url: "/definitions",
           icon: BookMarked,
           items: [
-            { title: "Overview", url: "/definitions" },
-            { title: "Authors", url: "/definitions/authors" },
-            { title: "Translators", url: "/definitions/translators" },
-            { title: "Warehouses", url: "/definitions/warehouses" },
-            { title: "Customers", url: "/definitions/customers" },
-            { title: "Rights Owners", url: "/definitions/rights_owner" },
+            { title: t("nav.definitionsOverview"), url: "/definitions" },
+            { title: t("nav.authors"), url: "/definitions/authors" },
+            { title: t("nav.translators"), url: "/definitions/translators" },
+            { title: t("nav.warehouses"), url: "/definitions/warehouses" },
+            { title: t("nav.customers"), url: "/definitions/customers" },
+            { title: t("nav.rightsOwners"), url: "/definitions/rights_owner" },
           ],
         },
       ],
     },
-  ] satisfies NavMainGroup[],
-  projects: [
+  ]
+}
+
+function buildAdminNav(t: TranslateFn) {
+  return [
     {
-      name: "Admin",
+      name: t("nav.admin"),
       url: "/admin",
       icon: Settings2,
       items: [
-        { title: "Users", url: "/admin/users" },
-        { title: "Roles", url: "/admin/roles" },
-        { title: "Pages", url: "/admin/pages" },
-        { title: "Role Permissions", url: "/admin/role-permissions" },
-        { title: "User Permissions", url: "/admin/user-permissions" },
-        { title: "Common Definitions", url: "/admin/common" },
+        { title: t("nav.users"), url: "/admin/users" },
+        { title: t("nav.roles"), url: "/admin/roles" },
+        { title: t("nav.pages"), url: "/admin/pages" },
+        { title: t("nav.rolePermissions"), url: "/admin/role-permissions" },
+        { title: t("nav.userPermissions"), url: "/admin/user-permissions" },
+        { title: t("nav.commonDefinitions"), url: "/admin/common" },
       ],
     },
-  ],
+  ]
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { dir } = useLanguage()
+  const { dir, t, language } = useLanguage()
   const perms = usePermissionsOptional()
   const sidebarSide = dir === "rtl" ? "right" : "left"
 
   const navGroups = useMemo(() => {
-    return data.navGroups
+    return buildNavGroups(t)
       .map((group) => ({
         ...group,
         items: filterNavByPermissions(group.items, perms?.permissions ?? null),
       }))
       .filter((group) => group.items.length > 0)
-  }, [perms?.permissions])
+  }, [perms?.permissions, t, language])
 
   const projects = useMemo(
-    () => filterAdminNavByPermissions(data.projects, perms?.permissions ?? null),
-    [perms?.permissions],
+    () => filterAdminNavByPermissions(buildAdminNav(t), perms?.permissions ?? null),
+    [perms?.permissions, t, language],
   )
 
   return (

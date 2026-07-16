@@ -19,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { format } from "date-fns"
+import { useLanguage } from "@/components/language-context"
 
 import type { Invoice, InvoiceTotals } from "./types"
 
@@ -37,13 +38,16 @@ export function InvoiceViewDialog({
   invoiceTotals,
   onClose,
 }: InvoiceViewDialogProps) {
+  const { t } = useLanguage()
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Invoice Details</DialogTitle>
+          <DialogTitle>{t("invoices.view.title")}</DialogTitle>
           <DialogDescription>
-            Invoice #{invoice?.invoice_number} - {invoice?.customer?.institution_name || "No Customer"}
+            {t("invoices.table.invoiceNumber")} {invoice?.invoice_number} -{" "}
+            {invoice?.customer?.institution_name || t("outstanding.table.noCustomer")}
           </DialogDescription>
         </DialogHeader>
 
@@ -51,39 +55,51 @@ export function InvoiceViewDialog({
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <h3 className="font-medium mb-2">Customer Information</h3>
-                <p>{invoice.customer?.institution_name || "No Customer"}</p>
+                <h3 className="font-medium mb-2">{t("invoices.view.customerInfo")}</h3>
+                <p>{invoice.customer?.institution_name || t("outstanding.table.noCustomer")}</p>
                 <p className="text-sm text-muted-foreground">
-                  {invoice.customer?.contact_person || "No Contact Person"}
+                  {invoice.customer?.contact_person || t("common.na")}
                 </p>
               </div>
               <div>
-                <h3 className="font-medium mb-2">Invoice Information</h3>
-                <p>Invoice #: {invoice.invoice_number}</p>
-                <p>Composite ID: {invoice.composite_id || "N/A"}</p>
+                <h3 className="font-medium mb-2">{t("invoices.view.invoiceInfo")}</h3>
                 <p>
-                  Date:{" "}
-                  {invoice.created_at ? format(new Date(invoice.created_at), "PPP") : "No Date"}
+                  {t("invoices.table.invoiceNumber")}: {invoice.invoice_number}
                 </p>
-                <p>Warehouse: {invoice.warehouse?.name_en || "No Warehouse"}</p>
-                <p>Type: {invoice.invoice_type?.display_name_en || "No Type"}</p>
-                <p>Payment Method: {invoice.payment_method?.display_name_en || "No Payment Method"}</p>
+                <p>
+                  {t("invoices.table.compositeId")}: {invoice.composite_id || t("common.na")}
+                </p>
+                <p>
+                  {t("common.date")}:{" "}
+                  {invoice.created_at
+                    ? format(new Date(invoice.created_at), "PPP")
+                    : t("outstanding.table.noDate")}
+                </p>
+                <p>
+                  {t("common.warehouse")}: {invoice.warehouse?.name_en || t("outstanding.table.noWarehouse")}
+                </p>
+                <p>
+                  {t("common.type")}: {invoice.invoice_type?.display_name_en || t("common.na")}
+                </p>
+                <p>
+                  {invoice.payment_method?.display_name_en || t("common.na")}
+                </p>
               </div>
             </div>
 
             <Separator />
 
             <div>
-              <h3 className="font-medium mb-4">Items</h3>
+              <h3 className="font-medium mb-4">{t("invoices.view.items")}</h3>
               <div className="border rounded-md">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead className="text-right">Unit Price</TableHead>
-                      <TableHead className="text-right">Discount</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead>{t("common.product")}</TableHead>
+                      <TableHead className="text-right">{t("common.quantity")}</TableHead>
+                      <TableHead className="text-right">{t("invoices.view.unitPrice")}</TableHead>
+                      <TableHead className="text-right">{t("invoices.view.discount")}</TableHead>
+                      <TableHead className="text-right">{t("common.total")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -91,9 +107,9 @@ export function InvoiceViewDialog({
                       <TableRow key={item.id}>
                         <TableCell>
                           <div>
-                            <p className="font-medium">{item.product?.title_en || "No Title"}</p>
+                            <p className="font-medium">{item.product?.title_en || t("common.na")}</p>
                             <p className="text-sm text-muted-foreground">
-                              {item.product?.title_ar || "No Arabic Title"}
+                              {item.product?.title_ar || t("common.na")}
                             </p>
                           </div>
                         </TableCell>
@@ -105,7 +121,7 @@ export function InvoiceViewDialog({
                     )) || (
                       <TableRow>
                         <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                          No items found
+                          {t("common.noResults")}
                         </TableCell>
                       </TableRow>
                     )}
@@ -131,7 +147,7 @@ export function InvoiceViewDialog({
                     )}
                     <TableRow className="border-t-2 border-gray-400">
                       <TableCell colSpan={4} className="text-right font-bold text-lg">
-                        TOTAL:
+                        {t("common.total")}:
                       </TableCell>
                       <TableCell className="text-right font-bold text-lg">
                         {invoiceTotals.total.toFixed(3)} $
@@ -160,7 +176,7 @@ export function InvoiceViewDialog({
 
             {invoice.notes && (
               <div>
-                <h3 className="font-medium mb-2">Notes</h3>
+                <h3 className="font-medium mb-2">{t("common.notes")}</h3>
                 <p className="text-sm text-muted-foreground bg-gray-50 p-3 rounded-md">
                   {invoice.notes}
                 </p>
@@ -168,7 +184,7 @@ export function InvoiceViewDialog({
             )}
 
             <div className="flex justify-end pt-4 border-t">
-              <Button onClick={onClose}>Close</Button>
+              <Button onClick={onClose}>{t("common.close")}</Button>
             </div>
           </div>
         )}

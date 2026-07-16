@@ -1,49 +1,20 @@
 "use client"
 
-import * as React from "react"
 import { SquareLibrary } from "lucide-react"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
-import { LANGUAGE_COOKIE, normalizeLanguage } from "@/lib/language"
+import { useLanguage } from "@/components/language-context"
 
 export function LanguageIndicator() {
-  const [language, setLanguage] = React.useState("en")
-
-  React.useEffect(() => {
-    setLanguage(normalizeLanguage(localStorage.getItem(LANGUAGE_COOKIE)))
-  }, [])
-
-  React.useEffect(() => {
-    const handleLanguageChange = () => {
-      setLanguage(document.documentElement.lang)
-    }
-
-    handleLanguageChange()
-
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === "lang") {
-          handleLanguageChange()
-        }
-      })
-    })
-
-    observer.observe(document.documentElement, { attributes: true })
-
-    return () => observer.disconnect()
-  }, [])
+  const { t } = useLanguage()
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" className="pointer-events-none" tooltip="DarArab">
+        <SidebarMenuButton size="lg" className="pointer-events-none" tooltip={t("brand.name")}>
           <SquareLibrary className="size-4 shrink-0" />
           <div className="grid flex-1 text-start text-sm leading-tight">
-            <span className="truncate font-semibold">
-              {language === "en" ? "DarArab" : "دار عرب"}
-            </span>
-            <span className="truncate text-xs">
-              {language === "en" ? "Management System" : "نظام الإدارة"}
-            </span>
+            <span className="truncate font-semibold">{t("brand.name")}</span>
+            <span className="truncate text-xs">{t("brand.system")}</span>
           </div>
         </SidebarMenuButton>
       </SidebarMenuItem>

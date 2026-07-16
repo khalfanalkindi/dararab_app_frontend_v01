@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import ProjectContractsModal from "@/components/ProjectContractsModal"
@@ -100,6 +101,8 @@ interface Contract {
 }
 
 export default function ProjectManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [projects, setProjects] = useState<Project[]>([])
   const [progressOptions, setProgressOptions] = useState<{ id: number; display_name_en: string }[]>([])
   const [statusOptions, setStatusOptions] = useState<{ id: number; display_name_en: string }[]>([])
@@ -499,17 +502,17 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
           const failedCount = errors.length
           if (failedCount === results.length) {
             // All requests failed
-            toast.error("Error", { description: "Failed to fetch data. Please try again later." })
+            toast.error(t("toasts.error"), { description: t("toasts.fetchFailed") })
           } else {
             // Some requests failed
-            toast.error("Warning", { description: "Some data failed to load (${failedCount} of ${results.length} requests)" })
+            toast.error(t("toasts.warning"), { description: t("toasts.someDataFailed", { failed: failedCount, total: results.length }) })
           }
         }
       } catch (error) {
         if (process.env.NODE_ENV !== 'production') {
           console.error("Unexpected error in fetchData:", error)
         }
-        toast.error("Error", { description: "Failed to fetch data" })
+        toast.error(t("toasts.error"), { description: t("projects.toasts.fetchFailed") })
       } finally {
         setIsLoading(false)
       }
@@ -872,7 +875,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       await fetchProjects(currentPage, pageSize)
 
       // Show toast notification
-      toast.success("Project Added Successfully", { description: "${data.title_ar} has been added to the system." })
+      toast.success(t("projects.toasts.added"), { description: t("projects.toasts.addedDesc", { name: data.title_ar }) })
     } catch (error) {
       // Handle AbortError silently
       if (error instanceof Error && error.name === 'AbortError') {
@@ -900,7 +903,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
         reviewer: optimisticProject.reviewer,
       })
       
-      toast.error("Error", { description: "Failed to add project. Please try again." })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.addFailed") })
     } finally {
       setIsAdding(false)
     }
@@ -978,7 +981,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       setProjects(prev => prev.map(p => p.id === editProject.id ? responseData : p))
 
       // Show toast notification
-      toast.success("Project Updated Successfully", { description: "${responseData.title_ar} has been updated." })
+      toast.success(t("projects.toasts.updated"), { description: t("projects.toasts.updatedDesc", { name: responseData.title_ar }) })
 
       // Refresh projects list to ensure consistency
       fetchProjects(currentPage, pageSize)
@@ -999,7 +1002,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
         console.error("Update error:", error)
       }
       const errorMessage = error instanceof Error ? error.message : "Failed to update project"
-      toast.error("Error", { description: errorMessage })
+      toast.error(t("toasts.error"), { description: errorMessage })
     } finally {
       setIsUpdating(false)
     }
@@ -1025,7 +1028,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       }
 
       // Show success toast
-      toast.success("Project Converted Successfully", { description: "${project.title_ar} has been converted to a product." })
+      toast.success(t("projects.toasts.converted"), { description: t("projects.toasts.convertedDesc", { name: project.title_ar }) })
 
       // Refresh projects list
       await fetchProjects(currentPage, pageSize)
@@ -1040,7 +1043,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       }
       
       const errorMessage = error instanceof Error ? error.message : "Failed to convert project to product"
-      toast.error("Conversion Failed", { description: errorMessage })
+      toast.error(t("projects.toasts.conversionFailed"), { description: errorMessage })
     } finally {
       setIsConverting(false)
       setConvertingProjectId(null)
@@ -1087,7 +1090,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       }
 
       // Show toast notification
-      toast.error("Project Deleted", { description: "${projectToDelete.title_ar} has been permanently removed from the system." })
+      toast.error(t("projects.toasts.deleted"), { description: t("projects.toasts.deletedDesc", { name: projectToDelete.title_ar }) })
     } catch (error) {
       // Handle AbortError silently
       if (error instanceof Error && error.name === 'AbortError') {
@@ -1108,7 +1111,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       if (process.env.NODE_ENV !== 'production') {
         console.error("Delete error:", error)
       }
-      toast.error("Error", { description: "Failed to delete project. The project has been restored." })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.deleteFailed") })
     } finally {
       setIsDeleting(false)
     }
@@ -1160,7 +1163,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       return statusId.display_name_en
     }
     const status = progressOptions.find((s) => s.id.toString() === statusId?.toString())
-    return status ? status.display_name_en : "Unknown Status"
+    return status ? status.display_name_en : t("projects.contractsModal.unknownStatus")
   }
 
   // Get status name by ID
@@ -1169,7 +1172,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       return statusId.display_name_en
     }
     const status = statusOptions.find((s) => s.id.toString() === statusId?.toString())
-    return status ? status.display_name_en : "Unknown Status"
+    return status ? status.display_name_en : t("projects.contractsModal.unknownStatus")
   }
 
   // Get type name by ID
@@ -1177,8 +1180,8 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
     if (typeof typeId === "object" && typeId?.display_name_en) {
       return typeId.display_name_en
     }
-    const type = typeOptions.find((t) => t.id.toString() === typeId?.toString())
-    return type ? type.display_name_en : "Unknown Type"
+    const type = typeOptions.find((option) => option.id.toString() === typeId?.toString())
+    return type ? type.display_name_en : t("projects.contractsModal.unknownStatus")
   }
 
   // Get person name by ID
@@ -1311,13 +1314,13 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
 
   return (
     <ErrorBoundary>
-      <DocumentTitle title="Projects" />
+      <DocumentTitle title={t("projects.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Projects" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("nav.projects") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1334,28 +1337,28 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
               )}
               <AlertTitle>
                 {actionAlert.type === "success"
-                  ? "Success"
+                  ? t("common.success")
                   : actionAlert.type === "warning"
-                    ? "Warning"
-                    : "Information"}
+                    ? t("common.warning")
+                    : t("common.information")}
               </AlertTitle>
               <AlertDescription>{actionAlert.message}</AlertDescription>
             </Alert>
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Project Management</h2>
-            <p className="mb-6">Manage projects and their progress status.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("projects.management")}</h2>
+            <p className="mb-6">{t("projects.description")}</p>
 
             {/* Search and Filter Section */}
             <div className="mb-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* Search Input */}
                 <div className="md:col-span-2">
-                  <Label htmlFor="search">Search Projects</Label>
+                  <Label htmlFor="search">{t("projects.search")}</Label>
                   <Input
                     id="search"
-                    placeholder="Search by title (Arabic or English)..."
+                    placeholder={t("projects.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
@@ -1369,15 +1372,15 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                 
                 {/* Approval Status Filter */}
                 <div>
-                  <Label htmlFor="filter-approval">Approval Status</Label>
+                  <Label htmlFor="filter-approval">{t("projects.approvalStatus")}</Label>
                   <Select value={filterApprovalStatus} onValueChange={setFilterApprovalStatus}>
                     <SelectTrigger id="filter-approval">
-                      <SelectValue placeholder="All" />
+                      <SelectValue placeholder={t("projects.all")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="not_approved">Not Approved</SelectItem>
+                      <SelectItem value="all">{t("projects.all")}</SelectItem>
+                      <SelectItem value="approved">{t("projects.approved")}</SelectItem>
+                      <SelectItem value="not_approved">{t("projects.notApproved")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1388,14 +1391,14 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     onClick={handleSearch}
                     className="flex-1"
                   >
-                    Search
+                    {t("common.search")}
                   </Button>
                   <Button
                     variant="outline"
                     onClick={handleReset}
                     className="flex-1"
                   >
-                    Reset
+                    {t("common.reset")}
                   </Button>
                 </div>
               </div>
@@ -1403,54 +1406,54 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Projects</h3>
+                <h3 className="font-medium">{t("projects.title")}</h3>
                 <Dialog open={isAddProjectOpen} onOpenChange={setIsAddProjectOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Project
+                      {t("projects.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>Add New Project</DialogTitle>
-                      <DialogDescription>Create a new project for your inventory.</DialogDescription>
+                      <DialogTitle>{t("projects.addNew")}</DialogTitle>
+                      <DialogDescription>{t("projects.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-6 py-4">
                       {/* Basic Information Section */}
                       <div className="space-y-4">
-                        <h3 className="text-lg font-medium">Basic Information</h3>
+                        <h3 className="text-lg font-medium">{t("projects.basicInfo")}</h3>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="grid gap-2">
-                            <Label htmlFor="title_ar">Title (Arabic)</Label>
+                            <Label htmlFor="title_ar">{t("projects.titleAr")}</Label>
                             <Input
                               id="title_ar"
                               value={newProject.title_ar}
                               onChange={(e) => createDebouncedHandler("title_ar", e.target.value)}
-                              placeholder="Enter project title in Arabic"
+                              placeholder={t("projects.titleArPlaceholder")}
                               dir="rtl"
                             />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="title_original">English Title</Label>
+                            <Label htmlFor="title_original">{t("projects.titleEn")}</Label>
                             <Input
                               id="title_original"
                               value={newProject.title_original || ""}
                               onChange={(e) => createDebouncedHandler("title_original", e.target.value)}
-                              placeholder="Enter title in English"
+                              placeholder={t("projects.titleEnPlaceholder")}
                             />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="description">Description</Label>
+                            <Label htmlFor="description">{t("projects.projectDescription")}</Label>
                             <Textarea
                               id="description"
                               value={newProject.description || ""}
                               onChange={(e) => createDebouncedHandler("description", e.target.value)}
-                              placeholder="Enter project description"
+                              placeholder={t("projects.descriptionPlaceholder")}
                             />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="type">Type</Label>
+                            <Label htmlFor="type">{t("projects.type")}</Label>
                             <Select
                               value={newProject.type?.id?.toString() || ""}
                               onValueChange={(value) =>
@@ -1461,7 +1464,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                               }
                             >
                               <SelectTrigger id="type">
-                                <SelectValue placeholder="Select type" />
+                                <SelectValue placeholder={t("projects.selectType")} />
                               </SelectTrigger>
                               <SelectContent>
                                 {typeOptions.map((option) => (
@@ -1473,18 +1476,18 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             </Select>
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="approval_status">Approval Status</Label>
+                            <Label htmlFor="approval_status">{t("projects.approvalStatus")}</Label>
                             <Switch
                               id="approval_status"
                               checked={newProject.approval_status}
                               onCheckedChange={(checked) => setNewProject({ ...newProject, approval_status: checked })}
                             />
                             <p className="text-xs text-muted-foreground">
-                              {newProject.approval_status ? "Approved" : "Not Approved"}
+                              {newProject.approval_status ? t("projects.approved") : t("projects.notApproved")}
                             </p>
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="status">Status</Label>
+                            <Label htmlFor="status">{t("projects.status")}</Label>
                             <Select
                               value={newProject.status?.id?.toString() || ""}
                               onValueChange={(value) =>
@@ -1495,7 +1498,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                               }
                             >
                               <SelectTrigger id="status">
-                                <SelectValue placeholder="Select status" />
+                                <SelectValue placeholder={t("projects.selectStatus")} />
                               </SelectTrigger>
                               <SelectContent>
                                 {statusOptions.map((option) => (
@@ -1507,7 +1510,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             </Select>
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="progress_status">Progress Status</Label>
+                            <Label htmlFor="progress_status">{t("projects.progressStatus")}</Label>
                             <Select
                               value={newProject.progress_status?.id?.toString() || ""}
                               onValueChange={(value) =>
@@ -1518,7 +1521,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                               }
                             >
                               <SelectTrigger id="progress_status">
-                                <SelectValue placeholder="Select progress status" />
+                                <SelectValue placeholder={t("projects.selectProgress")} />
                               </SelectTrigger>
                               <SelectContent>
                                 {getFilteredProgressOptions(newProject.type).map((option) => (
@@ -1534,16 +1537,16 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddProjectOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
                       <Button onClick={handleAddProject} disabled={isAdding}>
                         {isAdding ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Adding...
+                            {t("common.processing")}
                           </>
                         ) : (
-                          "Add Project"
+                          t("projects.add")
                         )}
                       </Button>
                     </DialogFooter>
@@ -1558,27 +1561,27 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                         <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("title_ar")}
                         >
                           <div className="flex items-center">
-                            Project Title (Arabic)
+                            {t("projects.titleAr")}
                             {getSortIndicator("title_ar")}
                           </div>
                         </TableHead>
                         <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("title_original")}
                         >
                           <div className="flex items-center">
-                            Project Title (English)
+                            {t("projects.titleEn")}
                             {getSortIndicator("title_original")}
                           </div>
                         </TableHead>
-                        <TableHead>Type</TableHead>
+                        <TableHead>{t("projects.type")}</TableHead>
                         <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("approval_status")}
                         >
                           <div className="flex items-center">
-                            Approval Status
+                            {t("projects.approvalStatus")}
                             {getSortIndicator("approval_status")}
                           </div>
                         </TableHead>
-                        <TableHead>Progress Status</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                        <TableHead>{t("projects.progressStatus")}</TableHead>
+                        <TableHead className="text-right">{t("common.actions")}</TableHead>
                       </TableRow>
                     </TableHeader>
                   </Table>
@@ -1627,14 +1630,14 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             ) : virtualizedData.visibleProjects.length === 0 ? (
                               <TableRow>
                                 <TableCell colSpan={6} className="py-8 text-center">
-                                  No projects found
+                                  {t("projects.empty")}
                                 </TableCell>
                               </TableRow>
                             ) : (
                               virtualizedData.visibleProjects.map((project) => (
                                 <TableRow key={project.id}>
                                   <TableCell className="font-medium">{project.title_ar}</TableCell>
-                                  <TableCell>{project.title_original || "No English Title"}</TableCell>
+                                  <TableCell>{project.title_original || t("projects.noEnglishTitle")}</TableCell>
                                   <TableCell>
                                     {project.type ? (
                                       <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
@@ -1643,19 +1646,19 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           : getTypeName(project.type)}
                                       </span>
                                     ) : (
-                                      "Not set"
+                                      t("projects.notSet")
                                     )}
                                   </TableCell>
                                   <TableCell>
                                     {project.approval_status ? (
                                       <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">
                                         <CheckCircle2 className="h-4 w-4 mr-1" />
-                                        Approved
+                                        {t("projects.approved")}
                                       </span>
                                     ) : (
                                       <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-700/10">
                                         <AlertCircle className="h-4 w-4 mr-1" />
-                                        Not Approved
+                                        {t("projects.notApproved")}
                                       </span>
                                     )}
                                   </TableCell>
@@ -1668,7 +1671,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                               ? project.progress_status.display_name_en
                                               : getProgressStatusName(project.progress_status)
                                           ) : (
-                                            "Not set"
+                                            t("projects.notSet")
                                           )}
                                         </span>
                                         <span className="text-xs text-muted-foreground">
@@ -1694,7 +1697,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                             variant="outline"
                                             size="icon"
                                             className="h-8 w-8 text-green-600 hover:text-green-800"
-                                            title="Convert to Product"
+                                            title={t("projects.convertToProduct")}
                                             onClick={() => handleConvertToProduct(project)}
                                             disabled={isConverting && convertingProjectId === project.id}
                                           >
@@ -1703,7 +1706,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                             ) : (
                                               <Package className="h-4 w-4" />
                                             )}
-                                            <span className="sr-only">Convert to Product</span>
+                                            <span className="sr-only">{t("projects.convertToProduct")}</span>
                                           </Button>
                                         )}
                                         {/* Contract button - only shown for approved projects */}
@@ -1712,11 +1715,11 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                             variant="outline"
                                             size="icon"
                                             className="h-8 w-8 text-blue-600 hover:text-blue-800"
-                                            title="Contracts"
+                                            title={t("projects.contracts")}
                                             onClick={() => openContractsModal(project)}
                                           >
                                             <FileText className="h-4 w-4" />
-                                            <span className="sr-only">Contracts</span>
+                                            <span className="sr-only">{t("projects.contracts")}</span>
                                           </Button>
                                         )}
                                         <Button
@@ -1726,7 +1729,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           onClick={() => openEditDialog(project)}
                                         >
                                           <Edit className="h-4 w-4" />
-                                          <span className="sr-only">Edit</span>
+                                          <span className="sr-only">{t("common.edit")}</span>
                                         </Button>
                                         <Button
                                           variant="outline"
@@ -1735,7 +1738,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           onClick={() => openDeleteDialog(project.id)}
                                         >
                                           <Trash2 className="h-4 w-4" />
-                                          <span className="sr-only">Delete</span>
+                                          <span className="sr-only">{t("common.delete")}</span>
                                         </Button>
                                       </div>
 
@@ -1745,11 +1748,11 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           <DropdownMenuTrigger asChild>
                                             <Button variant="outline" size="icon" className="h-8 w-8">
                                               <MoreHorizontal className="h-4 w-4" />
-                                              <span className="sr-only">Actions</span>
+                                              <span className="sr-only">{t("common.actions")}</span>
                                             </Button>
                                           </DropdownMenuTrigger>
                                           <DropdownMenuContent align="end">
-                                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                            <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                             {project.status?.display_name_en?.toLowerCase() === "finalized" &&
                                              project.progress_status?.display_name_en?.toLowerCase() === "completed" &&
                                              project.all_contracts_closed === true &&
@@ -1763,18 +1766,18 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                                 ) : (
                                                   <Package className="h-4 w-4 mr-2" />
                                                 )}
-                                                Convert to Product
+                                                {t("projects.convertToProduct")}
                                               </DropdownMenuItem>
                                             )}
                                             {project.approval_status && (
                                               <DropdownMenuItem onClick={() => openContractsModal(project)}>
                                                 <FileText className="h-4 w-4 mr-2" />
-                                                Contracts
+                                                {t("projects.contracts")}
                                               </DropdownMenuItem>
                                             )}
                                             <DropdownMenuItem onClick={() => openEditDialog(project)}>
                                               <Edit className="h-4 w-4 mr-2" />
-                                              Edit
+                                              {t("common.edit")}
                                             </DropdownMenuItem>
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem
@@ -1782,7 +1785,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                               onClick={() => openDeleteDialog(project.id)}
                                             >
                                               <Trash2 className="h-4 w-4 mr-2" />
-                                              Delete
+                                              {t("common.delete")}
                                             </DropdownMenuItem>
                                           </DropdownMenuContent>
                                         </DropdownMenu>
@@ -1839,14 +1842,14 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                           ) : projects.length === 0 ? (
                             <TableRow>
                               <TableCell colSpan={6} className="py-8 text-center">
-                                No projects found
+                                {t("projects.empty")}
                               </TableCell>
                             </TableRow>
                           ) : (
                             projects.map((project) => (
                               <TableRow key={project.id}>
                                 <TableCell className="font-medium">{project.title_ar}</TableCell>
-                                <TableCell>{project.title_original || "No English Title"}</TableCell>
+                                <TableCell>{project.title_original || t("projects.noEnglishTitle")}</TableCell>
                                 <TableCell>
                                   {project.type ? (
                                     <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
@@ -1855,19 +1858,19 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                         : getTypeName(project.type)}
                                     </span>
                                   ) : (
-                                    "Not set"
+                                    t("projects.notSet")
                                   )}
                                 </TableCell>
                                 <TableCell>
                                   {project.approval_status ? (
                                     <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">
                                       <CheckCircle2 className="h-4 w-4 mr-1" />
-                                      Approved
+                                      {t("projects.approved")}
                                     </span>
                                   ) : (
                                     <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-700/10">
                                       <AlertCircle className="h-4 w-4 mr-1" />
-                                      Not Approved
+                                      {t("projects.notApproved")}
                                     </span>
                                   )}
                                 </TableCell>
@@ -1880,7 +1883,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                             ? project.progress_status.display_name_en
                                             : getProgressStatusName(project.progress_status)
                                         ) : (
-                                          "Not set"
+                                          t("projects.notSet")
                                         )}
                                       </span>
                                       <span className="text-xs text-muted-foreground">
@@ -1906,7 +1909,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           variant="outline"
                                           size="icon"
                                           className="h-8 w-8 text-green-600 hover:text-green-800"
-                                          title="Convert to Product"
+                                          title={t("projects.convertToProduct")}
                                           onClick={() => handleConvertToProduct(project)}
                                           disabled={isConverting && convertingProjectId === project.id}
                                         >
@@ -1915,7 +1918,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           ) : (
                                             <Package className="h-4 w-4" />
                                           )}
-                                          <span className="sr-only">Convert to Product</span>
+                                          <span className="sr-only">{t("projects.convertToProduct")}</span>
                                         </Button>
                                       )}
                                       {/* Contract button - only shown for approved projects */}
@@ -1924,11 +1927,11 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                           variant="outline"
                                           size="icon"
                                           className="h-8 w-8 text-blue-600 hover:text-blue-800"
-                                          title="Contracts"
+                                          title={t("projects.contracts")}
                                           onClick={() => openContractsModal(project)}
                                         >
                                           <FileText className="h-4 w-4" />
-                                          <span className="sr-only">Contracts</span>
+                                          <span className="sr-only">{t("projects.contracts")}</span>
                                         </Button>
                                       )}
                                       <Button
@@ -1938,7 +1941,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                         onClick={() => openEditDialog(project)}
                                       >
                                         <Edit className="h-4 w-4" />
-                                        <span className="sr-only">Edit</span>
+                                        <span className="sr-only">{t("common.edit")}</span>
                                       </Button>
                                       <Button
                                         variant="outline"
@@ -1947,7 +1950,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                         onClick={() => openDeleteDialog(project.id)}
                                       >
                                         <Trash2 className="h-4 w-4" />
-                                        <span className="sr-only">Delete</span>
+                                        <span className="sr-only">{t("common.delete")}</span>
                                       </Button>
                                     </div>
 
@@ -1957,11 +1960,11 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                         <DropdownMenuTrigger asChild>
                                           <Button variant="outline" size="icon" className="h-8 w-8">
                                             <MoreHorizontal className="h-4 w-4" />
-                                            <span className="sr-only">Actions</span>
+                                            <span className="sr-only">{t("common.actions")}</span>
                                           </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
-                                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                          <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                           {project.status?.display_name_en?.toLowerCase() === "finalized" &&
                                            project.progress_status?.display_name_en?.toLowerCase() === "completed" &&
                                            project.all_contracts_closed === true &&
@@ -1975,18 +1978,18 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                               ) : (
                                                 <Package className="h-4 w-4 mr-2" />
                                               )}
-                                              Convert to Product
+                                              {t("projects.convertToProduct")}
                                             </DropdownMenuItem>
                                           )}
                                           {project.approval_status && (
                                             <DropdownMenuItem onClick={() => openContractsModal(project)}>
                                               <FileText className="h-4 w-4 mr-2" />
-                                              Contracts
+                                              {t("projects.contracts")}
                                             </DropdownMenuItem>
                                           )}
                                           <DropdownMenuItem onClick={() => openEditDialog(project)}>
                                             <Edit className="h-4 w-4 mr-2" />
-                                            Edit
+                                            {t("common.edit")}
                                           </DropdownMenuItem>
                                           <DropdownMenuSeparator />
                                           <DropdownMenuItem
@@ -1994,7 +1997,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                                             onClick={() => openDeleteDialog(project.id)}
                                           >
                                             <Trash2 className="h-4 w-4 mr-2" />
-                                            Delete
+                                            {t("common.delete")}
                                           </DropdownMenuItem>
                                         </DropdownMenuContent>
                                       </DropdownMenu>
@@ -2021,10 +2024,10 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                       onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                       disabled={currentPage === 1}
                     >
-                      Previous
+                      {t("common.previous")}
                     </Button>
                     <span className="text-sm text-muted-foreground">
-                      Page {currentPage} of {Math.max(1, Math.ceil(totalCount / pageSize))}
+                      {t("common.pageOf", { current: currentPage, total: Math.max(1, Math.ceil(totalCount / pageSize)) })}
                     </span>
                     <Button
                       variant="outline"
@@ -2032,11 +2035,11 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                       onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.max(1, Math.ceil(totalCount / pageSize))))}
                       disabled={currentPage >= Math.ceil(totalCount / pageSize)}
                     >
-                      Next
+                      {t("common.next")}
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Items per page:</span>
+                    <span className="text-sm text-muted-foreground">{t("common.itemsPerPage")}</span>
                     <Select
                       value={pageSize.toString()}
                       onValueChange={(value) => {
@@ -2055,7 +2058,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                       </SelectContent>
                     </Select>
                     <span className="text-sm text-muted-foreground">
-                      ({totalCount} total)
+                      {t("common.totalCount", { count: totalCount })}
                     </span>
                   </div>
                 </div>
@@ -2069,17 +2072,17 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       <Dialog open={isEditProjectOpen} onOpenChange={setIsEditProjectOpen}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Project</DialogTitle>
-            <DialogDescription>Update project information.</DialogDescription>
+            <DialogTitle>{t("projects.editTitle")}</DialogTitle>
+            <DialogDescription>{t("projects.editDescription")}</DialogDescription>
           </DialogHeader>
           {editProject && (
             <div className="space-y-6 py-4">
               {/* Basic Information Section */}
               <div className="space-y-4">
-                <h3 className="text-lg font-medium">Basic Information</h3>
+                <h3 className="text-lg font-medium">{t("projects.basicInfo")}</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-title_ar">Title (Arabic)</Label>
+                    <Label htmlFor="edit-title_ar">{t("projects.titleAr")}</Label>
                     <Input
                       id="edit-title_ar"
                       value={editProject.title_ar || ""}
@@ -2088,7 +2091,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-title_original">English Title</Label>
+                    <Label htmlFor="edit-title_original">{t("projects.titleEn")}</Label>
                     <Input
                       id="edit-title_original"
                       value={editProject.title_original || ""}
@@ -2096,7 +2099,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-description">Description</Label>
+                    <Label htmlFor="edit-description">{t("projects.projectDescription")}</Label>
                     <Textarea
                       id="edit-description"
                       value={editProject.description || ""}
@@ -2104,7 +2107,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-type">Type</Label>
+                    <Label htmlFor="edit-type">{t("projects.type")}</Label>
                     <Select
                       value={editProject.type?.id?.toString() || ""}
                       onValueChange={(value) =>
@@ -2115,7 +2118,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                       }
                     >
                       <SelectTrigger id="edit-type">
-                        <SelectValue placeholder="Select type" />
+                        <SelectValue placeholder={t("projects.selectType")} />
                       </SelectTrigger>
                       <SelectContent>
                         {typeOptions.map((option) => (
@@ -2127,18 +2130,18 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-approval_status">Approval Status</Label>
+                    <Label htmlFor="edit-approval_status">{t("projects.approvalStatus")}</Label>
                     <Switch
                       id="edit-approval_status"
                       checked={editProject.approval_status}
                       onCheckedChange={(checked) => setEditProject({ ...editProject, approval_status: checked })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      {editProject.approval_status ? "Approved" : "Not Approved"}
+                      {editProject.approval_status ? t("projects.approved") : t("projects.notApproved")}
                     </p>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-status">Status</Label>
+                    <Label htmlFor="edit-status">{t("projects.status")}</Label>
                     <Select
                       value={editProject.status?.id?.toString() || ""}
                       onValueChange={(value) =>
@@ -2149,7 +2152,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                       }
                     >
                       <SelectTrigger id="edit-status">
-                        <SelectValue placeholder="Select status" />
+                        <SelectValue placeholder={t("projects.selectStatus")} />
                       </SelectTrigger>
                       <SelectContent>
                         {statusOptions.map((option) => (
@@ -2161,7 +2164,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-progress_status">Progress Status</Label>
+                    <Label htmlFor="edit-progress_status">{t("projects.progressStatus")}</Label>
                     <Select
                       value={editProject.progress_status?.id?.toString() || ""}
                       onValueChange={(value) =>
@@ -2172,7 +2175,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                       }
                     >
                       <SelectTrigger id="edit-progress_status">
-                        <SelectValue placeholder="Select progress status" />
+                        <SelectValue placeholder={t("projects.selectProgress")} />
                       </SelectTrigger>
                       <SelectContent>
                         {getFilteredProgressOptions(editProject.type).map((option) => (
@@ -2192,12 +2195,12 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
               <div className="space-y-4">
                 <h3 className="text-lg font-medium flex items-center gap-2">
                   <User className="h-5 w-5 text-primary" />
-                  People Information
+                  {t("projects.people.title")}
                 </h3>
                 {isContractsLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                    <span className="ml-3 text-muted-foreground">Loading people from contracts...</span>
+                    <span className="ml-3 text-muted-foreground">{t("projects.people.loading")}</span>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2209,7 +2212,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             <PenTool className="h-5 w-5 text-blue-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-blue-900 mb-1">Author</h4>
+                            <h4 className="font-semibold text-blue-900 mb-1">{t("projects.people.author")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('author').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2231,7 +2234,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             <Languages className="h-5 w-5 text-green-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-green-900 mb-1">Translator</h4>
+                            <h4 className="font-semibold text-green-900 mb-1">{t("projects.people.translator")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('translator').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2253,7 +2256,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             <Crown className="h-5 w-5 text-purple-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-purple-900 mb-1">Rights Owner</h4>
+                            <h4 className="font-semibold text-purple-900 mb-1">{t("projects.people.rightsOwner")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('rights').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2275,7 +2278,7 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                             <Eye className="h-5 w-5 text-orange-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-orange-900 mb-1">Reviewer</h4>
+                            <h4 className="font-semibold text-orange-900 mb-1">{t("projects.people.reviewer")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('reviewer').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2320,8 +2323,8 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
                      Object.keys(getOtherPeopleFromContracts()).length === 0 && (
                       <div className="col-span-full text-center py-12 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
                         <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                        <h4 className="text-lg font-medium text-gray-600 mb-2">No People Assigned</h4>
-                        <p className="text-gray-500">No people have been assigned to this project yet.</p>
+                        <h4 className="text-lg font-medium text-gray-600 mb-2">{t("projects.people.none")}</h4>
+                        <p className="text-gray-500">{t("projects.people.noneHint")}</p>
                       </div>
                     )}
                   </div>
@@ -2334,16 +2337,16 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
               setIsEditProjectOpen(false)
               setContracts([]) // Clear contracts when dialog is closed
             }}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleUpdateProject} disabled={isUpdating}>
               {isUpdating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Saving...
+                  {t("common.processing")}
                 </>
               ) : (
-                "Save Changes"
+                t("common.saveChanges")
               )}
             </Button>
           </DialogFooter>
@@ -2353,11 +2356,15 @@ const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, 
       <DeleteConfirmDialog
         open={isDeleteAlertOpen}
         onOpenChange={setIsDeleteAlertOpen}
+        title={t("common.areYouSure")}
+        confirmLabel={t("common.delete")}
         description={
           deleteProjectId !== null ? (
             <>
-              You are about to delete <strong>{projects.find((p) => p.id === deleteProjectId)?.title_ar}</strong>.
-              This action cannot be undone. This will permanently remove the project from your system.
+              {t("projects.deleteConfirm", {
+                name: projects.find((p) => p.id === deleteProjectId)?.title_ar ?? "",
+              })}{" "}
+              {t("projects.deleteConfirmHint")}
             </>
           ) : (
             ""

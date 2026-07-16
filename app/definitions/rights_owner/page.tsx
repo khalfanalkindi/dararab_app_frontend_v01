@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 import { TableSkeleton } from "@/components/table-skeleton"
 import {
   Table,
@@ -52,6 +53,8 @@ interface RightsOwner {
 }
 
 export default function RightsOwnerManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [rightsOwners, setRightsOwners] = useState<RightsOwner[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteRightsOwnerId, setDeleteRightsOwnerId] = useState<number | null>(null)
@@ -125,8 +128,8 @@ export default function RightsOwnerManagement() {
     }
 
     // Show toast notification
-    toast.error(options?.title || "Error", { description: errorMessage })
-  }, [])
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   useEffect(() => {
     fetchRightsOwners(currentPage, pageSize)
@@ -220,7 +223,7 @@ export default function RightsOwnerManagement() {
       await fetchRightsOwners(1, pageSize)
 
       // Show toast notification
-      toast.success("Rights Owner Added Successfully", { description: "${data.name} has been added to the system." })
+      toast.success(t("definitionsToasts.added", { entity: t("definitions.rightsOwners.title") }))
 
       // Show alert message
       showAlert("success", `New rights owner "${data.name}" has been successfully added to the system.`)
@@ -256,7 +259,7 @@ export default function RightsOwnerManagement() {
       await fetchRightsOwners(currentPage, pageSize)
 
       // Show toast notification
-      toast.success("Rights Owner Updated Successfully", { description: "${responseData.name} has been updated." })
+      toast.success(t("definitionsToasts.updated", { entity: t("definitions.rightsOwners.title") }))
 
       // Show alert message
       showAlert("success", `Rights owner "${responseData.name}" has been successfully updated.`)
@@ -296,7 +299,7 @@ export default function RightsOwnerManagement() {
       await fetchRightsOwners(nextPage, pageSize)
 
       // Show toast notification
-      toast.error("Rights Owner Deleted", { description: "${rightsOwnerToDelete.name} has been permanently removed from the system." })
+      toast.success(t("definitionsToasts.deleted", { entity: t("definitions.rightsOwners.title") }), { description: t("definitionsToasts.deletedDesc", { name: rightsOwnerToDelete.name }) })
 
       // Show alert message
       showAlert("warning", `Rights owner "${rightsOwnerToDelete.name}" has been permanently deleted from the system.`)
@@ -323,13 +326,13 @@ export default function RightsOwnerManagement() {
 
   return (
     <>
-      <DocumentTitle title="Rights Owners" />
+      <DocumentTitle title={t("definitions.rightsOwners.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Rights Owners" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, definitionsCrumb, { label: t("nav.rightsOwners") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -356,27 +359,27 @@ export default function RightsOwnerManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Rights Owner Management</h2>
-            <p className="mb-6">Manage rights owners and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("definitions.rightsOwners.management")}</h2>
+            <p className="mb-6">{t("definitions.rightsOwners.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Rights Owners</h3>
+                <h3 className="font-medium">{t("definitions.rightsOwners.title")}</h3>
                 <Dialog open={isAddRightsOwnerOpen} onOpenChange={setIsAddRightsOwnerOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Rights Owner
+                      {t("definitions.rightsOwners.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Rights Owner</DialogTitle>
-                      <DialogDescription>Create a new rights owner entry.</DialogDescription>
+                      <DialogTitle>{t("definitions.rightsOwners.addNew")}</DialogTitle>
+                      <DialogDescription>{t("definitions.rightsOwners.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Name</Label>
+                        <Label htmlFor="name">{t("definitions.rightsOwners.name")}</Label>
                         <Input
                           id="name"
                           value={newRightsOwner.name}
@@ -385,7 +388,7 @@ export default function RightsOwnerManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="contact_info">Contact Info</Label>
+                        <Label htmlFor="contact_info">{t("definitions.rightsOwners.contactInfo")}</Label>
                         <Textarea
                           id="contact_info"
                           value={newRightsOwner.contact_info || ""}
@@ -396,9 +399,9 @@ export default function RightsOwnerManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddRightsOwnerOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddRightsOwner}>Add Rights Owner</Button>
+                      <Button onClick={handleAddRightsOwner}>{t("definitions.rightsOwners.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -407,9 +410,9 @@ export default function RightsOwnerManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Contact Info</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("definitions.rightsOwners.name")}</TableHead>
+                      <TableHead>{t("definitions.rightsOwners.contactInfo")}</TableHead>
+                      <TableHead className="text-right">{t("common.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -418,7 +421,7 @@ export default function RightsOwnerManagement() {
                     ) : rightsOwners.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={3} className="py-8 text-center">
-                          No rights owners found
+                          {t("definitions.rightsOwners.empty")}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -437,7 +440,7 @@ export default function RightsOwnerManagement() {
                                   onClick={() => openEditDialog(rightsOwner)}
                                 >
                                   <Edit className="h-4 w-4" />
-                                  <span className="sr-only">Edit</span>
+                                  <span className="sr-only">{t("common.edit")}</span>
                                 </Button>
                                 <Button
                                   variant="outline"
@@ -446,7 +449,7 @@ export default function RightsOwnerManagement() {
                                   onClick={() => openDeleteDialog(rightsOwner.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />
-                                  <span className="sr-only">Delete</span>
+                                  <span className="sr-only">{t("common.delete")}</span>
                                 </Button>
                               </div>
 
@@ -456,14 +459,14 @@ export default function RightsOwnerManagement() {
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="outline" size="icon" className="h-8 w-8">
                                       <MoreHorizontal className="h-4 w-4" />
-                                      <span className="sr-only">Actions</span>
+                                      <span className="sr-only">{t("common.actions")}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => openEditDialog(rightsOwner)}>
                                       <Edit className="h-4 w-4 mr-2" />
-                                      Edit
+                                      {t("common.edit")}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
@@ -471,7 +474,7 @@ export default function RightsOwnerManagement() {
                                       onClick={() => openDeleteDialog(rightsOwner.id)}
                                     >
                                       <Trash2 className="h-4 w-4 mr-2" />
-                                      Delete
+                                      {t("common.delete")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -505,13 +508,13 @@ export default function RightsOwnerManagement() {
       <Dialog open={isEditRightsOwnerOpen} onOpenChange={setIsEditRightsOwnerOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Rights Owner</DialogTitle>
-            <DialogDescription>Update rights owner information.</DialogDescription>
+            <DialogTitle>{t("definitions.rightsOwners.editTitle")}</DialogTitle>
+            <DialogDescription>{t("definitions.rightsOwners.editDescription")}</DialogDescription>
           </DialogHeader>
           {editRightsOwner && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Name</Label>
+                <Label htmlFor="edit-name">{t("definitions.rightsOwners.name")}</Label>
                 <Input
                   id="edit-name"
                   value={editRightsOwner.name}
@@ -519,7 +522,7 @@ export default function RightsOwnerManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-contact_info">Contact Info</Label>
+                <Label htmlFor="edit-contact_info">{t("definitions.rightsOwners.contactInfo")}</Label>
                 <Textarea
                   id="edit-contact_info"
                   value={editRightsOwner.contact_info || editRightsOwner.bio || ""}
@@ -530,9 +533,9 @@ export default function RightsOwnerManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditRightsOwnerOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateRightsOwner}>Save Changes</Button>
+            <Button onClick={handleUpdateRightsOwner}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

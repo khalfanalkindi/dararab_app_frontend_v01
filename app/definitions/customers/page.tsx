@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB, DEFINITIONS_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 import { TableSkeleton } from "@/components/table-skeleton"
 import {
   Table,
@@ -55,6 +56,8 @@ interface Customer {
 }
 
 export default function CustomerManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [customers, setCustomers] = useState<Customer[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteCustomerId, setDeleteCustomerId] = useState<number | null>(null)
@@ -133,8 +136,8 @@ export default function CustomerManagement() {
     }
 
     // Show toast notification
-    toast.error(options?.title || "Error", { description: errorMessage })
-  }, [])
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   useEffect(() => {
     fetchCustomers(currentPage, pageSize)
@@ -258,7 +261,7 @@ export default function CustomerManagement() {
       await fetchCustomers(1, pageSize)
 
       // Show toast notification
-      toast.success("Customer Added Successfully", { description: "${data.institution_name} has been added to the system." })
+      toast.success(t("definitionsToasts.added", { entity: t("definitions.customers.title") }))
 
       // Show alert message
       showAlert("success", `New customer "${data.institution_name}" has been successfully added to the system.`)
@@ -294,7 +297,7 @@ export default function CustomerManagement() {
       await fetchCustomers(currentPage, pageSize)
 
       // Show toast notification
-      toast.success("Customer Updated Successfully", { description: "${responseData.institution_name} has been updated." })
+      toast.success(t("definitionsToasts.updated", { entity: t("definitions.customers.title") }))
 
       // Show alert message
       showAlert("success", `Customer "${responseData.institution_name}" has been successfully updated.`)
@@ -334,7 +337,7 @@ export default function CustomerManagement() {
       await fetchCustomers(nextPage, pageSize)
 
       // Show toast notification
-      toast.error("Customer Deleted", { description: "${customerToDelete.institution_name} has been permanently removed from the system." })
+      toast.success(t("definitionsToasts.deleted", { entity: t("definitions.customers.title") }), { description: t("definitionsToasts.deletedDesc", { name: customerToDelete.institution_name }) })
 
       // Show alert message
       showAlert("warning", `Customer "${customerToDelete.institution_name}" has been permanently deleted from the system.`)
@@ -361,13 +364,13 @@ export default function CustomerManagement() {
 
   return (
     <>
-      <DocumentTitle title="Customers" />
+      <DocumentTitle title={t("definitions.customers.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, DEFINITIONS_CRUMB, { label: "Customers" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, definitionsCrumb, { label: t("nav.customers") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -394,27 +397,27 @@ export default function CustomerManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Customer Management</h2>
-            <p className="mb-6">Manage customers and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("definitions.customers.management")}</h2>
+            <p className="mb-6">{t("definitions.customers.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Customers</h3>
+                <h3 className="font-medium">{t("definitions.customers.title")}</h3>
                 <Dialog open={isAddCustomerOpen} onOpenChange={setIsAddCustomerOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Customer
+                      {t("definitions.customers.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Customer</DialogTitle>
-                      <DialogDescription>Create a new customer entry.</DialogDescription>
+                      <DialogTitle>{t("definitions.customers.addNew")}</DialogTitle>
+                      <DialogDescription>{t("definitions.customers.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="customer_type">Customer Type</Label>
+                        <Label htmlFor="customer_type">{t("definitions.customers.customerType")}</Label>
                         <Select
                           value={newCustomer.customer_type?.toString() || ""}
                           onValueChange={(value) => setNewCustomer({ ...newCustomer, customer_type: value ? Number(value) : null })}
@@ -432,7 +435,7 @@ export default function CustomerManagement() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="institution_name">Institution Name</Label>
+                        <Label htmlFor="institution_name">{t("definitions.customers.institution")}</Label>
                         <Input
                           id="institution_name"
                           value={newCustomer.institution_name}
@@ -441,7 +444,7 @@ export default function CustomerManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="contact_person">Contact Person</Label>
+                        <Label htmlFor="contact_person">{t("definitions.customers.contact")}</Label>
                         <Input
                           id="contact_person"
                           value={newCustomer.contact_person || ""}
@@ -450,7 +453,7 @@ export default function CustomerManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="phone">Phone</Label>
+                        <Label htmlFor="phone">{t("definitions.customers.phone")}</Label>
                         <Input
                           id="phone"
                           value={newCustomer.phone || ""}
@@ -459,7 +462,7 @@ export default function CustomerManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="email">Email</Label>
+                        <Label htmlFor="email">{t("definitions.customers.email")}</Label>
                         <Input
                           id="email"
                           type="email"
@@ -471,9 +474,9 @@ export default function CustomerManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddCustomerOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddCustomer}>Add Customer</Button>
+                      <Button onClick={handleAddCustomer}>{t("definitions.customers.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -482,12 +485,12 @@ export default function CustomerManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Institution Name</TableHead>
-                      <TableHead>Contact Person</TableHead>
-                      <TableHead>Phone</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("common.type")}</TableHead>
+                      <TableHead>{t("definitions.customers.institution")}</TableHead>
+                      <TableHead>{t("definitions.customers.contact")}</TableHead>
+                      <TableHead>{t("definitions.customers.phone")}</TableHead>
+                      <TableHead>{t("definitions.customers.email")}</TableHead>
+                      <TableHead className="text-right">{t("common.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -496,14 +499,14 @@ export default function CustomerManagement() {
                     ) : customers.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={6} className="py-8 text-center">
-                          No customers found
+                          {t("definitions.customers.empty")}
                         </TableCell>
                       </TableRow>
                     ) : (
                       customers.map((customer) => (
                         <TableRow key={customer.id}>
                           <TableCell>
-                            {customerTypes.find(t => t.id === customer.customer_type)?.display_name_en || customerTypes.find(t => t.id === customer.customer_type)?.name_en || "N/A"}
+                            {customerTypes.find(ct => ct.id === customer.customer_type)?.display_name_en || customerTypes.find(ct => ct.id === customer.customer_type)?.name_en || "N/A"}
                           </TableCell>
                           <TableCell className="font-medium">{customer.institution_name}</TableCell>
                           <TableCell>{customer.contact_person || "N/A"}</TableCell>
@@ -520,7 +523,7 @@ export default function CustomerManagement() {
                                   onClick={() => openEditDialog(customer)}
                                 >
                                   <Edit className="h-4 w-4" />
-                                  <span className="sr-only">Edit</span>
+                                  <span className="sr-only">{t("common.edit")}</span>
                                 </Button>
                                 <Button
                                   variant="outline"
@@ -529,7 +532,7 @@ export default function CustomerManagement() {
                                   onClick={() => openDeleteDialog(customer.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />
-                                  <span className="sr-only">Delete</span>
+                                  <span className="sr-only">{t("common.delete")}</span>
                                 </Button>
                               </div>
 
@@ -539,14 +542,14 @@ export default function CustomerManagement() {
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="outline" size="icon" className="h-8 w-8">
                                       <MoreHorizontal className="h-4 w-4" />
-                                      <span className="sr-only">Actions</span>
+                                      <span className="sr-only">{t("common.actions")}</span>
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => openEditDialog(customer)}>
                                       <Edit className="h-4 w-4 mr-2" />
-                                      Edit
+                                      {t("common.edit")}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
@@ -554,7 +557,7 @@ export default function CustomerManagement() {
                                       onClick={() => openDeleteDialog(customer.id)}
                                     >
                                       <Trash2 className="h-4 w-4 mr-2" />
-                                      Delete
+                                      {t("common.delete")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -588,13 +591,13 @@ export default function CustomerManagement() {
       <Dialog open={isEditCustomerOpen} onOpenChange={setIsEditCustomerOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Customer</DialogTitle>
-            <DialogDescription>Update customer information.</DialogDescription>
+            <DialogTitle>{t("definitions.customers.editTitle")}</DialogTitle>
+            <DialogDescription>{t("definitions.customers.editDescription")}</DialogDescription>
           </DialogHeader>
           {editCustomer && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-customer_type">Customer Type</Label>
+                <Label htmlFor="edit-customer_type">{t("definitions.customers.customerType")}</Label>
                 <Select
                   value={editCustomer.customer_type?.toString() || ""}
                   onValueChange={(value) => setEditCustomer({ ...editCustomer, customer_type: value ? Number(value) : null })}
@@ -612,7 +615,7 @@ export default function CustomerManagement() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-institution_name">Institution Name</Label>
+                <Label htmlFor="edit-institution_name">{t("definitions.customers.institution")}</Label>
                 <Input
                   id="edit-institution_name"
                   value={editCustomer.institution_name}
@@ -620,7 +623,7 @@ export default function CustomerManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-contact_person">Contact Person</Label>
+                <Label htmlFor="edit-contact_person">{t("definitions.customers.contact")}</Label>
                 <Input
                   id="edit-contact_person"
                   value={editCustomer.contact_person || ""}
@@ -628,7 +631,7 @@ export default function CustomerManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-phone">Phone</Label>
+                <Label htmlFor="edit-phone">{t("definitions.customers.phone")}</Label>
                 <Input
                   id="edit-phone"
                   value={editCustomer.phone || ""}
@@ -636,7 +639,7 @@ export default function CustomerManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-email">Email</Label>
+                <Label htmlFor="edit-email">{t("definitions.customers.email")}</Label>
                 <Input
                   id="edit-email"
                   type="email"
@@ -648,9 +651,9 @@ export default function CustomerManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditCustomerOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateCustomer}>Save Changes</Button>
+            <Button onClick={handleUpdateCustomer}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

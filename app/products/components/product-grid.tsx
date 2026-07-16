@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react"
 
+import { useLanguage } from "@/components/language-context"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -59,6 +60,8 @@ export function ProductGridPagination({
   onPageChange,
   onPageSizeChange,
 }: ProductGridPaginationProps) {
+  const { t } = useLanguage()
+
   return (
     <div className="flex items-center justify-between mt-4">
       <div className="flex items-center gap-2">
@@ -68,7 +71,7 @@ export function ProductGridPagination({
           onClick={() => onPageChange(Math.max(currentPage - 1, 1))}
           disabled={currentPage === 1}
         >
-          Previous
+          {t("common.previous")}
         </Button>
         <span className="text-sm">
           Page {currentPage} of {totalPages}
@@ -79,7 +82,7 @@ export function ProductGridPagination({
           onClick={() => onPageChange(Math.min(currentPage + 1, totalPages))}
           disabled={currentPage === totalPages}
         >
-          Next
+          {t("common.next")}
         </Button>
       </div>
       <div className="flex items-center gap-2">
@@ -142,6 +145,8 @@ function ProductTableRow({
   rowStyle,
   dataIndex,
 }: ProductTableRowProps) {
+  const { t } = useLanguage()
+
   return (
     <TableRow
       ref={rowRef}
@@ -223,7 +228,7 @@ function ProductTableRow({
               onClick={() => onOpenEditBook(book)}
             >
               <Edit className="h-4 w-4" />
-              <span className="sr-only">Edit</span>
+              <span className="sr-only">{t("common.edit")}</span>
             </Button>
             <Button
               variant="outline"
@@ -232,7 +237,7 @@ function ProductTableRow({
               onClick={() => onOpenTransferModal(book)}
             >
               <MoveRight className="h-4 w-4" />
-              <span className="sr-only">Transfer</span>
+              <span className="sr-only">{t("transfer.transfer")}</span>
             </Button>
             <Button
               variant="outline"
@@ -241,7 +246,7 @@ function ProductTableRow({
               onClick={() => onOpenDeleteDialog(book.id)}
             >
               <Trash2 className="h-4 w-4" />
-              <span className="sr-only">Delete</span>
+              <span className="sr-only">{t("common.delete")}</span>
             </Button>
           </div>
 
@@ -250,22 +255,22 @@ function ProductTableRow({
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon" className="h-8 w-8">
                   <MoreHorizontal className="h-4 w-4" />
-                  <span className="sr-only">Actions</span>
+                  <span className="sr-only">{t("common.actions")}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => onOpenBookDetails(book)}>
                   <Book className="h-4 w-4 mr-2" />
                   View Details
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onOpenEditBook(book)}>
                   <Edit className="h-4 w-4 mr-2" />
-                  Edit
+                  {t("common.edit")}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onOpenTransferModal(book)}>
                   <MoveRight className="h-4 w-4 mr-2" />
-                  Transfer
+                  {t("transfer.transfer")}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -273,7 +278,7 @@ function ProductTableRow({
                   onClick={() => onOpenDeleteDialog(book.id)}
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
+                  {t("common.delete")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -299,6 +304,7 @@ export function ProductGrid({
   onOpenDeleteDialog,
   onAddBook,
 }: ProductGridProps) {
+  const { t } = useLanguage()
   const tableContainerRef = useRef<HTMLDivElement>(null)
   const shouldVirtualize = productSummaries.length > 20
 
@@ -331,10 +337,10 @@ export function ProductGrid({
   return (
     <div className="border rounded-md">
         <div className="bg-muted p-4 flex justify-between items-center">
-          <h3 className="font-medium">Books</h3>
+          <h3 className="font-medium">{t("products.books")}</h3>
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={onResetFilters} className="h-8 px-2 text-xs">
-              Clear Filters
+              {t("products.clearFilters")}
             </Button>
           )}
         </div>
@@ -356,7 +362,7 @@ export function ProductGrid({
                     onClick={() => onSort("title_en")}
                   >
                     <div className="flex items-center">
-                      Book
+                      {t("products.book")}
                       {getSortIndicator("title_en")}
                     </div>
                   </TableHead>
@@ -365,19 +371,19 @@ export function ProductGrid({
                     onClick={() => onSort("isbn")}
                   >
                     <div className="flex items-center">
-                      ISBN
+                      {t("products.isbn")}
                       {getSortIndicator("isbn")}
                     </div>
                   </TableHead>
-                  <TableHead>Authors</TableHead>
-                  <TableHead>Translators</TableHead>
-                  <TableHead>Genre</TableHead>
+                  <TableHead>{t("products.authors")}</TableHead>
+                  <TableHead>{t("products.translators")}</TableHead>
+                  <TableHead>{t("products.genre")}</TableHead>
                   <TableHead
                     className="cursor-pointer select-none"
                     onClick={() => onSort("latest_price")}
                   >
                     <div className="flex items-center">
-                      Price
+                      {t("products.price")}
                       {getSortIndicator("latest_price")}
                     </div>
                   </TableHead>
@@ -386,11 +392,11 @@ export function ProductGrid({
                     onClick={() => onSort("status_id")}
                   >
                     <div className="flex items-center">
-                      Status
+                      {t("products.status")}
                       {getSortIndicator("status")}
                     </div>
                   </TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">{t("common.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody
@@ -447,7 +453,7 @@ export function ProductGrid({
                     <TableCell colSpan={8} className="py-8 text-center">
                       <div className="flex flex-col items-center">
                         <Book className="h-12 w-12 text-muted-foreground mb-2" />
-                        <p className="font-medium mb-1">No books found</p>
+                        <p className="font-medium mb-1">{t("products.empty")}</p>
                         <p className="text-muted-foreground text-sm mb-4">
                           {hasActiveFilters
                             ? "Try adjusting your filters"
@@ -455,7 +461,7 @@ export function ProductGrid({
                         </p>
                         {hasActiveFilters ? (
                           <Button variant="outline" size="sm" onClick={onResetFilters}>
-                            Clear Filters
+                            {t("products.clearFilters")}
                           </Button>
                         ) : (
                           <Button size="sm" onClick={onAddBook}>

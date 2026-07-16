@@ -34,6 +34,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Check } from "lucide-react"
+import { useLanguage } from "@/components/language-context"
 import { cn } from "@/lib/utils"
 import type {
   CartItem,
@@ -131,12 +132,14 @@ export function PosCart({
   renderPaymentStatusBadge,
   paymentsSection,
 }: PosCartProps) {
+  const { t } = useLanguage()
+
   return (
     <Sheet open={isCartOpen} onOpenChange={onCartOpenChange}>
       <SheetTrigger asChild>
         <Button variant="outline" className="relative">
           <ShoppingCart className="h-4 w-4 mr-2" />
-          Cart
+          {t("pos.cart.title", { count: cart.length })}
           {cart.length > 0 && (
             <span className="absolute -top-2 -right-2 bg-primary text-primary-foreground rounded-full h-5 w-5 flex items-center justify-center text-xs">
               {cart.length}
@@ -146,11 +149,11 @@ export function PosCart({
       </SheetTrigger>
       <SheetContent className="w-[400px] sm:w-[540px] h-full overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>Cart ({cart.length})</SheetTitle>
+          <SheetTitle>{t("pos.cart.title", { count: cart.length })}</SheetTitle>
         </SheetHeader>
         <div className="mt-6 space-y-4">
           <div className="space-y-2">
-            <Label>Customer</Label>
+            <Label>{t("pos.cart.customer")}</Label>
             <div className="flex gap-2">
               <Popover open={customerSearchOpen} onOpenChange={onCustomerSearchOpenChange}>
                 <PopoverTrigger asChild>
@@ -160,19 +163,21 @@ export function PosCart({
                     aria-expanded={customerSearchOpen}
                     className="w-full justify-between"
                   >
-                    {selectedCustomer ? selectedCustomer.institution_name : "Search customer..."}
+                    {selectedCustomer
+                      ? selectedCustomer.institution_name
+                      : t("pos.cart.searchCustomer")}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[300px] p-0">
                   <Command>
                     <CommandInput
-                      placeholder="Search customer..."
+                      placeholder={t("pos.cart.searchCustomer")}
                       value={customerSearchQuery}
                       onValueChange={onCustomerSearchQueryChange}
                     />
                     <CommandList>
-                      <CommandEmpty>No customer found.</CommandEmpty>
+                      <CommandEmpty>{t("pos.cart.noCustomer")}</CommandEmpty>
                       <CommandGroup>
                         {filteredCustomers.map((customer) => (
                           <CommandItem
@@ -213,14 +218,14 @@ export function PosCart({
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Add New Customer</DialogTitle>
+                    <DialogTitle>{t("pos.cart.addNewCustomer")}</DialogTitle>
                     <DialogDescription>
-                      Enter the customer details below to add them to your system.
+                      {t("pos.cart.addNewCustomer")}
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
-                      <Label htmlFor="customer_type">Customer Type</Label>
+                      <Label htmlFor="customer_type">{t("pos.cart.customerType")}</Label>
                       <Select
                         value={newCustomer.customer_type?.toString() || ""}
                         onValueChange={(value) =>
@@ -231,7 +236,7 @@ export function PosCart({
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Select customer type" />
+                          <SelectValue placeholder={t("pos.cart.customerType")} />
                         </SelectTrigger>
                         <SelectContent>
                           {customerTypes.map((type) => (
@@ -243,7 +248,7 @@ export function PosCart({
                       </Select>
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="institution_name">Institution Name</Label>
+                      <Label htmlFor="institution_name">{t("pos.cart.institution")}</Label>
                       <Input
                         id="institution_name"
                         value={newCustomer.institution_name}
@@ -253,7 +258,7 @@ export function PosCart({
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="contact_person">Contact Person</Label>
+                      <Label htmlFor="contact_person">{t("pos.cart.contact")}</Label>
                       <Input
                         id="contact_person"
                         value={newCustomer.contact_person}
@@ -263,7 +268,7 @@ export function PosCart({
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="phone">Phone</Label>
+                      <Label htmlFor="phone">{t("common.phone")}</Label>
                       <Input
                         id="phone"
                         value={newCustomer.phone}
@@ -271,7 +276,7 @@ export function PosCart({
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="email">Email</Label>
+                      <Label htmlFor="email">{t("common.email")}</Label>
                       <Input
                         id="email"
                         type="email"
@@ -282,16 +287,16 @@ export function PosCart({
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => onActiveDialogChange(null)}>
-                      Cancel
+                      {t("common.cancel")}
                     </Button>
                     <Button onClick={onAddCustomer} disabled={isAddingCustomer}>
                       {isAddingCustomer ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Adding...
+                          {t("pos.cart.adding")}
                         </>
                       ) : (
-                        "Add Customer"
+                        t("pos.cart.addCustomer")
                       )}
                     </Button>
                   </DialogFooter>
@@ -301,27 +306,19 @@ export function PosCart({
           </div>
 
           <div className="space-y-2">
-            <Label>Items</Label>
+            <Label>{t("pos.cart.items")}</Label>
             {(selectedPaymentMethod || isIndividualCustomer) && (
               <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
                 <div className="flex items-center justify-between">
                   <div>
-                    {isIndividualCustomer ? (
-                      <>
-                        <strong>Payment Method:</strong> Cash - Items will be marked as paid by default
-                      </>
-                    ) : (
-                      <>
-                        <strong>Payment Method:</strong>{" "}
-                        {paymentMethods.find((m) => m.id === selectedPaymentMethod)?.display_name_en}
-                        {paymentMethods
-                          .find((m) => m.id === selectedPaymentMethod)
-                          ?.display_name_en.toLowerCase()
-                          .includes("outstanding")
-                          ? " - Items will be marked as unpaid by default"
-                          : " - Items will be marked as paid by default"}
-                      </>
-                    )}
+                    {isIndividualCustomer
+                      ? t("pos.cart.paymentHintPaid")
+                      : paymentMethods
+                            .find((m) => m.id === selectedPaymentMethod)
+                            ?.display_name_en.toLowerCase()
+                            .includes("outstanding")
+                        ? t("pos.cart.paymentHintUnpaid")
+                        : t("pos.cart.paymentHintPaid")}
                   </div>
                   {cart.length > 0 && (
                     <Button
@@ -330,7 +327,7 @@ export function PosCart({
                       onClick={onApplyPaymentMethodToExistingItems}
                       className="h-6 text-xs"
                     >
-                      Apply to All Items
+                      {t("pos.cart.applyToAll")}
                     </Button>
                   )}
                 </div>
@@ -338,7 +335,7 @@ export function PosCart({
             )}
             <div className="border rounded-md p-4 space-y-4 max-h-[300px] overflow-y-auto">
               {cart.length === 0 ? (
-                <p className="text-center text-muted-foreground">No items in cart</p>
+                <p className="text-center text-muted-foreground">{t("pos.cart.empty")}</p>
               ) : (
                 cart.map((item) => {
                   const lineTotal = calculateItemTotal(item)
@@ -383,7 +380,7 @@ export function PosCart({
                                 const displayPrice = getDisplayPrice(item.product)
                                 return displayPrice
                                   ? `${parseFloat(displayPrice).toFixed(3)} ${getCurrencyLabel()}`
-                                  : "N/A"
+                                  : t("common.na")
                               })()}
                             </p>
                           </div>
@@ -428,7 +425,8 @@ export function PosCart({
 
                       <div className="flex items-center gap-2">
                         <Label className="text-xs">
-                          Item Discount{isStoreCustomer ? "" : " (store only)"}:
+                          {t("pos.payments.discount")}
+                          {isStoreCustomer ? "" : " (store only)"}:
                         </Label>
                         <Select
                           value={item.discount_percent.toString()}
@@ -460,12 +458,14 @@ export function PosCart({
                             <SelectItem value="100">100%</SelectItem>
                           </SelectContent>
                         </Select>
-                        <span className="text-xs ml-auto">Total: {formatMoney(lineTotalDisplay)}</span>
+                        <span className="text-xs ml-auto">
+                          {t("pos.cart.lineTotal")}: {formatMoney(lineTotalDisplay)}
+                        </span>
                       </div>
 
                       {item.is_paid && (
                         <div className="flex items-center gap-2 pt-2 border-t">
-                          <Label className="text-xs">Paid Amount:</Label>
+                          <Label className="text-xs">{t("pos.cart.paidAmount")}:</Label>
                           <Input
                             type="number"
                             step="0.001"
@@ -483,8 +483,8 @@ export function PosCart({
                           />
                           <span className="text-xs text-muted-foreground">
                             {remainingAmountDisplay > 0
-                              ? `Remaining: ${formatMoney(remainingAmountDisplay)}`
-                              : "Fully Paid"}
+                              ? formatMoney(remainingAmountDisplay)
+                              : t("pos.cart.fullyPaid")}
                           </span>
                         </div>
                       )}

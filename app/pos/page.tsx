@@ -3,7 +3,8 @@
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 import { Button } from "@/components/ui/button"
 import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
@@ -181,6 +182,8 @@ const handleError = (
 };
 
 export default function POSPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [products, setProducts] = useState<Product[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [genres, setGenres] = useState<Genre[]>([])
@@ -809,10 +812,10 @@ export default function POSPage() {
   }, [selectedWarehouse, products])
 
   const showInsufficientStockToast = useCallback((availableStock: number) => {
-    toast.error("Insufficient stock", { description: availableStock > 0
+    toast.error(t("posToasts.insufficientStock"), { description: availableStock > 0
           ? `Only ${availableStock} item(s) available in this warehouse.`
           : "This product is out of stock in the selected warehouse." })
-  }, [])
+  }, [t])
 
   /** Convert a USD line amount to OMR for on-screen display (Muscat only). */
   const usdToDisplayForLine = useCallback(
@@ -979,11 +982,11 @@ export default function POSPage() {
     const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
     
     if (isFullyPaid) {
-      return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">Paid</span>;
+      return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">{t("pos.status.paid")}</span>;
     } else if (isPartiallyPaid) {
-      return <span className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded-full">Partial</span>;
+      return <span className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded-full">{t("pos.status.partial")}</span>;
     } else if (item.is_paid && item.paid_amount === 0) {
-      return <span className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">Unpaid</span>;
+      return <span className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">{t("pos.status.unpaid")}</span>;
     }
     return null;
   }
@@ -1135,7 +1138,7 @@ export default function POSPage() {
         email: "",
       })
       setActiveDialog(null)
-      toast.success("Success", { description: "Customer added successfully" })
+      toast.success(t("toasts.success"), { description: t("posToasts.customerAdded") })
     } catch (error) {
       handleError(error, "Failed to add customer. Please try again.");
     } finally {
@@ -1486,11 +1489,13 @@ export default function POSPage() {
         isMuscatWarehouse && roundedTotal > 0
           ? Number(((remainingAmount / roundedTotal) * displayCartCalcs.total).toFixed(3))
           : remainingAmount;
-      toast.success("Sale completed", {
+      toast.success(t("posToasts.saleCompleted"), {
         description:
           Math.abs(remainingAmount) < 0.001
-            ? "Fully paid — receipt is ready"
-            : `${displayRemaining.toFixed(3)} ${getCurrencyLabel()} remaining`,
+            ? t("posToasts.fullyPaid")
+            : t("posToasts.amountRemaining", {
+                amount: `${displayRemaining.toFixed(3)} ${getCurrencyLabel()}`,
+              }),
         duration: 4500,
       })
 
@@ -1536,7 +1541,7 @@ export default function POSPage() {
             total_price: calculateItemTotal(item, cartSnapshot),
           })),
         }
-        toast.success("Sale saved", { description: "The sale was completed but the full receipt could not be loaded from the server. Showing sale details from your cart." })
+        toast.success(t("posToasts.saleSaved"))
       }
 
       setConfirmSaleOpen(false)
@@ -1574,7 +1579,7 @@ export default function POSPage() {
         return
       }
       
-      let errorMessage = "Failed to complete sale. Please try again."
+      let errorMessage = t("posToasts.saleFailed")
       let needsManualReconciliation = false
       
       if (error instanceof Error) {
@@ -1613,7 +1618,7 @@ export default function POSPage() {
         error,
         errorMessage,
         {
-          title: needsManualReconciliation ? "Error - Manual Reconciliation Required" : "Error",
+          title: t("toasts.error"),
           duration: needsManualReconciliation ? 10000 : 5000,
         }
       )
@@ -1908,13 +1913,13 @@ export default function POSPage() {
 
   return (
       <ErrorBoundary>
-      <DocumentTitle title="Point of Sale" />
+      <DocumentTitle title={t("pos.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Point of Sale" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("pos.title") }]} />
           </div>
           <div className="ml-auto flex items-center gap-2 px-4">
             <PosCart
@@ -2011,7 +2016,7 @@ export default function POSPage() {
               variant="outline"
               onClick={handleNewSale}
             >
-              New Sale
+              {t("pos.header.newSale")}
             </Button>
           </div>
         </header>

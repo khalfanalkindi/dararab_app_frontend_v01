@@ -1,7 +1,8 @@
 "use client"
 
-import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { fetchWithRetry } from "@/lib/apiClient"
@@ -147,6 +148,8 @@ interface PaymentMethodResponse {
 }
 
 export default function OutstandingPaymentPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<number | null>(null)
@@ -224,7 +227,7 @@ export default function OutstandingPaymentPage() {
     }
 
     // Show toast notification
-    toast.error(options?.title || "Error", { description: errorMessage })
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
   }
 
   useEffect(() => {
@@ -969,7 +972,7 @@ export default function OutstandingPaymentPage() {
 
     const selectedItems = selectedInvoice.items.filter(item => item.selected)
     if (selectedItems.length === 0) {
-      toast.error("No Items Selected", { description: "Please select at least one item to generate a new bill" })
+      toast.error(t("outstandingToasts.noItemsSelected"), { description: t("outstandingToasts.noItemsSelectedDesc") })
       return
     }
 
@@ -1069,7 +1072,7 @@ export default function OutstandingPaymentPage() {
 
   const handleCreateNewBill = async () => {
     if (selectedItems.length === 0 || !selectedInvoice) {
-      toast.error("No Items Selected", { description: "Please select at least one item to generate a new bill" })
+      toast.error(t("outstandingToasts.noItemsSelected"), { description: t("outstandingToasts.noItemsSelectedDesc") })
       return
     }
 
@@ -1077,7 +1080,7 @@ export default function OutstandingPaymentPage() {
     // Since we're using the summary API, we need to get the IDs from the original invoice list
     const originalInvoice = invoices.find(inv => inv.id === selectedInvoice.id)
     if (!originalInvoice?.customer?.id || !originalInvoice?.warehouse?.id) {
-      toast.error("Missing Data", { description: "Customer or warehouse information is missing from the original invoice" })
+      toast.error(t("outstandingToasts.missingData"), { description: t("outstandingToasts.missingDataDesc") })
       return
     }
 
@@ -1488,7 +1491,7 @@ export default function OutstandingPaymentPage() {
           }
           
           // Show warning toast but don't fail the entire operation
-          toast.success("Warning", { description: "Failed to update ${failedUpdates.length} item(s) in original invoice. The child bill was created successfully, but you may need to manually update the original invoice items." })
+          toast.success(t("toasts.warning"))
         }
       }
 
@@ -1576,7 +1579,7 @@ export default function OutstandingPaymentPage() {
         ? `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} is now fully paid and will no longer appear in outstanding payments.`
         : `Child bill #${invoiceId} (composite_id: ${composedId}) created successfully! Main invoice #${originalInvoice.composite_id || originalInvoiceId} updated with ${remainingItems.length} remaining items.`
 
-      toast.success("New Bill Generated Successfully", { description: successMessage })
+      toast.success(t("outstandingToasts.billGenerated"), { description: successMessage })
 
       const receiptSourceItems = [...selectedItems]
 
@@ -1629,7 +1632,7 @@ export default function OutstandingPaymentPage() {
           setReceiptCurrencyLabel(currencyLabel)
           setActiveDialog("receipt")
         } else {
-          toast.success("Child Bill Created", { description: "Bill was created but the receipt could not be loaded. View it from Invoices." })
+          toast.success(t("outstandingToasts.childCreated"), { description: t("outstandingToasts.childCreatedNoReceipt") })
           if (!isInvoiceFullyPaid) {
             setActiveDialog("view")
           }
@@ -1638,7 +1641,7 @@ export default function OutstandingPaymentPage() {
         if (process.env.NODE_ENV !== "production") {
           console.warn("Error loading child bill receipt:", error)
         }
-        toast.success("Child Bill Created", { description: "Bill was created but the receipt could not be loaded. View it from Invoices." })
+        toast.success(t("outstandingToasts.childCreated"), { description: t("outstandingToasts.childCreatedNoReceipt") })
         if (!isInvoiceFullyPaid) {
           setActiveDialog("view")
         }
@@ -1707,20 +1710,20 @@ export default function OutstandingPaymentPage() {
 
   return (
     <>
-      <DocumentTitle title="Outstanding Payment" />
+      <DocumentTitle title={t("outstanding.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Outstanding Payments" }]} />
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("outstanding.breadcrumb") }]} />
           </div>
         </header>
 
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Outstanding Payment Management</h2>
-            <p className="mb-6">View and manage invoices that are not fully paid, including completely unpaid invoices and those with partial payments.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("outstanding.management")}</h2>
+            <p className="mb-6">{t("outstanding.description")}</p>
 
 
             <OutstandingFilters

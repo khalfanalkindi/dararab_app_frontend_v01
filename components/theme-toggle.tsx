@@ -12,15 +12,24 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
+import { useLanguage } from "@/components/language-context"
 
 export function ThemeToggle() {
   const { setTheme, theme } = useTheme()
   const { isMobile } = useSidebar()
+  const { t, dir } = useLanguage()
   const [mounted, setMounted] = React.useState(false)
 
   React.useEffect(() => {
     setMounted(true)
   }, [])
+
+  const themeLabel =
+    theme === "light"
+      ? t("theme.light")
+      : theme === "dark"
+        ? t("theme.dark")
+        : t("theme.system")
 
   if (!mounted) {
     return (
@@ -28,7 +37,7 @@ export function ThemeToggle() {
         <SidebarMenuItem>
           <SidebarMenuButton size="lg" className="pointer-events-none">
             <Sun className="size-4" />
-            <span>Theme</span>
+            <span>{t("theme.label")}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -42,7 +51,7 @@ export function ThemeToggle() {
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
-              tooltip="Theme"
+              tooltip={t("theme.label")}
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <span className="relative flex size-4 shrink-0 items-center justify-center">
@@ -50,28 +59,20 @@ export function ThemeToggle() {
                 <Moon className="absolute size-4 hidden dark:block" />
               </span>
               <div className="grid flex-1 text-start text-sm leading-tight">
-                <span className="truncate font-semibold">Theme</span>
-                <span className="truncate text-xs capitalize text-muted-foreground">
-                  {theme ?? "system"}
-                </span>
+                <span className="truncate font-semibold">{t("theme.label")}</span>
+                <span className="truncate text-xs text-muted-foreground">{themeLabel}</span>
               </div>
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="w-[--radix-dropdown-menu-trigger-width] min-w-40 rounded-lg"
-            side={
-              isMobile
-                ? "bottom"
-                : typeof document !== "undefined" && document.documentElement.dir === "rtl"
-                  ? "left"
-                  : "right"
-            }
+            side={isMobile ? "bottom" : dir === "rtl" ? "left" : "right"}
             align="end"
             sideOffset={4}
           >
-            <DropdownMenuItem onClick={() => setTheme("light")}>Light</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setTheme("dark")}>Dark</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setTheme("system")}>System</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTheme("light")}>{t("theme.light")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTheme("dark")}>{t("theme.dark")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTheme("system")}>{t("theme.system")}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
@@ -82,6 +83,7 @@ export function ThemeToggle() {
 /** Compact control for login / headers outside the sidebar. */
 export function ThemeToggleButton() {
   const { setTheme, theme, resolvedTheme } = useTheme()
+  const { t } = useLanguage()
   const [mounted, setMounted] = React.useState(false)
 
   React.useEffect(() => {
@@ -90,7 +92,7 @@ export function ThemeToggleButton() {
 
   if (!mounted) {
     return (
-      <Button variant="outline" size="icon" className="h-10 w-10" aria-label="Theme" disabled>
+      <Button variant="outline" size="icon" className="h-10 w-10" aria-label={t("theme.label")} disabled>
         <Sun className="h-4 w-4" />
       </Button>
     )
@@ -104,18 +106,18 @@ export function ThemeToggleButton() {
           variant="outline"
           size="icon"
           className="relative h-10 w-10"
-          aria-label="Select theme"
+          aria-label={t("theme.select")}
         >
           <Sun className="h-4 w-4 scale-100 dark:scale-0" />
           <Moon className="absolute h-4 w-4 scale-0 dark:scale-100" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => setTheme("light")}>Light</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("dark")}>Dark</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("system")}>System</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("light")}>{t("theme.light")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("dark")}>{t("theme.dark")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("system")}>{t("theme.system")}</DropdownMenuItem>
         <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-          Current: {theme ?? resolvedTheme ?? "system"}
+          {t("theme.current")}: {theme ?? resolvedTheme ?? t("theme.system")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

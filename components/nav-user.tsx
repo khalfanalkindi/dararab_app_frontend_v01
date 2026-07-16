@@ -36,7 +36,7 @@ function initials(name: string) {
 
 export function NavUser() {
   const { isMobile } = useSidebar()
-  const { dir } = useLanguage()
+  const { dir, t } = useLanguage()
   const router = useRouter()
   const [user, setUser] = useState<SidebarUser | null>(null)
 
@@ -150,7 +150,7 @@ export function NavUser() {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-            side={isMobile ? "bottom" : "right"}
+            side={isMobile ? "bottom" : dir === "rtl" ? "left" : "right"}
             align="end"
             sideOffset={4}
           >
@@ -170,13 +170,13 @@ export function NavUser() {
             <DropdownMenuGroup>
               <DropdownMenuItem onClick={navigateToAccount}>
                 <User className="mr-2 h-4 w-4" />
-                {dir === "rtl" ? "حسابي" : "My Account"}
+                {t("common.myAccount")}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
-              {dir === "rtl" ? "تسجيل الخروج" : "Log out"}
+              {t("common.logOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useLanguage } from "@/components/language-context"
 
 export const DELETE_CONFIRM_WORD = "DELETE"
 
@@ -39,13 +40,16 @@ type DeleteConfirmDialogProps = {
 export function DeleteConfirmDialog({
   open,
   onOpenChange,
-  title = "Are you sure?",
+  title,
   description,
   mode = "simple",
   isDeleting = false,
-  confirmLabel = "Delete",
+  confirmLabel,
   onConfirm,
 }: DeleteConfirmDialogProps) {
+  const { t } = useLanguage()
+  const resolvedTitle = title ?? t("common.areYouSure")
+  const resolvedConfirmLabel = confirmLabel ?? t("common.delete")
   const [typedValue, setTypedValue] = useState("")
   const requiresTyped = mode === "typed"
   const canConfirm = !isDeleting && (!requiresTyped || typedValue === DELETE_CONFIRM_WORD)
@@ -60,14 +64,14 @@ export function DeleteConfirmDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogTitle>{resolvedTitle}</AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-4 text-sm text-muted-foreground">
               <div>{description}</div>
               {requiresTyped && (
                 <div>
                   <Label htmlFor="confirm-delete" className="text-foreground">
-                    Type &quot;{DELETE_CONFIRM_WORD}&quot; to confirm
+                    {t("common.typeDeleteToConfirm", { word: DELETE_CONFIRM_WORD })}
                   </Label>
                   <Input
                     id="confirm-delete"
@@ -84,7 +88,7 @@ export function DeleteConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             disabled={!canConfirm}
@@ -93,7 +97,7 @@ export function DeleteConfirmDialog({
               void onConfirm()
             }}
           >
-            {isDeleting ? "Deleting..." : confirmLabel}
+            {isDeleting ? "Deleting..." : resolvedConfirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

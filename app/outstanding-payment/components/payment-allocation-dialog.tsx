@@ -25,6 +25,7 @@ import {
   formatInvoiceUsdAmount,
   formatLineUsdAmount,
 } from "@/lib/muscatCurrency"
+import { useLanguage } from "@/components/language-context"
 
 import type { AllocationDialogType, Invoice, InvoiceItem, Warehouse } from "./types"
 
@@ -61,6 +62,8 @@ export function PaymentAllocationDialogs({
   onConfirmGenerateBill,
   onCreateNewBill,
 }: PaymentAllocationDialogsProps) {
+  const { t } = useLanguage()
+
   return (
     <>
       <Dialog
@@ -69,18 +72,18 @@ export function PaymentAllocationDialogs({
       >
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Outstanding Invoice Details</DialogTitle>
+            <DialogTitle>{t("outstanding.dialog.details")}</DialogTitle>
             <DialogDescription>
               Invoice #{selectedInvoice?.composite_id || selectedInvoice?.id} -{" "}
-              {selectedInvoice?.customer_name || "No Customer"}
+              {selectedInvoice?.customer_name || t("outstanding.table.noCustomer")}
               {selectedInvoice?.composite_id?.includes("_") && (
                 <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                  Child Invoice
+                  {t("outstanding.dialog.childBill")}
                 </span>
               )}
               {showOnlyUnpaid && (
                 <span className="ml-2 text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded">
-                  Showing Unpaid Items Only
+                  {t("outstanding.dialog.unpaidOnly")}
                 </span>
               )}
             </DialogDescription>
@@ -90,29 +93,29 @@ export function PaymentAllocationDialogs({
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h3 className="font-medium mb-2">Customer Information</h3>
-                  <p>{selectedInvoice.customer_name || "No Customer"}</p>
+                  <h3 className="font-medium mb-2">{t("outstanding.dialog.customerInfo")}</h3>
+                  <p>{selectedInvoice.customer_name || t("outstanding.table.noCustomer")}</p>
                   <p className="text-sm text-muted-foreground">
-                    {selectedInvoice.customer_contact || "No Contact Person"}
+                    {selectedInvoice.customer_contact || t("common.na")}
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-medium mb-2">Invoice Information</h3>
+                  <h3 className="font-medium mb-2">{t("outstanding.dialog.invoiceInfo")}</h3>
                   <p>
-                    Date:{" "}
+                    {t("common.date")}:{" "}
                     {selectedInvoice.created_at
                       ? format(new Date(selectedInvoice.created_at), "PPP")
-                      : "No Date"}
+                      : t("outstanding.table.noDate")}
                   </p>
-                  <p>Warehouse: {selectedInvoice.warehouse_name || "No Warehouse"}</p>
-                  <p>Type: {selectedInvoice.invoice_type_name || "No Type"}</p>
-                  <p>Payment Method: {selectedInvoice.payment_method_name || "No Payment Method"}</p>
+                  <p>{t("common.warehouse")}: {selectedInvoice.warehouse_name || t("outstanding.table.noWarehouse")}</p>
+                  <p>{t("common.type")}: {selectedInvoice.invoice_type_name || t("common.na")}</p>
+                  <p>{selectedInvoice.payment_method_name || t("common.na")}</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Amount</p>
+                  <p className="text-sm text-muted-foreground">{t("outstanding.dialog.total")}</p>
                   <p className="text-lg font-semibold">
                     {formatInvoiceUsdAmount(
                       selectedInvoice.total_amount || 0,
@@ -122,7 +125,7 @@ export function PaymentAllocationDialogs({
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Paid Amount</p>
+                  <p className="text-sm text-muted-foreground">{t("outstanding.dialog.paid")}</p>
                   <p className="text-lg font-semibold text-green-600">
                     {formatInvoiceUsdAmount(
                       selectedInvoice.total_paid || 0,
@@ -132,7 +135,7 @@ export function PaymentAllocationDialogs({
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Outstanding</p>
+                  <p className="text-sm text-muted-foreground">{t("outstanding.dialog.outstanding")}</p>
                   <p className="text-lg font-semibold text-red-600">
                     {formatInvoiceUsdAmount(
                       selectedInvoice.remaining_amount || 0,
@@ -148,12 +151,12 @@ export function PaymentAllocationDialogs({
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <div>
-                    <h3 className="font-medium">Items</h3>
+                    <h3 className="font-medium">{t("outstanding.dialog.items")}</h3>
                     {selectedInvoice.items && selectedInvoice.items.length > 0 && (
                       <div className="flex gap-4 mt-1 text-sm text-muted-foreground">
-                        <span>Total: {selectedInvoice.items.length}</span>
+                        <span>{t("outstanding.dialog.total")}: {selectedInvoice.items.length}</span>
                         <span className="text-green-600">
-                          Paid:{" "}
+                          {t("outstanding.dialog.paid")}:{" "}
                           {
                             selectedInvoice.items.filter(
                               (item) =>
@@ -162,7 +165,7 @@ export function PaymentAllocationDialogs({
                           }
                         </span>
                         <span className="text-orange-600">
-                          Unpaid:{" "}
+                          {t("pos.status.unpaid")}:{" "}
                           {
                             selectedInvoice.items.filter(
                               (item) =>
@@ -175,7 +178,7 @@ export function PaymentAllocationDialogs({
                   </div>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" onClick={onToggleShowOnlyUnpaid}>
-                      {showOnlyUnpaid ? "Show All" : "Show Unpaid Only"}
+                      {showOnlyUnpaid ? t("outstanding.dialog.showAll") : t("outstanding.dialog.showUnpaidOnly")}
                     </Button>
                     <Button
                       onClick={onGenerateNewBill}
@@ -187,12 +190,12 @@ export function PaymentAllocationDialogs({
                       {isCreatingBill ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
+                          {t("common.processing")}
                         </>
                       ) : (
                         <>
                           <Plus className="h-4 w-4 mr-2" />
-                          Generate Child Bill
+                          {t("outstanding.dialog.generateChild")}
                         </>
                       )}
                     </Button>
@@ -219,12 +222,12 @@ export function PaymentAllocationDialogs({
                             onChange={(e) => onSelectAllItems(e.target.checked)}
                           />
                         </TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Discount</TableHead>
-                        <TableHead className="text-right">Tax</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead>{t("common.product")}</TableHead>
+                        <TableHead className="text-right">{t("common.quantity")}</TableHead>
+                        <TableHead className="text-right">{t("invoices.view.unitPrice")}</TableHead>
+                        <TableHead className="text-right">{t("invoices.view.discount")}</TableHead>
+                        <TableHead className="text-right">{t("pos.payments.tax")}</TableHead>
+                        <TableHead className="text-right">{t("common.total")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -232,7 +235,7 @@ export function PaymentAllocationDialogs({
                         <TableRow>
                           <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                             <div className="py-4">
-                              <p className="text-sm">Loading invoice items...</p>
+                              <p className="text-sm">{t("outstanding.dialog.loadingItems")}</p>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -263,10 +266,10 @@ export function PaymentAllocationDialogs({
                                 <TableCell>
                                   <div>
                                     <p className={`font-medium ${isPaid ? "text-green-700" : ""}`}>
-                                      {item.product_name || "No Title"}
+                                      {item.product_name || t("common.na")}
                                       {isPaid && (
                                         <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                                          PAID
+                                          {t("outstanding.dialog.paid")}
                                         </span>
                                       )}
                                     </p>
@@ -275,7 +278,7 @@ export function PaymentAllocationDialogs({
                                     >
                                       {(typeof item.product === "object" && item.product !== null
                                         ? item.product.name_ar || item.product.title_ar
-                                        : null) || "No Arabic Title"}
+                                        : null) || t("common.na")}
                                     </p>
                                   </div>
                                 </TableCell>
@@ -314,9 +317,9 @@ export function PaymentAllocationDialogs({
                         <TableRow>
                           <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                             <div className="py-4">
-                              <p className="text-sm">No items found for this invoice</p>
+                              <p className="text-sm">{t("outstanding.dialog.noItems")}</p>
                               <p className="text-xs text-muted-foreground mt-1">
-                                This invoice might not have any line items
+                                {t("outstanding.dialog.noItemsHint")}
                               </p>
                             </div>
                           </TableCell>
@@ -337,13 +340,13 @@ export function PaymentAllocationDialogs({
       >
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Generate Child Bill</DialogTitle>
+            <DialogTitle>{t("outstanding.dialog.generateChild")}</DialogTitle>
             <DialogDescription>
-              Review selected items and generate a child bill from Main Invoice #
+              {t("outstanding.dialog.generateDesc")} #
               {selectedInvoice?.composite_id || selectedInvoice?.id}
               {selectedInvoice?.composite_id?.includes("_") && (
                 <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                  Child Invoice
+                  {t("outstanding.dialog.childBill")}
                 </span>
               )}
             </DialogDescription>
@@ -353,23 +356,23 @@ export function PaymentAllocationDialogs({
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h3 className="font-medium mb-2">Main Invoice</h3>
+                  <h3 className="font-medium mb-2">{t("outstanding.dialog.mainInvoice")}</h3>
                   <p className="text-sm text-muted-foreground">
                     #{selectedInvoice?.composite_id || selectedInvoice?.id}
                   </p>
                   <p className="text-sm text-muted-foreground">{selectedInvoice?.customer_name}</p>
                   <p className="text-sm text-muted-foreground">
-                    Type: {selectedInvoice?.invoice_type_name || "Unknown"}
+                    {t("common.type")}: {selectedInvoice?.invoice_type_name || t("common.na")}
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-medium mb-2">Child Bill</h3>
+                  <h3 className="font-medium mb-2">{t("outstanding.dialog.childBill")}</h3>
                   <p className="text-sm text-muted-foreground">
-                    Composite ID: Will be generated after bill creation
+                    {t("outstanding.dialog.childBillId")}
                   </p>
                   <p className="text-sm text-muted-foreground">{selectedInvoice?.customer_name}</p>
                   <p className="text-sm text-muted-foreground">
-                    Type: <span className="text-green-600 font-medium">paid</span>
+                    {t("common.type")}: <span className="text-green-600 font-medium">{t("pos.status.paid")}</span>
                   </p>
                 </div>
               </div>
@@ -378,17 +381,17 @@ export function PaymentAllocationDialogs({
 
               <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-md">
                 <div>
-                  <p className="text-sm text-muted-foreground">Child Bill ID</p>
-                  <p className="text-lg font-semibold">Will be assigned</p>
+                  <p className="text-sm text-muted-foreground">{t("outstanding.dialog.childBillId")}</p>
+                  <p className="text-lg font-semibold">{t("common.na")}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Main Invoice</p>
+                  <p className="text-sm text-muted-foreground">{t("outstanding.dialog.mainInvoice")}</p>
                   <p className="text-lg font-semibold">
                     #{selectedInvoice?.composite_id || selectedInvoice?.id}
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Amount</p>
+                  <p className="text-sm text-muted-foreground">{t("outstanding.dialog.total")}</p>
                   <p className="text-lg font-semibold text-green-600">
                     {selectedInvoice
                       ? formatInvoiceUsdAmount(
@@ -405,17 +408,19 @@ export function PaymentAllocationDialogs({
               </div>
 
               <div>
-                <h3 className="font-medium mb-4">Selected Items ({selectedItems.length})</h3>
+                <h3 className="font-medium mb-4">
+                  {t("outstanding.dialog.selectedItems")} ({selectedItems.length})
+                </h3>
                 <div className="border rounded-md">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Discount</TableHead>
-                        <TableHead className="text-right">Tax</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead>{t("common.product")}</TableHead>
+                        <TableHead className="text-right">{t("common.quantity")}</TableHead>
+                        <TableHead className="text-right">{t("invoices.view.unitPrice")}</TableHead>
+                        <TableHead className="text-right">{t("invoices.view.discount")}</TableHead>
+                        <TableHead className="text-right">{t("pos.payments.tax")}</TableHead>
+                        <TableHead className="text-right">{t("common.total")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -423,11 +428,11 @@ export function PaymentAllocationDialogs({
                         <TableRow key={index}>
                           <TableCell>
                             <div>
-                              <p className="font-medium">{item.product_name || "No Title"}</p>
+                              <p className="font-medium">{item.product_name || t("common.na")}</p>
                               <p className="text-sm text-muted-foreground">
                                 {(typeof item.product === "object" && item.product !== null
                                   ? item.product.name_ar || item.product.title_ar
-                                  : null) || "No Arabic Title"}
+                                  : null) || t("common.na")}
                               </p>
                             </div>
                           </TableCell>
@@ -460,7 +465,7 @@ export function PaymentAllocationDialogs({
                     <TableFooter>
                       <TableRow>
                         <TableCell colSpan={4} className="text-right font-medium">
-                          Total Amount:
+                          {t("outstanding.dialog.totalAmount")}:
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           {selectedInvoice
@@ -486,11 +491,11 @@ export function PaymentAllocationDialogs({
                   onClick={() => onActiveDialogChange(null)}
                   disabled={isCreatingBill}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button onClick={onConfirmGenerateBill} disabled={isCreatingBill}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Review & Create Child Bill
+                  {t("outstanding.dialog.reviewCreate")}
                 </Button>
               </div>
             </div>
@@ -504,23 +509,19 @@ export function PaymentAllocationDialogs({
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirm Child Bill Creation</DialogTitle>
+            <DialogTitle>{t("outstanding.dialog.confirmChild")}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to create a child bill with {selectedItems.length} selected items?
+              {t("outstanding.dialog.generateDesc")}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="p-4 bg-muted rounded-md">
-              <p className="text-sm font-medium">Summary:</p>
+              <p className="text-sm font-medium">{t("outstanding.dialog.selectedItems")}:</p>
               <ul className="text-sm text-muted-foreground mt-2 space-y-1">
-                <li>• Child bill will be created with &quot;postpaid&quot; payment method</li>
-                <li>• Child bill ID will be assigned automatically by the system</li>
-                <li>• Composite ID will be: main_invoice_id_child_bill_id</li>
-                <li>• Main invoice ID will be set to the original invoice ID</li>
-                <li>• Selected items will be marked as paid in the main invoice</li>
-                <li>• Main invoice amounts will be recalculated</li>
-                <li>• If all items are selected, main invoice will be marked as fully paid</li>
+                <li>• {t("outstanding.dialog.childBill")} ({selectedItems.length})</li>
+                <li>• {t("outstanding.dialog.mainInvoice")}</li>
+                <li>• {t("outstanding.dialog.childBillId")}</li>
               </ul>
             </div>
 
@@ -530,18 +531,18 @@ export function PaymentAllocationDialogs({
                 onClick={() => onActiveDialogChange(null)}
                 disabled={isCreatingBill}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button onClick={onCreateNewBill} disabled={isCreatingBill}>
                 {isCreatingBill ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
+                    {t("common.creating")}
                   </>
                 ) : (
                   <>
                     <Plus className="h-4 w-4 mr-2" />
-                    Create Child Bill
+                    {t("outstanding.dialog.confirmChild")}
                   </>
                 )}
               </Button>

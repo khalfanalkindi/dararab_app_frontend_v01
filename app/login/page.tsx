@@ -15,20 +15,16 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { API_URL } from "@/lib/config"
 import { fetchWithRetry } from "@/lib/apiClient"
-import {
-  LANGUAGE_COOKIE,
-  type AppLanguage,
-  normalizeLanguage,
-  persistLanguage,
-} from "@/lib/language"
 import { cacheUserData } from "@/lib/user-profile"
 import { ThemeToggleButton } from "@/components/theme-toggle"
+import { useLanguage } from "@/components/language-context"
+import type { AppLanguage } from "@/lib/language"
 
 export default function LoginPage() {
   const router = useRouter()
+  const { language, setLanguage, t } = useLanguage()
   const [username, setUsername] = React.useState("")
   const [password, setPassword] = React.useState("")
-  const [language, setLanguage] = React.useState<AppLanguage>("en")
   const [error, setError] = React.useState("")
   const [showPassword, setShowPassword] = React.useState(false)
   const [isLoading, setIsLoading] = React.useState(false)
@@ -58,13 +54,6 @@ export default function LoginPage() {
     }
 
     setError(errorMessage)
-  }, [])
-
-  // Load language preference (localStorage + cookie sync for SSR lang/dir)
-  React.useEffect(() => {
-    const storedLanguage = normalizeLanguage(localStorage.getItem(LANGUAGE_COOKIE))
-    setLanguage(storedLanguage)
-    persistLanguage(storedLanguage)
   }, [])
 
   // Cleanup: abort pending requests on unmount
@@ -146,9 +135,9 @@ export default function LoginPage() {
         return
       }
 
-      const errorMessage = err instanceof Error ? err.message : "Login failed."
+      const errorMessage = err instanceof Error ? err.message : t("login.failed")
       handleError(err, errorMessage)
-      setError(language === "en" ? errorMessage : "فشل تسجيل الدخول.");
+      setError(language === "en" ? errorMessage : t("login.failed"))
     } finally {
       setIsLoading(false);
     }
@@ -160,24 +149,22 @@ export default function LoginPage() {
   }
 
   const handleLanguageChange = (value: string) => {
-    const next = normalizeLanguage(value)
-    setLanguage(next)
-    persistLanguage(next)
+    setLanguage((value === "ar" ? "ar" : "en") as AppLanguage)
   }
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-muted/40">
-      <DocumentTitle title="Login" />
+      <DocumentTitle title={t("login.title")} />
       {/* Language Switcher — logical `end` mirrors to left in RTL */}
       <div className="absolute top-4 end-4 z-10 flex items-center gap-2 md:top-8 md:end-8">
         <ThemeToggleButton />
         <Select value={language} onValueChange={handleLanguageChange}>
           <SelectTrigger
             className="w-[180px]"
-            aria-label={language === "en" ? "Select language" : "اختر اللغة"}
+            aria-label={t("login.selectLanguage")}
           >
             <Globe className="me-2 h-4 w-4" />
-            <SelectValue placeholder="Select Language" />
+            <SelectValue placeholder={t("language.select")} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="en">English</SelectItem>
@@ -199,12 +186,8 @@ export default function LoginPage() {
                 />
               </div>
             </div>
-            <CardTitle className="text-2xl">{language === "en" ? "DarArab" : "دار عرب"}</CardTitle>
-            <CardDescription>
-              {language === "en"
-                ? "Enter your credentials to access your account"
-                : "أدخل بياناتك الخاصة بك للوصول إلى حسابك"}
-            </CardDescription>
+            <CardTitle className="text-2xl">{t("brand.name")}</CardTitle>
+            <CardDescription>{t("login.description")}</CardDescription>
           </CardHeader>
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
@@ -215,12 +198,12 @@ export default function LoginPage() {
                 </Alert>
               )}
               <div className="space-y-2">
-                <Label htmlFor="username">{language === "en" ? "Username" : "اسم المستخدم"}</Label>
+                <Label htmlFor="username">{t("login.username")}</Label>
                 <div className="relative">
                   <User className="absolute start-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="username"
-                    placeholder={language === "en" ? "Enter your username" : "أدخل اسم المستخدم"}
+                    placeholder={t("login.usernamePlaceholder")}
                     className="ps-10"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
@@ -229,13 +212,13 @@ export default function LoginPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">{language === "en" ? "Password" : "كلمة المرور"}</Label>
+                <Label htmlFor="password">{t("login.password")}</Label>
                 <div className="relative">
                   <Lock className="absolute start-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
-                    placeholder={language === "en" ? "Enter your password" : "أدخل كلمة المرور"}
+                    placeholder={t("login.passwordPlaceholder")}
                     className="ps-10 pe-10"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -247,15 +230,7 @@ export default function LoginPage() {
                     size="icon"
                     className="absolute end-1 top-1 h-8 w-8"
                     onClick={togglePasswordVisibility}
-                    aria-label={
-                      showPassword
-                        ? language === "en"
-                          ? "Hide password"
-                          : "إخفاء كلمة المرور"
-                        : language === "en"
-                          ? "Show password"
-                          : "إظهار كلمة المرور"
-                    }
+                    aria-label={showPassword ? t("login.hidePassword") : t("login.showPassword")}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
@@ -275,12 +250,12 @@ export default function LoginPage() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    {language === "en" ? "Logging in..." : "جاري تسجيل الدخول..."}
+                    {t("login.signingIn")}
                   </>
                 ) : (
                   <>
                     <LogIn className="me-2 h-4 w-4" />
-                    {language === "en" ? "Login" : "تسجيل الدخول"}
+                    {t("login.signIn")}
                   </>
                 )}
               </Button>
