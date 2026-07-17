@@ -74,6 +74,82 @@ type Inventory = {
   updated_at?: string
 }
 
+function WarehouseSearchableCombobox({
+  value,
+  onChange,
+  placeholder,
+  items,
+  allowAll = false,
+  onOpen,
+}: {
+  value: string | number | undefined
+  onChange: (value: string) => void
+  placeholder: string
+  items: { id: number; name: string }[]
+  allowAll?: boolean
+  onOpen?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const currentLabel =
+    value && value !== "all"
+      ? items.find((item) => item.id === Number(value))?.name
+      : undefined
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) onOpen?.()
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between"
+        >
+          {currentLabel || (value === "all" ? placeholder : placeholder)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[280px] p-0">
+        <Command>
+          <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
+          <CommandList>
+            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandGroup>
+              {allowAll ? (
+                <CommandItem
+                  value="all"
+                  onSelect={() => {
+                    onChange("all")
+                    setOpen(false)
+                  }}
+                >
+                  {placeholder}
+                </CommandItem>
+              ) : null}
+              {items.map((item) => (
+                <CommandItem
+                  key={item.id}
+                  value={`${item.name} ${item.id}`}
+                  onSelect={() => {
+                    onChange(String(item.id))
+                    setOpen(false)
+                  }}
+                >
+                  {item.name}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export default function InventoryManagementPage() {
   const { t } = useLanguage()
   const { dashboard: dashboardCrumb } = useAppCrumbs()
@@ -93,7 +169,6 @@ export default function InventoryManagementPage() {
   
   // Loading states for async dropdowns
   const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(false)
-  const [isLoadingWarehouses, setIsLoadingWarehouses] = useState<boolean>(false)
 
   // Filter states - using array for products (like transfer page)
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([])
@@ -343,61 +418,6 @@ useEffect(() => {
       return []
     } finally {
       if (trackLoading) setIsLoadingProducts(false)
-    }
-  }
-
-  // Fetch warehouses with server-side search (for dropdowns)
-  const fetchWarehousesSearch = async (search: string = "", signal?: AbortSignal): Promise<Warehouse[]> => {
-    setIsLoadingWarehouses(true)
-    try {
-      // Get token directly from localStorage to ensure it's fresh
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token || ""}`,
-      }
-      
-      const params = new URLSearchParams()
-      params.append("page_size", "50") // Only fetch 50 items initially
-      if (search.trim()) {
-        params.append("search", search.trim())
-      }
-      
-      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/?${params.toString()}`, { 
-        headers, 
-        signal: signal || abortControllerRef.current?.signal 
-      })
-      
-      const ensureJson = async (res: Response) => {
-        const ct = res.headers.get("content-type") || ""
-        if (!ct.includes("application/json")) {
-          const text = await res.text()
-          throw new Error(`Warehouses request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
-        }
-        return res.json()
-      }
-      
-      const data = await ensureJson(res)
-      const normalizeList = (payload: any) => {
-        if (!payload) return []
-        if (Array.isArray(payload)) return payload
-        if (Array.isArray(payload.results)) return payload.results
-        if (Array.isArray(payload.data)) return payload.data
-        if (Array.isArray(payload.items)) return payload.items
-        return []
-      }
-      
-      return normalizeList(data)
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        return []
-      }
-      if (process.env.NODE_ENV !== "production") {
-        console.error("Warehouses search failed", e)
-      }
-      return []
-    } finally {
-      setIsLoadingWarehouses(false)
     }
   }
 
@@ -870,6 +890,15 @@ useEffect(() => {
     return map
   }, [products])
 
+  const warehouseOptions = useMemo(
+    () =>
+      warehouses.map((warehouse) => ({
+        id: warehouse.id,
+        name: warehouse.name_en || warehouse.name || String(warehouse.id),
+      })),
+    [warehouses],
+  )
+
   const warehouseMap = useMemo(() => {
     const map = new Map<number, Warehouse>()
     warehouses.forEach((w) => {
@@ -902,27 +931,6 @@ useEffect(() => {
     return undefined
   }, [productMap, getProductDisplayName])
 
-  const getWarehouseNameAsync = useCallback(async (id: number): Promise<string | undefined> => {
-    // First check cache
-    const cached = warehouseMap.get(id)
-    if (cached) {
-      return cached.name_en || (cached as any).name || undefined
-    }
-    // If not in cache, fetch it
-    try {
-      const items = await fetchWarehousesSearch("", abortControllerRef.current?.signal)
-      const found = items.find((w: Warehouse) => w.id === id)
-      if (found) {
-        return found.name_en || (found as any).name || undefined
-      }
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") {
-        console.error("Failed to fetch warehouse name:", e)
-      }
-    }
-    return undefined
-  }, [warehouseMap])
-
   // Wrapper functions for async dropdowns
   const fetchProductsForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
     const fetchedProducts = await fetchProductsSearch(search, signal, { trackLoading: false })
@@ -938,21 +946,6 @@ useEffect(() => {
       name: getProductDisplayName(p),
     }))
   }, [getProductDisplayName])
-
-  const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
-    const fetchedWarehouses = await fetchWarehousesSearch(search, signal)
-    setWarehouses((previous) => {
-      const byId = new Map(previous.map((warehouse) => [warehouse.id, warehouse]))
-      for (const warehouse of fetchedWarehouses) {
-        byId.set(warehouse.id, warehouse)
-      }
-      return [...byId.values()]
-    })
-    return fetchedWarehouses.map((w: Warehouse) => ({
-      id: w.id,
-      name: w.name_en || (w as any).name || String(w.id)
-    }))
-  }, [])
 
   const mergedRows = useMemo(() => {
     if (!hasRequested) return []
@@ -1457,13 +1450,12 @@ useEffect(() => {
                     </div>
                     <div className="grid gap-2">
                       <Label>{t("inventory.warehouse")} *</Label>
-                      <AsyncSearchableCombobox
+                      <WarehouseSearchableCombobox
                         value={newInventory.warehouse_id?.toString()}
                         onChange={(v) => setNewInventory((s) => ({ ...s, warehouse_id: Number(v) }))}
-                        fetchItems={fetchWarehousesForDropdown}
-                        isLoading={isLoadingWarehouses}
-                        getItemName={getWarehouseNameAsync}
+                        items={warehouseOptions}
                         placeholder={t("inventory.warehouse")}
+                        onOpen={() => void fetchLookups(undefined, true)}
                       />
                     </div>
                     <div className="grid gap-2">
@@ -1521,14 +1513,13 @@ useEffect(() => {
                   </div>
                   <div className="grid gap-2">
                     <Label>{t("inventory.warehouse")}</Label>
-                    <AsyncSearchableCombobox
+                    <WarehouseSearchableCombobox
                       value={filterWarehouseId || "all"}
                       onChange={(v) => setFilterWarehouseId(v === "all" ? "" : v)}
-                      fetchItems={fetchWarehousesForDropdown}
-                      isLoading={isLoadingWarehouses}
-                      getItemName={getWarehouseNameAsync}
+                      items={warehouseOptions}
                       placeholder={t("common.allWarehouses")}
                       allowAll
+                      onOpen={() => void fetchLookups(undefined, true)}
                     />
                   </div>
                   <div className="flex gap-2 items-end">
@@ -1881,13 +1872,12 @@ useEffect(() => {
               </div>
               <div className="grid gap-2">
                 <Label>{t("inventory.warehouse")}</Label>
-                <AsyncSearchableCombobox
+                <WarehouseSearchableCombobox
                   value={(editItem.warehouse?.id ?? editItem.warehouse_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, warehouse: { id: Number(v), name: getWarehouseName(v) || "" } } : s))}
-                  fetchItems={fetchWarehousesForDropdown}
-                  isLoading={isLoadingWarehouses}
-                  getItemName={getWarehouseNameAsync}
+                  items={warehouseOptions}
                   placeholder={t("inventory.warehouse")}
+                  onOpen={() => void fetchLookups(undefined, true)}
                 />
               </div>
               <div className="grid gap-2">
