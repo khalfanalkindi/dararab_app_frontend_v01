@@ -15,6 +15,7 @@ type PosPaymentsProps = {
   warehouses: Warehouse[]
   selectedInvoiceType: number | null
   invoiceTypes: InvoiceType[]
+  onInvoiceTypeChange: (invoiceTypeId: number) => void
   selectedPaymentMethod: number | null
   paymentMethods: PaymentMethod[]
   isIndividualCustomer: boolean
@@ -55,6 +56,7 @@ export function PosPayments({
   warehouses,
   selectedInvoiceType,
   invoiceTypes,
+  onInvoiceTypeChange,
   selectedPaymentMethod,
   paymentMethods,
   isIndividualCustomer,
@@ -89,7 +91,7 @@ export function PosPayments({
   totalUnpaidAmount,
   onCompleteSale,
 }: PosPaymentsProps) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
 
   return (
     <>
@@ -107,13 +109,23 @@ export function PosPayments({
               </div>
             </div>
             <div className="flex-1">
-              <div className="flex items-center gap-2 p-2 border rounded-md bg-muted/50">
-                <span className="text-sm">
-                  {selectedInvoiceType
-                    ? invoiceTypes.find((type) => type.id === selectedInvoiceType)?.display_name_en
-                    : t("pos.payments.noInvoiceType")}
-                </span>
-              </div>
+              <Select
+                value={selectedInvoiceType?.toString() || ""}
+                onValueChange={(value) => onInvoiceTypeChange(Number(value))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t("pos.payments.noInvoiceType")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {invoiceTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.id.toString()}>
+                      {language === "ar"
+                        ? type.display_name_ar || type.display_name_en
+                        : type.display_name_en}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <Select

@@ -48,6 +48,15 @@ export interface Warehouse {
   name_en: string
   name_ar: string
   location: string
+  type?: number | ListItemValue | null
+  type_value?: string | null
+}
+
+export interface ListItemValue {
+  id: number
+  value: string
+  display_name_en: string
+  display_name_ar?: string
 }
 
 export interface PaymentMethod {
@@ -60,6 +69,7 @@ export interface InvoiceType {
   id: number
   value: string
   display_name_en: string
+  display_name_ar?: string
 }
 
 export interface CustomerType {

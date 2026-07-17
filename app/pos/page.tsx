@@ -23,11 +23,16 @@ import type {
   DialogType,
   Genre,
   InvoiceType,
+  ListItemValue,
   NewCustomerForm,
   PaymentMethod,
   Product,
   Warehouse,
 } from "./components/types"
+
+function normalizeListItemValue(value: string | null | undefined): string {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "")
+}
 
 /** Replace one line so totals that depend on the whole cart (e.g. store + global discount split) stay consistent. */
 function replaceCartItemForTotals(cart: CartItem[], replacement: CartItem): CartItem[] {
@@ -287,14 +292,16 @@ export default function POSPage() {
         warehousesRes,
         paymentMethodsRes,
         invoiceTypesRes,
-        customerTypesRes
+        customerTypesRes,
+        warehouseTypesRes,
       ] = await Promise.all([
         fetchWithRetry(`${API_URL}/sales/customers/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/genre/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/inventory/warehouses/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/payment_method/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/invoice_type/`, { headers, signal: controller.signal }),
-        fetchWithRetry(`${API_URL}/common/list-items/customer_type/`, { headers, signal: controller.signal })
+        fetchWithRetry(`${API_URL}/common/list-items/customer_type/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/common/list-items/warehouse_type/`, { headers, signal: controller.signal }),
       ]);
 
       if (!customersRes.ok) throw new Error("Failed to fetch customers");
@@ -310,14 +317,32 @@ export default function POSPage() {
       const paymentMethodsData = await paymentMethodsRes.json();
       const invoiceTypesData = await invoiceTypesRes.json();
       const customerTypesData = await customerTypesRes.json();
+      const warehouseTypesData = warehouseTypesRes.ok
+        ? await warehouseTypesRes.json()
+        : [];
 
       // Process other data
       const customersArray = Array.isArray(customersData) ? customersData : customersData.results || [];
       const genresArray = Array.isArray(genresData) ? genresData : genresData.results || [];
-      const warehousesArray = Array.isArray(warehousesData) ? warehousesData : warehousesData.results || [];
+      const rawWarehousesArray: Warehouse[] = Array.isArray(warehousesData)
+        ? warehousesData
+        : warehousesData.results || [];
       const paymentMethodsArray = Array.isArray(paymentMethodsData) ? paymentMethodsData : paymentMethodsData.results || [];
       const invoiceTypesArray = Array.isArray(invoiceTypesData) ? invoiceTypesData : invoiceTypesData.results || [];
       const customerTypesArray = Array.isArray(customerTypesData) ? customerTypesData : customerTypesData.results || [];
+      const warehouseTypesArray: ListItemValue[] = Array.isArray(warehouseTypesData)
+        ? warehouseTypesData
+        : warehouseTypesData.results || [];
+      const warehouseTypeById = new Map(
+        warehouseTypesArray.map((type) => [type.id, type.value]),
+      );
+      const warehousesArray = rawWarehousesArray.map((warehouse) => ({
+        ...warehouse,
+        type_value:
+          typeof warehouse.type === "number"
+            ? warehouseTypeById.get(warehouse.type) || null
+            : warehouse.type?.value || null,
+      }));
 
       // Set state with fetched data
       setCustomers(customersArray);
@@ -359,6 +384,42 @@ export default function POSPage() {
       }
     }
   }, [])
+
+  // Select the invoice type from the selected warehouse type:
+  // null/mainstore -> mainstore invoice, bookfair -> bookfair invoice.
+  // The user can still override the automatically selected value afterwards.
+  useEffect(() => {
+    if (!selectedWarehouse || invoiceTypes.length === 0) return
+
+    const warehouse = warehouses.find((item) => item.id === selectedWarehouse)
+    if (!warehouse) return
+
+    let warehouseTypeValue: string | null | undefined
+    if (warehouse.type == null) {
+      warehouseTypeValue = "mainstore"
+    } else if (typeof warehouse.type === "number") {
+      warehouseTypeValue = warehouse.type_value
+    } else {
+      warehouseTypeValue = warehouse.type.value
+    }
+
+    const normalizedWarehouseType = normalizeListItemValue(warehouseTypeValue)
+    const desiredInvoiceType =
+      normalizedWarehouseType === "bookfair"
+        ? "bookfair"
+        : normalizedWarehouseType === "mainstore"
+          ? "mainstore"
+          : null
+
+    if (!desiredInvoiceType) return
+
+    const matchingInvoiceType = invoiceTypes.find(
+      (type) => normalizeListItemValue(type.value) === desiredInvoiceType,
+    )
+    if (matchingInvoiceType) {
+      setSelectedInvoiceType(matchingInvoiceType.id)
+    }
+  }, [selectedWarehouse, warehouses, invoiceTypes])
 
   // Debounce search input to reduce filter operations while typing
   useEffect(() => {
@@ -1974,6 +2035,7 @@ export default function POSPage() {
                   warehouses={warehouses}
                   selectedInvoiceType={selectedInvoiceType}
                   invoiceTypes={invoiceTypes}
+                  onInvoiceTypeChange={setSelectedInvoiceType}
                   selectedPaymentMethod={selectedPaymentMethod}
                   paymentMethods={paymentMethods}
                   isIndividualCustomer={isIndividualCustomer}
