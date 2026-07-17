@@ -72,6 +72,7 @@ export default function WarehouseManagement() {
   const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [warehouseTypes, setWarehouseTypes] = useState<ListItem[]>([])
+  const [isLoadingWarehouseTypes, setIsLoadingWarehouseTypes] = useState(false)
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteWarehouseId, setDeleteWarehouseId] = useState<number | null>(null)
   const [editWarehouse, setEditWarehouse] = useState<Warehouse | null>(null)
@@ -167,6 +168,7 @@ export default function WarehouseManagement() {
     fetchWarehouseTypesAbortControllerRef.current?.abort()
     fetchWarehouseTypesAbortControllerRef.current = new AbortController()
 
+    setIsLoadingWarehouseTypes(true)
     try {
       const res = await fetchWithRetry(
         `${API_URL}/common/list-items/warehouse_type/`,
@@ -188,6 +190,8 @@ export default function WarehouseManagement() {
     } catch (error) {
       handleError(error, "Failed to fetch warehouse types")
       setWarehouseTypes([])
+    } finally {
+      setIsLoadingWarehouseTypes(false)
     }
   }
 
@@ -385,6 +389,7 @@ export default function WarehouseManagement() {
   const openEditDialog = (warehouse: Warehouse) => {
     setEditWarehouse(warehouse)
     setIsEditWarehouseOpen(true)
+    void fetchWarehouseTypes()
   }
 
   // Open delete confirmation
@@ -434,7 +439,13 @@ export default function WarehouseManagement() {
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
                 <h3 className="font-medium">{t("definitions.warehouses.title")}</h3>
-                <Dialog open={isAddWarehouseOpen} onOpenChange={setIsAddWarehouseOpen}>
+                <Dialog
+                  open={isAddWarehouseOpen}
+                  onOpenChange={(open) => {
+                    setIsAddWarehouseOpen(open)
+                    if (open) void fetchWarehouseTypes()
+                  }}
+                >
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
@@ -477,6 +488,15 @@ export default function WarehouseManagement() {
                             <SelectValue placeholder="Select warehouse type" />
                           </SelectTrigger>
                           <SelectContent>
+                            {isLoadingWarehouseTypes ? (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                {t("common.loading")}
+                              </div>
+                            ) : warehouseTypes.length === 0 ? (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                {t("common.noResults")}
+                              </div>
+                            ) : null}
                             {warehouseTypes.map((type) => (
                               <SelectItem key={type.id} value={type.id.toString()}>
                                 {getTypeLabel(type)}
@@ -607,7 +627,13 @@ export default function WarehouseManagement() {
       </SidebarInset>
 
       {/* Edit Warehouse Dialog */}
-      <Dialog open={isEditWarehouseOpen} onOpenChange={setIsEditWarehouseOpen}>
+      <Dialog
+        open={isEditWarehouseOpen}
+        onOpenChange={(open) => {
+          setIsEditWarehouseOpen(open)
+          if (open) void fetchWarehouseTypes()
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("definitions.warehouses.editTitle")}</DialogTitle>
@@ -643,6 +669,15 @@ export default function WarehouseManagement() {
                     <SelectValue placeholder="Select warehouse type" />
                   </SelectTrigger>
                   <SelectContent>
+                    {isLoadingWarehouseTypes ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        {t("common.loading")}
+                      </div>
+                    ) : warehouseTypes.length === 0 ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        {t("common.noResults")}
+                      </div>
+                    ) : null}
                     {warehouseTypes.map((type) => (
                       <SelectItem key={type.id} value={type.id.toString()}>
                         {getTypeLabel(type)}
