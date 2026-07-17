@@ -413,9 +413,10 @@ useEffect(() => {
 
           if (now - timestamp < CACHE_DURATION) {
             try {
-              const warehouses = JSON.parse(cachedData)
-              setWarehouses(Array.isArray(warehouses) ? warehouses : [])
-              return
+              const cachedWarehouses = JSON.parse(cachedData)
+              // Render cached values immediately, but always continue with a
+              // network refresh so newly-created warehouses are not hidden.
+              setWarehouses(Array.isArray(cachedWarehouses) ? cachedWarehouses : [])
             } catch (parseError) {
               if (process.env.NODE_ENV !== "production") {
                 console.error("Error parsing cached warehouse data:", parseError)
@@ -860,11 +861,6 @@ useEffect(() => {
     [selectedProductIds, productLabelById, products, getProductDisplayName],
   )
 
-  const warehouseOptions = useMemo(
-    () => warehouses.map((w) => ({ id: w.id, name: w.name_en || (w as any).name || String(w.id) })),
-    [warehouses]
-  )
-
   // Memoized lookup Maps for O(1) access
   const productMap = useMemo(() => {
     const map = new Map<number, Product>()
@@ -944,8 +940,15 @@ useEffect(() => {
   }, [getProductDisplayName])
 
   const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
-    const warehouses = await fetchWarehousesSearch(search, signal)
-    return warehouses.map((w: Warehouse) => ({
+    const fetchedWarehouses = await fetchWarehousesSearch(search, signal)
+    setWarehouses((previous) => {
+      const byId = new Map(previous.map((warehouse) => [warehouse.id, warehouse]))
+      for (const warehouse of fetchedWarehouses) {
+        byId.set(warehouse.id, warehouse)
+      }
+      return [...byId.values()]
+    })
+    return fetchedWarehouses.map((w: Warehouse) => ({
       id: w.id,
       name: w.name_en || (w as any).name || String(w.id)
     }))
@@ -1371,76 +1374,6 @@ useEffect(() => {
     )
   }
 
-  // Legacy SearchableCombobox (kept for backward compatibility)
-  const SearchableCombobox = ({
-    value,
-    onChange,
-    items,
-    placeholder,
-    allowAll,
-    onOpen,
-  }: {
-    value: string | number | undefined
-    onChange: (val: string) => void
-    items: { id: number; name: string }[]
-    placeholder: string
-    allowAll?: boolean
-    onOpen?: () => void
-  }) => {
-    const [open, setOpen] = useState(false)
-    const currentLabel = value && value !== "all" ? items.find((i) => i.id === Number(value))?.name : undefined
-    return (
-      <Popover
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next)
-          if (next && onOpen) onOpen()
-        }}
-      >
-        <PopoverTrigger asChild>
-          <Button variant="outline" role="combobox" aria-expanded={open} className="justify-between">
-            {currentLabel || (value === "all" ? "All" : placeholder)}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="p-0 w-[280px]">
-          <Command>
-            <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
-            <CommandList>
-              <CommandEmpty>No results found.</CommandEmpty>
-              <CommandGroup>
-                {allowAll && (
-                  <CommandItem
-                    key="all"
-                    value="all"
-                    onSelect={() => {
-                      onChange("all")
-                      setOpen(false)
-                    }}
-                  >
-                    All
-                  </CommandItem>
-                )}
-                {items.map((it) => (
-                  <CommandItem
-                    key={it.id}
-                    value={String(it.id)}
-                    onSelect={(v) => {
-                      onChange(v)
-                      setOpen(false)
-                    }}
-                  >
-                    {it.name}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    )
-  }
-
-
   return (
     <ErrorBoundary>
       <DocumentTitle title={t("inventory.title")} />
@@ -1524,10 +1457,12 @@ useEffect(() => {
                     </div>
                     <div className="grid gap-2">
                       <Label>{t("inventory.warehouse")} *</Label>
-                      <SearchableCombobox
+                      <AsyncSearchableCombobox
                         value={newInventory.warehouse_id?.toString()}
                         onChange={(v) => setNewInventory((s) => ({ ...s, warehouse_id: Number(v) }))}
-                        items={warehouseOptions}
+                        fetchItems={fetchWarehousesForDropdown}
+                        isLoading={isLoadingWarehouses}
+                        getItemName={getWarehouseNameAsync}
                         placeholder={t("inventory.warehouse")}
                       />
                     </div>
@@ -1586,13 +1521,14 @@ useEffect(() => {
                   </div>
                   <div className="grid gap-2">
                     <Label>{t("inventory.warehouse")}</Label>
-                    <SearchableCombobox
+                    <AsyncSearchableCombobox
                       value={filterWarehouseId || "all"}
                       onChange={(v) => setFilterWarehouseId(v === "all" ? "" : v)}
-                      items={warehouseOptions}
+                      fetchItems={fetchWarehousesForDropdown}
+                      isLoading={isLoadingWarehouses}
+                      getItemName={getWarehouseNameAsync}
                       placeholder={t("common.allWarehouses")}
                       allowAll
-                      onOpen={() => { if (!warehouses.length) void fetchLookups() }}
                     />
                   </div>
                   <div className="flex gap-2 items-end">
@@ -1945,10 +1881,12 @@ useEffect(() => {
               </div>
               <div className="grid gap-2">
                 <Label>{t("inventory.warehouse")}</Label>
-                <SearchableCombobox
+                <AsyncSearchableCombobox
                   value={(editItem.warehouse?.id ?? editItem.warehouse_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, warehouse: { id: Number(v), name: getWarehouseName(v) || "" } } : s))}
-                  items={warehouseOptions}
+                  fetchItems={fetchWarehousesForDropdown}
+                  isLoading={isLoadingWarehouses}
+                  getItemName={getWarehouseNameAsync}
                   placeholder={t("inventory.warehouse")}
                 />
               </div>

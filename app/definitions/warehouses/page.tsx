@@ -54,19 +54,21 @@ import { ListPagination } from "@/components/list-pagination"
 
 interface ListItem {
   id: number
-  name: string
+  value: string
+  display_name_en: string
+  display_name_ar: string
 }
 
 interface Warehouse {
   id: number
   name_en: string
   name_ar: string
-  type: ListItem | null
+  type: number | ListItem | null
   location: string
 }
 
 export default function WarehouseManagement() {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [warehouseTypes, setWarehouseTypes] = useState<ListItem[]>([])
@@ -167,7 +169,7 @@ export default function WarehouseManagement() {
 
     try {
       const res = await fetchWithRetry(
-        `${API_URL}/common/list-items/warehouse_type`,
+        `${API_URL}/common/list-items/warehouse_type/`,
         {
           headers,
           signal: fetchWarehouseTypesAbortControllerRef.current.signal
@@ -179,12 +181,31 @@ export default function WarehouseManagement() {
       }
 
       const data = await res.json()
-      const typesData = Array.isArray(data) ? data : data.results || []
+      const typesData = Array.isArray(data)
+        ? data
+        : data.results || data.data || data.items || []
       setWarehouseTypes(typesData)
     } catch (error) {
       handleError(error, "Failed to fetch warehouse types")
       setWarehouseTypes([])
     }
+  }
+
+  const getTypeId = (type: Warehouse["type"]) =>
+    typeof type === "number" ? type : type?.id
+
+  const getTypeLabel = (type: ListItem) =>
+    language === "ar"
+      ? type.display_name_ar || type.display_name_en || type.value
+      : type.display_name_en || type.display_name_ar || type.value
+
+  const getWarehouseTypeLabel = (type: Warehouse["type"]) => {
+    if (!type) return "-"
+    const item =
+      typeof type === "number"
+        ? warehouseTypes.find((warehouseType) => warehouseType.id === type)
+        : type
+    return item ? getTypeLabel(item) : "-"
   }
 
   const fetchWarehouses = async (page: number = currentPage, size: number = pageSize) => {
@@ -447,10 +468,9 @@ export default function WarehouseManagement() {
                       <div className="grid gap-2">
                         <Label htmlFor="type">{t("definitions.warehouses.type")}</Label>
                         <Select
-                          value={newWarehouse.type?.id?.toString()}
+                          value={getTypeId(newWarehouse.type ?? null)?.toString()}
                           onValueChange={(value) => {
-                            const selectedType = warehouseTypes.find((t) => t.id.toString() === value)
-                            setNewWarehouse({ ...newWarehouse, type: selectedType || null })
+                            setNewWarehouse({ ...newWarehouse, type: Number(value) })
                           }}
                         >
                           <SelectTrigger>
@@ -459,7 +479,7 @@ export default function WarehouseManagement() {
                           <SelectContent>
                             {warehouseTypes.map((type) => (
                               <SelectItem key={type.id} value={type.id.toString()}>
-                                {type.name}
+                                {getTypeLabel(type)}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -509,7 +529,7 @@ export default function WarehouseManagement() {
                           <TableCell className="font-medium">
                             {warehouse.name_ar} / {warehouse.name_en}
                           </TableCell>
-                          <TableCell>{warehouse.type?.name || "No type"}</TableCell>
+                          <TableCell>{getWarehouseTypeLabel(warehouse.type)}</TableCell>
                           <TableCell>{warehouse.location || "No location"}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
@@ -614,10 +634,9 @@ export default function WarehouseManagement() {
               <div className="grid gap-2">
                 <Label htmlFor="edit-type">{t("definitions.warehouses.type")}</Label>
                 <Select
-                  value={editWarehouse.type?.id?.toString()}
+                  value={getTypeId(editWarehouse.type)?.toString()}
                   onValueChange={(value) => {
-                    const selectedType = warehouseTypes.find((t) => t.id.toString() === value)
-                    setEditWarehouse({ ...editWarehouse, type: selectedType || null })
+                    setEditWarehouse({ ...editWarehouse, type: Number(value) })
                   }}
                 >
                   <SelectTrigger>
@@ -626,7 +645,7 @@ export default function WarehouseManagement() {
                   <SelectContent>
                     {warehouseTypes.map((type) => (
                       <SelectItem key={type.id} value={type.id.toString()}>
-                        {type.name}
+                        {getTypeLabel(type)}
                       </SelectItem>
                     ))}
                   </SelectContent>
