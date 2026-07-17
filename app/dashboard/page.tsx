@@ -1,26 +1,31 @@
 "use client"
 
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
+import { PageBreadcrumb } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
+
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { FileText, CheckCircle2, AlertCircle, Clock, Users, DollarSign, Receipt, TrendingUp, BookOpen } from "lucide-react"
+import { FileText, CheckCircle2, AlertCircle, Clock, Users, Coins, Receipt, TrendingUp, BookOpen } from "lucide-react"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ResponsiveContainer } from "recharts"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  CardSkeleton,
+  ChartCardSkeleton,
+  OverviewCardSkeleton,
+} from "@/components/card-skeleton"
 import { format } from "date-fns"
+import { toast } from "sonner"
+import { formatApiErrorMessage } from "@/lib/apiErrors"
 
 interface DashboardStats {
   totalProjects: number
@@ -121,6 +126,7 @@ function formatChangePercent(value: number, mode: "previous_month" | "previous_p
 }
 
 export default function Dashboard() {
+  const { t } = useLanguage()
   const [stats, setStats] = useState<DashboardStats>({
     totalProjects: 0,
     approvedProjects: 0,
@@ -151,6 +157,8 @@ export default function Dashboard() {
   const [appliedWarehouse, setAppliedWarehouse] = useState<string>("all")
   const [appliedDateRange, setAppliedDateRange] = useState<DateRange | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
 
   // AbortController refs for request cancellation
   const fetchStatsAbortControllerRef = useRef<AbortController | null>(null)
@@ -165,60 +173,14 @@ export default function Dashboard() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
       if (process.env.NODE_ENV !== 'production') {
         console.log('Request aborted')
       }
-      return
+      return null
     }
 
     const errorMessage = error instanceof Error ? error.message : defaultMessage
@@ -226,7 +188,42 @@ export default function Dashboard() {
     if (process.env.NODE_ENV !== 'production') {
       console.error('Error:', errorMessage, error)
     }
+    return errorMessage
   }, [])
+
+  const emptyStats = useMemo(
+    (): DashboardStats => ({
+      totalProjects: 0,
+      approvedProjects: 0,
+      pendingProjects: 0,
+      totalAuthors: 0,
+      totalTranslators: 0,
+      totalRightsOwners: 0,
+      totalReviewers: 0,
+      approvedPercentage: "0",
+      pendingPercentage: "0",
+      totalBills: 0,
+      totalRevenue: 0,
+      monthlyRevenue: 0,
+      booksSold: 0,
+      billsChangePercent: 0,
+      revenueChangePercent: 0,
+      booksSoldChangePercent: 0,
+    }),
+    [],
+  )
+
+  const isEmptyDashboard =
+    hasLoadedOnce &&
+    !fetchError &&
+    !isLoading &&
+    stats.totalProjects === 0 &&
+    stats.totalBills === 0 &&
+    stats.totalRevenue === 0 &&
+    stats.booksSold === 0 &&
+    stats.totalAuthors === 0 &&
+    projectStatusData.length === 0 &&
+    salesTrend.length === 0
 
   useEffect(() => {
     if (warehousesAbortControllerRef.current) {
@@ -273,6 +270,7 @@ export default function Dashboard() {
     const controller = new AbortController()
     fetchStatsAbortControllerRef.current = controller
     setIsLoading(true)
+    setFetchError(null)
 
     try {
       const params = new URLSearchParams()
@@ -295,7 +293,12 @@ export default function Dashboard() {
       })
 
       if (!response.ok) {
-        throw new Error(`Dashboard API error: ${response.status}`)
+        const body = await response.json().catch(() => null)
+        const message = formatApiErrorMessage(
+          body,
+          `Dashboard API error: ${response.status}`,
+        )
+        throw new Error(message)
       }
 
       const data: DashboardOverviewResponse = await response.json()
@@ -324,36 +327,28 @@ export default function Dashboard() {
       setSalesByGenre(data.sales_by_genre)
       setComparisonMode(data.sales.comparison_mode)
       setHasDateFilter(Boolean(data.filters.start_date && data.filters.end_date))
+      setFetchError(null)
+      setHasLoadedOnce(true)
     } catch (error) {
-      handleError(error, "Error fetching dashboard stats")
-      setStats({
-        totalProjects: 0,
-        approvedProjects: 0,
-        pendingProjects: 0,
-        totalAuthors: 0,
-        totalTranslators: 0,
-        totalRightsOwners: 0,
-        totalReviewers: 0,
-        approvedPercentage: '0',
-        pendingPercentage: '0',
-        totalBills: 0,
-        totalRevenue: 0,
-        monthlyRevenue: 0,
-        booksSold: 0,
-        billsChangePercent: 0,
-        revenueChangePercent: 0,
-        booksSoldChangePercent: 0,
-      })
+      const message = handleError(error, "Error fetching dashboard stats")
+      if (message == null) {
+        // Abort — keep previous data
+        return
+      }
+      setFetchError(message)
+      setHasLoadedOnce(true)
+      setStats(emptyStats)
       setProjectStatusData([])
       setProjectTrends([])
       setSalesTrend([])
       setSalesByGenre([])
       setComparisonMode("previous_month")
       setHasDateFilter(false)
+      toast.error(t("dashboard.loadFailedToast"), { description: message })
     } finally {
       setIsLoading(false)
     }
-  }, [fetchWithRetry, handleError, headers])
+  }, [emptyStats, fetchWithRetry, handleError, headers])
 
   useEffect(() => {
     fetchStats(appliedWarehouse, appliedDateRange)
@@ -385,36 +380,30 @@ export default function Dashboard() {
   const hasActiveFilters = appliedWarehouse !== "all" || Boolean(appliedDateRange?.from)
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+      <ErrorBoundary>
+      <DocumentTitle title={t("dashboard.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Dashboard</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[{ label: t("dashboard.title") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-xl font-semibold">Dashboard</h2>
-                <p className="text-muted-foreground">Welcome to your project management dashboard.</p>
+                <h2 className="text-xl font-semibold">{t("dashboard.title")}</h2>
+                <p className="text-muted-foreground">{t("dashboard.welcome")}</p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
                   <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="All warehouses" />
+                    <SelectValue placeholder={t("common.allWarehouses")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All warehouses</SelectItem>
+                    <SelectItem value="all">{t("common.allWarehouses")}</SelectItem>
                     {warehouses.map((warehouse) => (
                       <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
                         {warehouse.name_en}
@@ -427,20 +416,54 @@ export default function Dashboard() {
                   onDateChange={(range) => setDateRange(range ?? null)}
                 />
                 <Button onClick={handleApplyFilters} disabled={isLoading}>
-                  {isLoading ? "Loading..." : "Apply Filters"}
+                  {isLoading ? t("common.loading") : t("common.applyFilters")}
                 </Button>
                 <Button
                   variant="outline"
                   onClick={handleClearFilters}
                   disabled={isLoading || (!hasActiveFilters && !hasPendingFilterChanges)}
                 >
-                  Clear
+                  {t("common.clear")}
                 </Button>
               </div>
             </div>
 
             {isLoading ? (
-              <div className="py-8 text-center">Loading dashboard data...</div>
+              <div className="space-y-8" aria-busy="true" aria-label={t("dashboard.loadingAria")}>
+                <OverviewCardSkeleton metrics={3} />
+                <CardSkeleton count={4} />
+                <OverviewCardSkeleton metrics={4} />
+                <div className="space-y-6">
+                  <ChartCardSkeleton />
+                  <ChartCardSkeleton />
+                </div>
+              </div>
+            ) : fetchError ? (
+              <Alert variant="destructive" className="mb-6">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>{t("dashboard.loadFailed")}</AlertTitle>
+                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{fetchError}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-destructive/40 bg-background"
+                    onClick={() => fetchStats(appliedWarehouse, appliedDateRange)}
+                  >
+                    {t("common.retry")}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : isEmptyDashboard ? (
+              <Alert className="mb-6">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>{t("dashboard.emptyTitle")}</AlertTitle>
+                <AlertDescription>
+                  {hasActiveFilters
+                    ? t("dashboard.emptyFiltered")
+                    : t("dashboard.emptyDefault")}
+                </AlertDescription>
+              </Alert>
             ) : (
               <>
                 {/* Projects Overview - Consolidated Box */}
@@ -449,28 +472,28 @@ export default function Dashboard() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <FileText className="h-5 w-5" />
-                        Projects Overview
+                        {t("dashboard.projectsOverview")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="grid gap-4 md:grid-cols-3">
                         <div className="text-center">
                           <div className="text-3xl font-bold text-blue-600">{stats.totalProjects}</div>
-                          <p className="text-sm text-muted-foreground">Total Projects</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.totalProjects")}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {stats.approvedProjects} approved, {stats.pendingProjects} pending
                           </p>
                         </div>
                         <div className="text-center">
                           <div className="text-3xl font-bold text-green-600">{stats.approvedProjects}</div>
-                          <p className="text-sm text-muted-foreground">Approved Projects</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.approvedProjects")}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {stats.approvedPercentage}% of total projects
                           </p>
                         </div>
                         <div className="text-center">
                           <div className="text-3xl font-bold text-yellow-600">{stats.pendingProjects}</div>
-                          <p className="text-sm text-muted-foreground">Pending Projects</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.pendingProjects")}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {stats.pendingPercentage}% of total projects
                           </p>
@@ -485,7 +508,7 @@ export default function Dashboard() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">
-                        {hasDateFilter ? "Bills in Period" : "Total Bills"}
+                        {hasDateFilter ? "Bills in Period" : t("dashboard.totalBills")}
                       </CardTitle>
                       <Receipt className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
@@ -500,9 +523,9 @@ export default function Dashboard() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">
-                        {hasDateFilter ? "Period Revenue" : "Total Revenue"}
+                        {hasDateFilter ? "Period Revenue" : t("dashboard.totalRevenue")}
                       </CardTitle>
-                      <DollarSign className="h-4 w-4 text-muted-foreground" />
+                      <Coins className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">{stats.totalRevenue.toLocaleString()} OMR</div>
@@ -515,7 +538,7 @@ export default function Dashboard() {
                   {!hasDateFilter && (
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Monthly Revenue</CardTitle>
+                      <CardTitle className="text-sm font-medium">{t("dashboard.monthlyRevenue")}</CardTitle>
                       <TrendingUp className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
@@ -530,7 +553,7 @@ export default function Dashboard() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">
-                        {hasDateFilter ? "Books Sold in Period" : "Books Sold"}
+                        {hasDateFilter ? "Books Sold in Period" : t("dashboard.booksSold")}
                       </CardTitle>
                       <BookOpen className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
@@ -549,26 +572,26 @@ export default function Dashboard() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Users className="h-5 w-5" />
-                        People Overview
+                        {t("dashboard.peopleOverview")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="grid gap-4 md:grid-cols-4">
                         <div className="text-center">
                           <div className="text-2xl font-bold text-purple-600">{stats.totalAuthors}</div>
-                          <p className="text-sm text-muted-foreground">Authors</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.authors")}</p>
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-indigo-600">{stats.totalTranslators}</div>
-                          <p className="text-sm text-muted-foreground">Translators</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.translators")}</p>
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-pink-600">{stats.totalRightsOwners}</div>
-                          <p className="text-sm text-muted-foreground">Rights Owners</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.rightsOwners")}</p>
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-orange-600">{stats.totalReviewers}</div>
-                          <p className="text-sm text-muted-foreground">Reviewers</p>
+                          <p className="text-sm text-muted-foreground">{t("dashboard.reviewers")}</p>
                         </div>
                       </div>
                     </CardContent>
@@ -580,7 +603,7 @@ export default function Dashboard() {
                   {/* Project Status Pie Chart */}
                   <Card>
                     <CardHeader>
-                      <CardTitle>Project Status Distribution</CardTitle>
+                      <CardTitle>{t("dashboard.projectStatus")}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="h-[400px] w-full">
@@ -698,7 +721,6 @@ export default function Dashboard() {
           </div>
         </div>
       </SidebarInset>
-    </SidebarProvider>
-  )
+</ErrorBoundary>
+)
 }
-

@@ -10,7 +10,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, FileText, Calendar, DollarSign, User, Clock, CheckCircle, AlertCircle, Clock as ClockIcon } from "lucide-react"
 import { useState, useEffect } from "react"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
+import { useLanguage } from "@/components/language-context"
 
 interface Project {
   id: number
@@ -74,6 +75,7 @@ export default function ProjectContractsModal({
   project,
   token,
 }: Props) {
+  const { t } = useLanguage()
   const [contracts, setContracts] = useState<Contract[]>([])
   const [isContractsLoading, setIsContractsLoading] = useState(false)
 
@@ -102,11 +104,7 @@ export default function ProjectContractsModal({
         contractsData.filter((c: Contract) => c.project.id === projectId)
       )
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch contracts",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.fetchFailed") })
     } finally {
       setIsContractsLoading(false)
     }
@@ -153,7 +151,7 @@ export default function ProjectContractsModal({
   }
 
   const formatDate = (dateString: string | null) => {
-    if (!dateString) return "Not specified"
+    if (!dateString) return t("projects.contractsModal.notSpecified")
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
@@ -162,7 +160,7 @@ export default function ProjectContractsModal({
   }
 
   const formatCurrency = (amount: number | null) => {
-    if (!amount) return "Not specified"
+    if (!amount) return t("projects.contractsModal.notSpecified")
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD'
@@ -183,7 +181,7 @@ export default function ProjectContractsModal({
             )}
           </DialogTitle>
           <DialogDescription>
-            View all contracts associated with this project
+            {t("projects.contractsModal.description")}
           </DialogDescription>
         </DialogHeader>
 
@@ -191,20 +189,20 @@ export default function ProjectContractsModal({
           <div className="mb-6">
             <h3 className="text-lg font-medium flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
-              Project Contracts
+              {t("nav.projectContracts")}
             </h3>
           </div>
 
           {isContractsLoading ? (
             <div className="flex justify-center items-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-              <span className="ml-3 text-muted-foreground">Loading contracts...</span>
+              <span className="ml-3 text-muted-foreground">{t("projects.contractsModal.loading")}</span>
             </div>
           ) : contracts.length === 0 ? (
             <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
               <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-              <h4 className="text-lg font-medium text-gray-600 mb-2">No Contracts Found</h4>
-              <p className="text-gray-500">No contracts have been created for this project yet.</p>
+              <h4 className="text-lg font-medium text-gray-600 mb-2">{t("projects.contractsModal.empty")}</h4>
+              <p className="text-gray-500">{t("projects.contractsModal.emptyHint")}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -235,7 +233,7 @@ export default function ProjectContractsModal({
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex-1">
                           <h4 className="font-semibold text-lg mb-1">
-                            {contract.title || "Untitled Contract"}
+                            {contract.title || t("projects.contractsModal.untitled")}
                           </h4>
                           <div className="flex items-center gap-2">
                             {statusIcon}
@@ -245,7 +243,7 @@ export default function ProjectContractsModal({
                               statusColor === 'red' ? 'text-red-700' :
                               'text-blue-700'
                             }`}>
-                              {contract.status?.display_name_en || "Unknown Status"}
+                              {contract.status?.display_name_en || t("projects.contractsModal.unknownStatus")}
                             </span>
                           </div>
                         </div>
@@ -281,7 +279,7 @@ export default function ProjectContractsModal({
                                 <p className="text-sm font-medium">{formatCurrency(contract.fixed_amount)}</p>
                               )}
                               {contract.commission_percent && (
-                                <p className="text-xs text-muted-foreground">{contract.commission_percent}% commission</p>
+                                <p className="text-xs text-muted-foreground">{t("projects.contractsModal.commission", { percent: contract.commission_percent })}</p>
                               )}
                             </div>
                           </div>
@@ -292,8 +290,8 @@ export default function ProjectContractsModal({
                           <div className="flex items-center gap-3">
                             <Clock className="h-4 w-4 text-muted-foreground" />
                             <div>
-                              <p className="text-sm font-medium">{contract.contract_duration} months</p>
-                              <p className="text-xs text-muted-foreground">Contract Duration</p>
+                              <p className="text-sm font-medium">{t("projects.contractsModal.months", { count: contract.contract_duration })}</p>
+                              <p className="text-xs text-muted-foreground">{t("projects.contractsModal.duration")}</p>
                             </div>
                           </div>
                         )}
@@ -308,7 +306,7 @@ export default function ProjectContractsModal({
                                 {contract.start_date && contract.end_date && " - "}
                                 {contract.end_date && formatDate(contract.end_date ?? null)}
                               </p>
-                              <p className="text-xs text-muted-foreground">Contract Period</p>
+                              <p className="text-xs text-muted-foreground">{t("projects.contractsModal.period")}</p>
                             </div>
                           </div>
                         )}
@@ -318,8 +316,8 @@ export default function ProjectContractsModal({
                           <div className="flex items-center gap-3">
                             <FileText className="h-4 w-4 text-muted-foreground" />
                             <div>
-                              <p className="text-sm font-medium">{contract.free_copies} free copies</p>
-                              <p className="text-xs text-muted-foreground">Included in contract</p>
+                              <p className="text-sm font-medium">{t("projects.contractsModal.freeCopies", { count: contract.free_copies })}</p>
+                              <p className="text-xs text-muted-foreground">{t("projects.contractsModal.included")}</p>
                             </div>
                           </div>
                         )}

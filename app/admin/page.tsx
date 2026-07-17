@@ -1,61 +1,81 @@
+"use client"
+
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
 import Link from "next/link"
-import { AppSidebar } from "../../components/app-sidebar"
-import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from "@/components/ui/breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 
 export default function Page() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
+
+  const links = [
+    {
+      href: "/admin/users",
+      title: t("nav.users"),
+      description: t("admin.hub.usersDesc"),
+    },
+    {
+      href: "/admin/roles",
+      title: t("nav.roles"),
+      description: t("admin.hub.rolesDesc"),
+    },
+    {
+      href: "/admin/pages",
+      title: t("nav.pages"),
+      description: t("admin.hub.pagesDesc"),
+    },
+    {
+      href: "/admin/role-permissions",
+      title: t("nav.rolePermissions"),
+      description: t("admin.hub.rolePermissionsDesc"),
+    },
+    {
+      href: "/admin/user-permissions",
+      title: t("nav.userPermissions"),
+      description: t("admin.hub.userPermissionsDesc"),
+    },
+    {
+      href: "/admin/common",
+      title: t("nav.commonDefinitions"),
+      description: t("admin.hub.commonDesc"),
+    },
+  ]
+
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+      <DocumentTitle title={t("admin.hub.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Admin</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("admin.hub.title") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Admin Dashboard</h2>
-            <p>Welcome to the admin area. Use the sidebar to navigate to different admin sections.</p>
+            <h2 className="mb-2 text-xl font-semibold">{t("admin.hub.title")}</h2>
+            <p className="text-muted-foreground">{t("admin.hub.description")}</p>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
-              <Link
-                href="/admin/users"
-                className="block p-6 bg-card rounded-lg border shadow-sm hover:shadow-md transition-shadow"
-              >
-                <h3 className="text-lg font-medium mb-2">Users</h3>
-                <p className="text-sm text-muted-foreground">Manage user accounts and permissions</p>
-              </Link>
-
-              <Link
-                href="/admin/roles"
-                className="block p-6 bg-card rounded-lg border shadow-sm hover:shadow-md transition-shadow"
-              >
-                <h3 className="text-lg font-medium mb-2">Roles</h3>
-                <p className="text-sm text-muted-foreground">Configure user roles and access levels</p>
-              </Link>
-
-              <Link
-                href="/admin/pages"
-                className="block p-6 bg-card rounded-lg border shadow-sm hover:shadow-md transition-shadow"
-              >
-                <h3 className="text-lg font-medium mb-2">Pages</h3>
-                <p className="text-sm text-muted-foreground">Manage site pages and content</p>
-              </Link>
+            <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {links.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="block rounded-lg border bg-card p-6 shadow-sm transition-shadow hover:shadow-md"
+                >
+                  <h3 className="mb-2 text-lg font-medium">{link.title}</h3>
+                  <p className="text-sm text-muted-foreground">{link.description}</p>
+                </Link>
+              ))}
             </div>
           </div>
         </div>
       </SidebarInset>
-    </SidebarProvider>
+    </ErrorBoundary>
   )
 }
-

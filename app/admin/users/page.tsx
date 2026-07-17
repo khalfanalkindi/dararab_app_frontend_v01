@@ -1,19 +1,15 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, UserPlus, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -33,20 +29,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 type User = {
@@ -66,6 +53,8 @@ type Role = {
 }
 
 export default function UsersPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
@@ -73,7 +62,6 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [isAddUserOpen, setIsAddUserOpen] = useState(false)
   const [isEditUserOpen, setIsEditUserOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null;
     message: string;
@@ -99,53 +87,7 @@ export default function UsersPage() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -161,12 +103,8 @@ export default function UsersPage() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Form state for new user
   const [newUser, setNewUser] = useState({
@@ -292,11 +230,7 @@ export default function UsersPage() {
       setIsAddUserOpen(false)
 
       // Show toast notification
-      toast({
-        title: "User Added Successfully",
-        description: `${userName} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.added", { entity: t("admin.permissions.user") }))
 
       // Show alert message
       showAlert("success", `New user "${userName}" has been successfully added to the system.`)
@@ -338,11 +272,7 @@ export default function UsersPage() {
         firstName && lastName ? `${firstName} ${lastName}` : editingUser.username || updatedUser.username || "User"
 
       // Show toast notification
-      toast({
-        title: "User Updated Successfully",
-        description: `${userName}'s information has been updated.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.updated", { entity: t("admin.permissions.user") }))
 
       // Show alert message
       showAlert("success", `User "${userName}" has been successfully updated.`)
@@ -383,14 +313,9 @@ export default function UsersPage() {
       setUsers(users.filter((user) => user.id !== userToDelete))
       setUserToDelete(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
 
       // Show toast notification
-      toast({
-        title: "User Deleted",
-        description: `${userName} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.success(t("adminToasts.deleted", { entity: t("admin.permissions.user") }))
 
       // Show alert message
       showAlert("warning", `User "${userName}" has been permanently deleted from the system.`)
@@ -420,26 +345,15 @@ export default function UsersPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+    <>
+      <DocumentTitle title={t("nav.users")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Users</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("nav.users") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -466,78 +380,78 @@ export default function UsersPage() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">User Management</h2>
-            <p className="mb-6">Manage user accounts, permissions, and access levels.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.users.management")}</h2>
+            <p className="mb-6">{t("admin.users.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Users</h3>
+                <h3 className="font-medium">{t("nav.users")}</h3>
                 <Dialog open={isAddUserOpen} onOpenChange={setIsAddUserOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <UserPlus className="h-4 w-4 mr-2" />
-                      Add User
+                      {t("admin.users.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New User</DialogTitle>
+                      <DialogTitle>{t("admin.users.addNew")}</DialogTitle>
                       <DialogDescription>Enter the details for the new user account.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
-                          <Label htmlFor="first_name">First Name</Label>
+                          <Label htmlFor="first_name">{t("admin.users.firstName")}</Label>
                           <Input
                             id="first_name"
                             value={newUser.first_name}
                             onChange={(e) => setNewUser({ ...newUser, first_name: e.target.value })}
-                            placeholder="First name"
+                            placeholder={t("admin.users.firstName")}
                           />
                         </div>
                         <div className="grid gap-2">
-                          <Label htmlFor="last_name">Last Name</Label>
+                          <Label htmlFor="last_name">{t("admin.users.lastName")}</Label>
                           <Input
                             id="last_name"
                             value={newUser.last_name}
                             onChange={(e) => setNewUser({ ...newUser, last_name: e.target.value })}
-                            placeholder="Last name"
+                            placeholder={t("admin.users.lastName")}
                           />
                         </div>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="username">Username</Label>
+                        <Label htmlFor="username">{t("admin.users.username")}</Label>
                         <Input
                           id="username"
                           value={newUser.username}
                           onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                          placeholder="Username"
+                          placeholder={t("admin.users.username")}
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="email">Email</Label>
+                        <Label htmlFor="email">{t("admin.users.email")}</Label>
                         <Input
                           id="email"
                           type="email"
                           value={newUser.email}
                           onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                          placeholder="Email address"
+                          placeholder={t("admin.users.email")}
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="phone_number">Phone Number</Label>
+                        <Label htmlFor="phone_number">{t("admin.users.phone")}</Label>
                         <Input
                           id="phone_number"
                           value={newUser.phone_number}
                           onChange={(e) => setNewUser({ ...newUser, phone_number: e.target.value })}
-                          placeholder="Phone number"
+                          placeholder={t("admin.users.phone")}
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="role">Role</Label>
+                        <Label htmlFor="role">{t("admin.users.role")}</Label>
                         <Select value={newUser.role} onValueChange={(value) => setNewUser({ ...newUser, role: value })}>
                           <SelectTrigger id="role">
-                            <SelectValue placeholder="Select role" />
+                            <SelectValue placeholder={t("admin.permissions.selectRole")} />
                           </SelectTrigger>
                           <SelectContent>
                             {roles.map((role) => (
@@ -549,44 +463,50 @@ export default function UsersPage() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="password">Password</Label>
+                        <Label htmlFor="password">{t("admin.users.password")}</Label>
                         <Input
                           id="password"
                           type="password"
                           value={newUser.password}
                           onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                          placeholder="Password"
+                          placeholder={t("admin.users.password")}
                         />
                       </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddUserOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddUser}>Add User</Button>
+                      <Button onClick={handleAddUser}>{t("admin.users.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-5 font-medium text-sm mb-2 border-b pb-2">
-                  <div>Username</div>
-                  <div>Email</div>
-                  <div>Role</div>
-                  <div>Status</div>
-                  <div className="text-right">Actions</div>
+                  <div>{t("admin.users.username")}</div>
+                  <div>{t("admin.users.email")}</div>
+                  <div>{t("admin.users.role")}</div>
+                  <div>{t("common.status")}</div>
+                  <div className="text-right">{t("common.actions")}</div>
                 </div>
                 {isLoading ? (
-                  <div className="py-8 text-center">Loading users...</div>
+                  <div className="py-8 text-center">{t("admin.users.loading")}</div>
                 ) : users.length === 0 ? (
-                  <div className="py-8 text-center">No users found</div>
+                  <div className="py-8 text-center">{t("admin.users.empty")}</div>
                 ) : (
                   users.map((user) => (
                     <div key={user.id} className="grid grid-cols-5 text-sm py-3 border-b last:border-0 items-center">
                       <div>{user.username || `${user.first_name} ${user.last_name}`}</div>
                       <div>{user.email}</div>
                       <div>{typeof user.role === "object" ? user.role.name : user.role}</div>
-                      <div>{user.is_active !== undefined ? (user.is_active ? "Active" : "Inactive") : "Active"}</div>
+                      <div>
+                        {user.is_active !== undefined
+                          ? user.is_active
+                            ? t("admin.users.active")
+                            : t("admin.users.inactive")
+                          : t("admin.users.active")}
+                      </div>
                       <div className="flex justify-end gap-2">
                         {/* Desktop view - separate buttons */}
                         <div className="hidden sm:flex gap-2">
@@ -597,7 +517,7 @@ export default function UsersPage() {
                             onClick={() => openEditDialog(user)}
                           >
                             <Edit className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
+                            <span className="sr-only">{t("common.edit")}</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -606,7 +526,7 @@ export default function UsersPage() {
                             onClick={() => openDeleteDialog(user.id)}
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete</span>
+                            <span className="sr-only">{t("common.delete")}</span>
                           </Button>
                         </div>
 
@@ -616,19 +536,19 @@ export default function UsersPage() {
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon" className="h-8 w-8">
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions</span>
+                                <span className="sr-only">{t("common.actions")}</span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => openEditDialog(user)}>
                                 <Edit className="h-4 w-4 mr-2" />
-                                Edit
+                                {t("common.edit")}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(user.id)}>
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
+                                {t("common.delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -647,14 +567,14 @@ export default function UsersPage() {
       <Dialog open={isEditUserOpen} onOpenChange={setIsEditUserOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
+            <DialogTitle>{t("admin.users.editTitle")}</DialogTitle>
             <DialogDescription>Update user information and permissions.</DialogDescription>
           </DialogHeader>
           {editingUser && (
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="edit-first_name">First Name</Label>
+                  <Label htmlFor="edit-first_name">{t("admin.users.firstName")}</Label>
                   <Input
                     id="edit-first_name"
                     value={editingUser.first_name || ""}
@@ -662,7 +582,7 @@ export default function UsersPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="edit-last_name">Last Name</Label>
+                  <Label htmlFor="edit-last_name">{t("admin.users.lastName")}</Label>
                   <Input
                     id="edit-last_name"
                     value={editingUser.last_name || ""}
@@ -671,7 +591,7 @@ export default function UsersPage() {
                 </div>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-username">Username</Label>
+                <Label htmlFor="edit-username">{t("admin.users.username")}</Label>
                 <Input
                   id="edit-username"
                   value={editingUser.username || ""}
@@ -679,7 +599,7 @@ export default function UsersPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-email">Email</Label>
+                <Label htmlFor="edit-email">{t("admin.users.email")}</Label>
                 <Input
                   id="edit-email"
                   type="email"
@@ -688,7 +608,7 @@ export default function UsersPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-phone_number">Phone Number</Label>
+                <Label htmlFor="edit-phone_number">{t("admin.users.phone")}</Label>
                 <Input
                   id="edit-phone_number"
                   value={editingUser.phone_number || ""}
@@ -696,13 +616,13 @@ export default function UsersPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-role">Role</Label>
+                <Label htmlFor="edit-role">{t("admin.users.role")}</Label>
                 <Select
                   value={editingUser.role?.toString() || ""}
                   onValueChange={(value) => setEditingUser({ ...editingUser, role: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-role">
-                    <SelectValue placeholder="Select role" />
+                    <SelectValue placeholder={t("admin.permissions.selectRole")} />
                   </SelectTrigger>
                   <SelectContent>
                     {roles.map((role) => (
@@ -717,54 +637,34 @@ export default function UsersPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditUserOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateUser}>Save Changes</Button>
+            <Button onClick={handleUpdateUser}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {userToDelete !== null && (
-                <>
-                  You are about to delete{" "}
-                  <strong>
-                    {users.find((u) => u.id === userToDelete)?.first_name}{" "}
-                    {users.find((u) => u.id === userToDelete)?.last_name}
-                  </strong>
-                  . This action cannot be undone. This will permanently delete the user account and remove their data
-                  from our servers.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteUser}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          userToDelete !== null ? (
+            <>
+              You are about to delete{" "}
+              <strong>
+                {users.find((u) => u.id === userToDelete)?.first_name}{" "}
+                {users.find((u) => u.id === userToDelete)?.last_name}
+              </strong>
+              . This action cannot be undone. This will permanently delete the user account and remove their data
+              from our servers.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeleteUser}
+      />
+    </>
+  </ErrorBoundary>
   )
 }
-

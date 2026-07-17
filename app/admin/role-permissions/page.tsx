@@ -1,19 +1,15 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -33,21 +29,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 // Define types
@@ -82,6 +69,8 @@ type NewPermission = {
 }
 
 export default function RoleBasedPermissions() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [rolePermissions, setRolePermissions] = useState<Permission[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [pages, setPages] = useState<Page[]>([])
@@ -90,7 +79,6 @@ export default function RoleBasedPermissions() {
   const [editingPermission, setEditingPermission] = useState<Permission | null>(null)
   const [isAddPermissionOpen, setIsAddPermissionOpen] = useState(false)
   const [isEditPermissionOpen, setIsEditPermissionOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null;
     message: string;
@@ -117,53 +105,7 @@ export default function RoleBasedPermissions() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -179,12 +121,8 @@ export default function RoleBasedPermissions() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Form state for new permission
   const [newPermission, setNewPermission] = useState<NewPermission>({
@@ -374,11 +312,7 @@ export default function RoleBasedPermissions() {
       const pageName = pages.find((p) => p.id === pageId)?.name || "Page"
 
       // Show toast notification
-      toast({
-        title: "Permission Added Successfully",
-        description: `Permission for ${roleName} on ${pageName} has been added.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.added", { entity: t("admin.permissions.permissions") }))
 
       // Show alert message
       showAlert("success", `New permission for ${roleName} on ${pageName} has been successfully added.`)
@@ -422,11 +356,7 @@ export default function RoleBasedPermissions() {
       const resourceName = editingPermission.resource
 
       // Show toast notification
-      toast({
-        title: "Permission Updated Successfully",
-        description: `Permission for ${roleName} on ${resourceName} has been updated.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.updated", { entity: t("admin.permissions.permissions") }))
 
       // Show alert message
       showAlert("success", `Permission for ${roleName} on ${resourceName} has been successfully updated.`)
@@ -470,14 +400,9 @@ export default function RoleBasedPermissions() {
       setRolePermissions(rolePermissions.filter((perm) => perm.id !== permissionToDelete))
       setPermissionToDelete(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
 
       // Show toast notification
-      toast({
-        title: "Permission Deleted",
-        description: `Permission for ${roleName} on ${resourceName} has been removed.`,
-        variant: "destructive",
-      })
+      toast.success(t("adminToasts.deleted", { entity: t("admin.permissions.permissions") }))
 
       // Show alert message
       showAlert("warning", `Permission for ${roleName} on ${resourceName} has been permanently deleted.`)
@@ -522,26 +447,15 @@ export default function RoleBasedPermissions() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+    <>
+      <DocumentTitle title={t("nav.rolePermissions")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Role Permissions</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("nav.rolePermissions") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -568,33 +482,33 @@ export default function RoleBasedPermissions() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Role-Based Permissions</h2>
-            <p className="mb-6">Manage permissions for different roles in your application.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.rolePermissions.title")}</h2>
+            <p className="mb-6">{t("admin.rolePermissions.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Role Permissions</h3>
+                <h3 className="font-medium">{t("nav.rolePermissions")}</h3>
                 <Dialog open={isAddPermissionOpen} onOpenChange={setIsAddPermissionOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Permission
+                      {t("admin.rolePermissions.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Role Permission</DialogTitle>
+                      <DialogTitle>{t("admin.rolePermissions.addNew")}</DialogTitle>
                       <DialogDescription>Define permissions for a specific role.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="role">Role</Label>
+                        <Label htmlFor="role">{t("admin.permissions.role")}</Label>
                         <Select
                           value={newPermission.role}
                           onValueChange={(value) => setNewPermission({ ...newPermission, role: value })}
                         >
                           <SelectTrigger id="role">
-                            <SelectValue placeholder="Select role" />
+                            <SelectValue placeholder={t("admin.permissions.selectRole")} />
                           </SelectTrigger>
                           <SelectContent>
                             {roles.map((role) => (
@@ -606,13 +520,13 @@ export default function RoleBasedPermissions() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="page">Page</Label>
+                        <Label htmlFor="page">{t("admin.permissions.page")}</Label>
                         <Select
                           value={newPermission.page}
                           onValueChange={(value) => setNewPermission({ ...newPermission, page: value })}
                         >
                           <SelectTrigger id="page">
-                            <SelectValue placeholder="Select page" />
+                            <SelectValue placeholder={t("admin.permissions.selectPage")} />
                           </SelectTrigger>
                           <SelectContent>
                             {pages.map((page) => (
@@ -624,7 +538,7 @@ export default function RoleBasedPermissions() {
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label>Permissions</Label>
+                        <Label>{t("admin.permissions.permissions")}</Label>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="flex items-center space-x-2">
                             <Checkbox
@@ -636,7 +550,7 @@ export default function RoleBasedPermissions() {
                               htmlFor="can_view"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can View
+                              {t("admin.permissions.canView")}
                             </label>
                           </div>
                           <div className="flex items-center space-x-2">
@@ -649,7 +563,7 @@ export default function RoleBasedPermissions() {
                               htmlFor="can_add"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can Add
+                              {t("admin.permissions.canAdd")}
                             </label>
                           </div>
                           <div className="flex items-center space-x-2">
@@ -662,7 +576,7 @@ export default function RoleBasedPermissions() {
                               htmlFor="can_edit"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can Edit
+                              {t("admin.permissions.canEdit")}
                             </label>
                           </div>
                           <div className="flex items-center space-x-2">
@@ -675,7 +589,7 @@ export default function RoleBasedPermissions() {
                               htmlFor="can_delete"
                               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                             >
-                              Can Delete
+                              {t("admin.permissions.canDelete")}
                             </label>
                           </div>
                         </div>
@@ -683,24 +597,24 @@ export default function RoleBasedPermissions() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddPermissionOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddPermission}>Add Permission</Button>
+                      <Button onClick={handleAddPermission}>{t("admin.rolePermissions.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-7 font-medium text-sm mb-2 border-b pb-2">
-                  <div className="col-span-2">Role</div>
-                  <div className="col-span-2">Page</div>
-                  <div className="col-span-2">Permissions</div>
-                  <div className="text-right">Actions</div>
+                  <div className="col-span-2">{t("admin.permissions.role")}</div>
+                  <div className="col-span-2">{t("admin.permissions.page")}</div>
+                  <div className="col-span-2">{t("admin.permissions.permissions")}</div>
+                  <div className="text-right">{t("common.actions")}</div>
                 </div>
                 {isLoading ? (
-                  <div className="py-8 text-center">Loading permissions...</div>
+                  <div className="py-8 text-center">{t("admin.rolePermissions.loading")}</div>
                 ) : rolePermissions.length === 0 ? (
-                  <div className="py-8 text-center">No permissions found</div>
+                  <div className="py-8 text-center">{t("admin.rolePermissions.empty")}</div>
                 ) : (
                   rolePermissions.map((permission) => (
                     <div
@@ -743,7 +657,7 @@ export default function RoleBasedPermissions() {
                             onClick={() => openEditDialog(permission)}
                           >
                             <Edit className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
+                            <span className="sr-only">{t("common.edit")}</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -752,7 +666,7 @@ export default function RoleBasedPermissions() {
                             onClick={() => openDeleteDialog(permission.id)}
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete</span>
+                            <span className="sr-only">{t("common.delete")}</span>
                           </Button>
                         </div>
 
@@ -762,14 +676,14 @@ export default function RoleBasedPermissions() {
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon" className="h-8 w-8">
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions</span>
+                                <span className="sr-only">{t("common.actions")}</span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => openEditDialog(permission)}>
                                 <Edit className="h-4 w-4 mr-2" />
-                                Edit
+                                {t("common.edit")}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
@@ -777,7 +691,7 @@ export default function RoleBasedPermissions() {
                                 onClick={() => openDeleteDialog(permission.id)}
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
+                                {t("common.delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -796,19 +710,19 @@ export default function RoleBasedPermissions() {
       <Dialog open={isEditPermissionOpen} onOpenChange={setIsEditPermissionOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Role Permission</DialogTitle>
+            <DialogTitle>{t("common.edit")}</DialogTitle>
             <DialogDescription>Update permissions for this role.</DialogDescription>
           </DialogHeader>
           {editingPermission && (
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-role">Role</Label>
+                <Label htmlFor="edit-role">{t("admin.permissions.role")}</Label>
                 <Select
                   value={editingPermission.role?.toString() || ""}
                   onValueChange={(value) => setEditingPermission({ ...editingPermission, role: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-role">
-                    <SelectValue placeholder="Select role" />
+                    <SelectValue placeholder={t("admin.permissions.selectRole")} />
                   </SelectTrigger>
                   <SelectContent>
                     {roles.map((role) => (
@@ -820,13 +734,13 @@ export default function RoleBasedPermissions() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-page">Page</Label>
+                <Label htmlFor="edit-page">{t("admin.permissions.page")}</Label>
                 <Select
                   value={editingPermission.page?.toString() || ""}
                   onValueChange={(value) => setEditingPermission({ ...editingPermission, page: parseInt(value) })}
                 >
                   <SelectTrigger id="edit-page">
-                    <SelectValue placeholder="Select page" />
+                    <SelectValue placeholder={t("admin.permissions.selectPage")} />
                   </SelectTrigger>
                   <SelectContent>
                     {pages.map((page) => (
@@ -838,7 +752,7 @@ export default function RoleBasedPermissions() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label>Permissions</Label>
+                <Label>{t("admin.permissions.permissions")}</Label>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex items-center space-x-2">
                     <Checkbox
@@ -850,7 +764,7 @@ export default function RoleBasedPermissions() {
                       htmlFor="edit-can_view"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can View
+                      {t("admin.permissions.canView")}
                     </label>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -863,7 +777,7 @@ export default function RoleBasedPermissions() {
                       htmlFor="edit-can_add"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can Add
+                      {t("admin.permissions.canAdd")}
                     </label>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -876,7 +790,7 @@ export default function RoleBasedPermissions() {
                       htmlFor="edit-can_edit"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can Edit
+                      {t("admin.permissions.canEdit")}
                     </label>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -889,7 +803,7 @@ export default function RoleBasedPermissions() {
                       htmlFor="edit-can_delete"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Can Delete
+                      {t("admin.permissions.canDelete")}
                     </label>
                   </div>
                 </div>
@@ -898,53 +812,33 @@ export default function RoleBasedPermissions() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditPermissionOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdatePermission}>Save Changes</Button>
+            <Button onClick={handleUpdatePermission}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {permissionToDelete !== null && (
-                <>
-                  You are about to delete permission for{" "}
-                  <strong>
-                    {getRoleName(rolePermissions.find((p) => p.id === permissionToDelete)?.role as number)} on 
-                    {getPageName(rolePermissions.find((p) => p.id === permissionToDelete)?.page as number)}
-                  </strong>
-                  . This action cannot be undone and may affect user access to this resource.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeletePermission}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          permissionToDelete !== null ? (
+            <>
+              You are about to delete permission for{" "}
+              <strong>
+                {getRoleName(rolePermissions.find((p) => p.id === permissionToDelete)?.role as number)} on 
+                {getPageName(rolePermissions.find((p) => p.id === permissionToDelete)?.page as number)}
+              </strong>
+              . This action cannot be undone and may affect user access to this resource.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeletePermission}
+      />
+    </>
+  </ErrorBoundary>
   )
 }
-

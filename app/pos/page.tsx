@@ -1,157 +1,42 @@
 "use client"
 
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Plus,
-  Minus,
-  Trash2,
-  Search,
-  UserPlus,
-  Printer,
-  ShoppingCart,
-  TrendingUp,
-  DollarSign,
-  Users,
-  Loader2,
-  ChevronDown,
-  ChevronUp,
-  X,
-  CheckCircle2,
-  Download,
-  FileText,
-  Image,
-} from "lucide-react"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
-import Link from "next/link"
-import { AppSidebar } from "../../components/app-sidebar"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Check, ChevronsUpDown } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
+import { toast } from "sonner"
 import { format } from "date-fns"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { toast } from "@/hooks/use-toast"
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import { API_URL } from "@/lib/config"
+import { PosMetrics } from "./components/pos-metrics"
+import { PosProductGrid } from "./components/pos-product-grid"
+import { PosCart } from "./components/pos-cart"
+import { PosPayments } from "./components/pos-payments"
+import { PosCheckout } from "./components/pos-checkout"
+import type {
+  CartItem,
+  Customer,
+  DialogType,
+  Genre,
+  InvoiceType,
+  ListItemValue,
+  NewCustomerForm,
+  PaymentMethod,
+  Product,
+  Warehouse,
+} from "./components/types"
 
-interface Product {
-  id: number;
-  title_ar: string;
-  title_en: string;
-  isbn: string;
-  genre_id: number;
-  status_id: number;
-  genre_name: string;
-  status_name: string;
-  author_name: string | null;
-  translator_name: string | null;
-  editions_count: number;
-  stock: number | null;
-  latest_price: string | null;
-  latest_price_omr: string | null;
-  price: string | null;
-  price_omr: string | null;
-  latest_cost: string | null;
-  cover_design_url: string | null;
-  warehouse_stock?: number;
-}
-
-interface Customer {
-  id: number
-  institution_name: string
-  contact_person: string
-  phone: string
-  email: string
-  customer_type?: number | null
-}
-
-interface CartItem {
-  product: Product
-  quantity: number
-  discount_percent: number
-  is_paid: boolean
-  paid_amount: number
+function normalizeListItemValue(value: string | null | undefined): string {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
 /** Replace one line so totals that depend on the whole cart (e.g. store + global discount split) stay consistent. */
 function replaceCartItemForTotals(cart: CartItem[], replacement: CartItem): CartItem[] {
   return cart.map((c) => (c.product.id === replacement.product.id ? replacement : c))
-}
-
-interface Genre {
-  id: number
-  value: string
-  display_name_en: string
-}
-
-interface Warehouse {
-  id: number
-  name_en: string
-  name_ar: string
-  location: string
-}
-
-interface PaymentMethod {
-  id: number
-  value: string
-  display_name_en: string
-}
-
-interface InvoiceType {
-  id: number
-  value: string
-  display_name_en: string
-}
-
-interface SummaryData {
-  product: number;
-  latest_price: {
-    price: number;
-    date: string;
-  };
 }
 
 // Custom hook for cart calculations - consolidates all payment-related calculations
@@ -298,15 +183,12 @@ const handleError = (
   }
 
   // Show toast notification
-  toast({
-    title: options?.title || "Error",
-    description: errorMessage,
-    variant: "destructive",
-    duration: options?.duration || 5000,
-  });
+  toast.error(options?.title || "Error", { description: errorMessage });
 };
 
 export default function POSPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [products, setProducts] = useState<Product[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [genres, setGenres] = useState<Genre[]>([])
@@ -332,7 +214,7 @@ export default function POSPage() {
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false)
   const [customerSearchQuery, setCustomerSearchQuery] = useState("")
   const [debouncedCustomerSearchQuery, setDebouncedCustomerSearchQuery] = useState("")
-  const [newCustomer, setNewCustomer] = useState<Omit<Customer, "id">>({
+  const [newCustomer, setNewCustomer] = useState<NewCustomerForm>({
     customer_type: null,
     institution_name: "",
     contact_person: "",
@@ -340,8 +222,6 @@ export default function POSPage() {
     email: "",
   })
   const [customerTypes, setCustomerTypes] = useState<any[]>([])
-  // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = "newCustomer" | "print" | null
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
   /** Separate from activeDialog so closing confirm after sale does not overwrite `print` via onOpenChange. */
   const [confirmSaleOpen, setConfirmSaleOpen] = useState(false)
@@ -387,76 +267,6 @@ export default function POSPage() {
     target.src = "/placeholder.svg";
   };
 
-  // Exponential backoff retry utility
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
   // Update the fetchData function - only fetch basic data, not products
   const fetchData = async () => {
     // Abort previous request if still pending
@@ -482,14 +292,16 @@ export default function POSPage() {
         warehousesRes,
         paymentMethodsRes,
         invoiceTypesRes,
-        customerTypesRes
+        customerTypesRes,
+        warehouseTypesRes,
       ] = await Promise.all([
         fetchWithRetry(`${API_URL}/sales/customers/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/genre/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/inventory/warehouses/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/payment_method/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/invoice_type/`, { headers, signal: controller.signal }),
-        fetchWithRetry(`${API_URL}/common/list-items/customer_type/`, { headers, signal: controller.signal })
+        fetchWithRetry(`${API_URL}/common/list-items/customer_type/`, { headers, signal: controller.signal }),
+        fetchWithRetry(`${API_URL}/common/list-items/warehouse_type/`, { headers, signal: controller.signal }),
       ]);
 
       if (!customersRes.ok) throw new Error("Failed to fetch customers");
@@ -505,14 +317,32 @@ export default function POSPage() {
       const paymentMethodsData = await paymentMethodsRes.json();
       const invoiceTypesData = await invoiceTypesRes.json();
       const customerTypesData = await customerTypesRes.json();
+      const warehouseTypesData = warehouseTypesRes.ok
+        ? await warehouseTypesRes.json()
+        : [];
 
       // Process other data
       const customersArray = Array.isArray(customersData) ? customersData : customersData.results || [];
       const genresArray = Array.isArray(genresData) ? genresData : genresData.results || [];
-      const warehousesArray = Array.isArray(warehousesData) ? warehousesData : warehousesData.results || [];
+      const rawWarehousesArray: Warehouse[] = Array.isArray(warehousesData)
+        ? warehousesData
+        : warehousesData.results || [];
       const paymentMethodsArray = Array.isArray(paymentMethodsData) ? paymentMethodsData : paymentMethodsData.results || [];
       const invoiceTypesArray = Array.isArray(invoiceTypesData) ? invoiceTypesData : invoiceTypesData.results || [];
       const customerTypesArray = Array.isArray(customerTypesData) ? customerTypesData : customerTypesData.results || [];
+      const warehouseTypesArray: ListItemValue[] = Array.isArray(warehouseTypesData)
+        ? warehouseTypesData
+        : warehouseTypesData.results || [];
+      const warehouseTypeById = new Map(
+        warehouseTypesArray.map((type) => [type.id, type.value]),
+      );
+      const warehousesArray = rawWarehousesArray.map((warehouse) => ({
+        ...warehouse,
+        type_value:
+          typeof warehouse.type === "number"
+            ? warehouseTypeById.get(warehouse.type) || null
+            : warehouse.type?.value || null,
+      }));
 
       // Set state with fetched data
       setCustomers(customersArray);
@@ -554,6 +384,42 @@ export default function POSPage() {
       }
     }
   }, [])
+
+  // Select the invoice type from the selected warehouse type:
+  // null/mainstore -> mainstore invoice, bookfair -> bookfair invoice.
+  // The user can still override the automatically selected value afterwards.
+  useEffect(() => {
+    if (!selectedWarehouse || invoiceTypes.length === 0) return
+
+    const warehouse = warehouses.find((item) => item.id === selectedWarehouse)
+    if (!warehouse) return
+
+    let warehouseTypeValue: string | null | undefined
+    if (warehouse.type == null) {
+      warehouseTypeValue = "mainstore"
+    } else if (typeof warehouse.type === "number") {
+      warehouseTypeValue = warehouse.type_value
+    } else {
+      warehouseTypeValue = warehouse.type.value
+    }
+
+    const normalizedWarehouseType = normalizeListItemValue(warehouseTypeValue)
+    const desiredInvoiceType =
+      normalizedWarehouseType === "bookfair"
+        ? "bookfair"
+        : normalizedWarehouseType === "mainstore"
+          ? "mainstore"
+          : null
+
+    if (!desiredInvoiceType) return
+
+    const matchingInvoiceType = invoiceTypes.find(
+      (type) => normalizeListItemValue(type.value) === desiredInvoiceType,
+    )
+    if (matchingInvoiceType) {
+      setSelectedInvoiceType(matchingInvoiceType.id)
+    }
+  }, [selectedWarehouse, warehouses, invoiceTypes])
 
   // Debounce search input to reduce filter operations while typing
   useEffect(() => {
@@ -1007,15 +873,10 @@ export default function POSPage() {
   }, [selectedWarehouse, products])
 
   const showInsufficientStockToast = useCallback((availableStock: number) => {
-    toast({
-      title: "Insufficient stock",
-      description:
-        availableStock > 0
+    toast.error(t("posToasts.insufficientStock"), { description: availableStock > 0
           ? `Only ${availableStock} item(s) available in this warehouse.`
-          : "This product is out of stock in the selected warehouse.",
-      variant: "destructive",
-    })
-  }, [])
+          : "This product is out of stock in the selected warehouse." })
+  }, [t])
 
   /** Convert a USD line amount to OMR for on-screen display (Muscat only). */
   const usdToDisplayForLine = useCallback(
@@ -1182,11 +1043,11 @@ export default function POSPage() {
     const isPartiallyPaid = paidAmount > 0.001 && !isFullyPaid;
     
     if (isFullyPaid) {
-      return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">Paid</span>;
+      return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">{t("pos.status.paid")}</span>;
     } else if (isPartiallyPaid) {
-      return <span className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded-full">Partial</span>;
+      return <span className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded-full">{t("pos.status.partial")}</span>;
     } else if (item.is_paid && item.paid_amount === 0) {
-      return <span className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">Unpaid</span>;
+      return <span className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">{t("pos.status.unpaid")}</span>;
     }
     return null;
   }
@@ -1338,10 +1199,7 @@ export default function POSPage() {
         email: "",
       })
       setActiveDialog(null)
-      toast({
-        title: "Success",
-        description: "Customer added successfully",
-      })
+      toast.success(t("toasts.success"), { description: t("posToasts.customerAdded") })
     } catch (error) {
       handleError(error, "Failed to add customer. Please try again.");
     } finally {
@@ -1692,11 +1550,14 @@ export default function POSPage() {
         isMuscatWarehouse && roundedTotal > 0
           ? Number(((remainingAmount / roundedTotal) * displayCartCalcs.total).toFixed(3))
           : remainingAmount;
-      toast({
-        title: "Success",
-        description: Math.abs(remainingAmount) < 0.001
-          ? "Sale completed successfully - Fully Paid" 
-          : `Sale completed successfully - ${displayRemaining.toFixed(3)} ${getCurrencyLabel()} remaining`,
+      toast.success(t("posToasts.saleCompleted"), {
+        description:
+          Math.abs(remainingAmount) < 0.001
+            ? t("posToasts.fullyPaid")
+            : t("posToasts.amountRemaining", {
+                amount: `${displayRemaining.toFixed(3)} ${getCurrencyLabel()}`,
+              }),
+        duration: 4500,
       })
 
       // Fetch invoice summary for receipt (fallback to local data if API fails — sale is already saved)
@@ -1741,10 +1602,7 @@ export default function POSPage() {
             total_price: calculateItemTotal(item, cartSnapshot),
           })),
         }
-        toast({
-          title: "Sale saved",
-          description: "The sale was completed but the full receipt could not be loaded from the server. Showing sale details from your cart.",
-        })
+        toast.success(t("posToasts.saleSaved"))
       }
 
       setConfirmSaleOpen(false)
@@ -1782,7 +1640,7 @@ export default function POSPage() {
         return
       }
       
-      let errorMessage = "Failed to complete sale. Please try again."
+      let errorMessage = t("posToasts.saleFailed")
       let needsManualReconciliation = false
       
       if (error instanceof Error) {
@@ -1821,7 +1679,7 @@ export default function POSPage() {
         error,
         errorMessage,
         {
-          title: needsManualReconciliation ? "Error - Manual Reconciliation Required" : "Error",
+          title: t("toasts.error"),
           duration: needsManualReconciliation ? 10000 : 5000,
         }
       )
@@ -2055,76 +1913,6 @@ export default function POSPage() {
     isStoreCustomer,
   ]);
 
-  // Add PaginationControls to the products section
-  const PaginationControls = () => {
-    const startItem = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0;
-    const endItem = Math.min(currentPage * pageSize, totalCount);
-    
-    return (
-      <div className="flex items-center justify-between mt-4">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
-            {totalCount > 0 ? (
-              <>Showing {startItem}-{endItem} of {totalCount} products</>
-            ) : (
-              <>No products found</>
-            )}
-          </span>
-          <Select
-            value={pageSize.toString()}
-            onValueChange={(value) => {
-              setPageSize(Number(value));
-              setCurrentPage(1); // Reset to first page when changing page size
-            }}
-          >
-            <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue placeholder={pageSize} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="25">25</SelectItem>
-              <SelectItem value="50">50</SelectItem>
-              <SelectItem value="100">100</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setCurrentPage(1)}
-          disabled={currentPage === 1}
-        >
-          First
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-          disabled={currentPage === 1}
-        >
-          Previous
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-          disabled={currentPage === totalPages}
-        >
-          Next
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setCurrentPage(totalPages)}
-          disabled={currentPage === totalPages}
-        >
-          Last
-        </Button>
-      </div>
-    </div>
-    );
-  };
-
   // Function to reset/clear sale state (used by New Sale button and receipt close)
   const handleNewSale = () => {
     setCart([])
@@ -2185,1112 +1973,213 @@ export default function POSPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+      <ErrorBoundary>
+      <DocumentTitle title={t("pos.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/">Home</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Point of Sale</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("pos.title") }]} />
           </div>
           <div className="ml-auto flex items-center gap-2 px-4">
-            <Sheet open={isCartOpen} onOpenChange={setIsCartOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" className="relative">
-                  <ShoppingCart className="h-4 w-4 mr-2" />
-                  Cart
-                  {cart.length > 0 && (
-                    <span className="absolute -top-2 -right-2 bg-primary text-primary-foreground rounded-full h-5 w-5 flex items-center justify-center text-xs">
-                      {cart.length}
-                    </span>
-                  )}
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[400px] sm:w-[540px] h-full overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>Cart ({cart.length})</SheetTitle>
-                </SheetHeader>
-                <div className="mt-6 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Customer</Label>
-                    <div className="flex gap-2">
-                      <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            role="combobox"
-                            aria-expanded={customerSearchOpen}
-                            className="w-full justify-between"
-                          >
-                            {selectedCustomer ? selectedCustomer.institution_name : "Search customer..."}
-                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[300px] p-0">
-                          <Command>
-                            <CommandInput
-                              placeholder="Search customer..."
-                              value={customerSearchQuery}
-                              onValueChange={setCustomerSearchQuery}
-                            />
-                            <CommandList>
-                              <CommandEmpty>No customer found.</CommandEmpty>
-                              <CommandGroup>
-                                {filteredCustomers.map((customer) => (
-                                  <CommandItem
-                                    key={customer.id}
-                                    value={customer.institution_name}
-                                    onSelect={() => {
-                                      setSelectedCustomer(customer)
-                                      setCustomerSearchOpen(false)
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-4 w-4",
-                                        selectedCustomer?.id === customer.id ? "opacity-100" : "opacity-0",
-                                      )}
-                                    />
-                                    <div>
-                                      <p>{customer.institution_name}</p>
-                                      <p className="text-sm text-muted-foreground">
-                                        {customer.contact_person || customer.phone}
-                                      </p>
-                                    </div>
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
-                      <Dialog open={activeDialog === 'newCustomer'} onOpenChange={(open) => setActiveDialog(open ? 'newCustomer' : null)}>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="icon">
-                            <UserPlus className="h-4 w-4" />
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Add New Customer</DialogTitle>
-                            <DialogDescription>
-                              Enter the customer details below to add them to your system.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="grid gap-4 py-4">
-                            <div className="grid gap-2">
-                              <Label htmlFor="customer_type">Customer Type</Label>
-                              <Select
-                                value={newCustomer.customer_type?.toString() || ""}
-                                onValueChange={(value) => setNewCustomer({ ...newCustomer, customer_type: value ? Number(value) : null })}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select customer type" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {customerTypes.map((type) => (
-                                    <SelectItem key={type.id} value={type.id.toString()}>
-                                      {type.display_name_en || type.name_en}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="grid gap-2">
-                              <Label htmlFor="institution_name">Institution Name</Label>
-                              <Input
-                                id="institution_name"
-                                value={newCustomer.institution_name}
-                                onChange={(e) =>
-                                  setNewCustomer({ ...newCustomer, institution_name: e.target.value })
-                                }
-                              />
-                            </div>
-                            <div className="grid gap-2">
-                              <Label htmlFor="contact_person">Contact Person</Label>
-                              <Input
-                                id="contact_person"
-                                value={newCustomer.contact_person}
-                                onChange={(e) => setNewCustomer({ ...newCustomer, contact_person: e.target.value })}
-                              />
-                            </div>
-                            <div className="grid gap-2">
-                              <Label htmlFor="phone">Phone</Label>
-                              <Input
-                                id="phone"
-                                value={newCustomer.phone}
-                                onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
-                              />
-                            </div>
-                            <div className="grid gap-2">
-                              <Label htmlFor="email">Email</Label>
-                              <Input
-                                id="email"
-                                type="email"
-                                value={newCustomer.email}
-                                onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
-                              />
-                            </div>
-                          </div>
-                          <DialogFooter>
-                            <Button variant="outline" onClick={() => setActiveDialog(null)}>
-                              Cancel
-                            </Button>
-                            <Button onClick={handleAddCustomer} disabled={isAddingCustomer}>
-                              {isAddingCustomer ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  Adding...
-                                </>
-                              ) : (
-                                "Add Customer"
-                              )}
-                            </Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Invoice Settings</Label>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 p-2 border rounded-md bg-muted/50">
-                            <span className="text-sm">
-                              {selectedWarehouse ? warehouses.find(w => w.id === selectedWarehouse)?.name_en : "No warehouse selected"}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 p-2 border rounded-md bg-muted/50">
-                            <span className="text-sm">
-                              {selectedInvoiceType ? invoiceTypes.find(type => type.id === selectedInvoiceType)?.display_name_en : "No invoice type selected"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <Select
-                        value={selectedPaymentMethod?.toString() || ""}
-                        onValueChange={(value) => setSelectedPaymentMethod(Number(value))}
-                        disabled={isIndividualCustomer}
-                      >
-                        <SelectTrigger className={isIndividualCustomer ? "bg-muted cursor-not-allowed" : ""}>
-                          <SelectValue placeholder="Select payment method" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {paymentMethods
-                            .filter((method) => method.value.toLowerCase() !== 'postpaid')
-                            .map((method) => (
-                              <SelectItem key={method.id} value={method.id.toString()}>
-                                {method.display_name_en}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Items</Label>
-                    {(selectedPaymentMethod || isIndividualCustomer) && (
-                      <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            {isIndividualCustomer ? (
-                              <>
-                                <strong>Payment Method:</strong> Cash - Items will be marked as paid by default
-                              </>
-                            ) : (
-                              <>
-                                <strong>Payment Method:</strong> {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en}
-                                {paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en.toLowerCase().includes('outstanding') 
-                                  ? ' - Items will be marked as unpaid by default'
-                                  : ' - Items will be marked as paid by default'
-                                }
-                              </>
-                            )}
-                          </div>
-                          {cart.length > 0 && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={applyPaymentMethodToExistingItems}
-                              className="h-6 text-xs"
-                            >
-                              Apply to All Items
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    <div className="border rounded-md p-4 space-y-4 max-h-[300px] overflow-y-auto">
-                      {cart.length === 0 ? (
-                        <p className="text-center text-muted-foreground">No items in cart</p>
-                      ) : (
-                        cart.map((item) => {
-                          const lineTotal = calculateItemTotal(item);
-                          const lineTotalDisplay = getLineTotalForDisplay(item);
-                          const paidAmountDisplay = usdToDisplayForLine(item.paid_amount, item);
-                          const remainingAmountDisplay = Math.max(0, lineTotalDisplay - paidAmountDisplay);
-                          const difference = Math.abs(item.paid_amount - lineTotal);
-                          // Use tolerance check to handle floating point precision
-                          const isFullyPaid = difference < 0.001 || item.paid_amount >= lineTotal;
-                          const isPartiallyPaid = item.paid_amount > 0.001 && !isFullyPaid;
-                          
-                          return (
-                            <div key={item.product.id} className={`space-y-2 p-3 rounded-lg border relative ${
-                              isFullyPaid ? 'bg-green-50 border-green-200' : 
-                              isPartiallyPaid ? 'bg-orange-50 border-orange-200' : 
-                              'bg-white border-gray-200'
-                            } ${processingItems.has(item.product.id) ? 'opacity-60' : ''}`}>
-                              {processingItems.has(item.product.id) && (
-                                <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-lg z-10">
-                                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                                </div>
-                              )}
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 flex-1">
-                                  <Checkbox
-                                    checked={item.is_paid}
-                                    onChange={(e) => updateItemPaymentStatus(item.product.id, e.target.checked)}
-                                    disabled={isIndividualCustomer}
-                                    className="shrink-0"
-                                  />
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <h4 className="font-medium">{item.product.title_en}</h4>
-                                      {getPaymentStatusBadge(item)}
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">
-                                      {(() => {
-                                        const displayPrice = getDisplayPrice(item.product);
-                                        return displayPrice ? `${parseFloat(displayPrice).toFixed(3)} ${getCurrencyLabel()}` : "N/A";
-                                      })()}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => updateQuantity(item.product.id, Number(item.quantity) - 1)}
-                                  >
-                                    <Minus className="h-4 w-4" />
-                                  </Button>
-                                  <Input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    value={item.quantity}
-                                    onChange={(e) => handleQuantityInputChange(item.product.id, e.target.value)}
-                                    onBlur={(e) => {
-                                      const parsedQuantity = parseInt(e.target.value, 10);
-                                      if (isNaN(parsedQuantity) || parsedQuantity < 1) {
-                                        updateQuantity(item.product.id, 1);
-                                      }
-                                    }}
-                                    className="h-8 w-16 text-center"
-                                  />
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={item.quantity >= getAvailableStock(item.product)}
-                                    onClick={() => updateQuantity(item.product.id, Number(item.quantity) + 1)}
-                                  >
-                                    <Plus className="h-4 w-4" />
-                                  </Button>
-                                  <Button type="button" variant="ghost" size="sm" onClick={() => removeFromCart(item.product.id)}>
-                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                  </Button>
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-2">
-                                <Label className="text-xs">Item Discount{isStoreCustomer ? "" : " (store only)"}:</Label>
-                                <Select
-                                  value={item.discount_percent.toString()}
-                                  onValueChange={(value) => updateItemDiscount(item.product.id, Number(value))}
-                                  disabled={!isStoreCustomer || discountPercentage > 0}
-                                >
-                                  <SelectTrigger className={cn("h-7 text-xs", (!isStoreCustomer || discountPercentage > 0) && "bg-muted cursor-not-allowed")}>
-                                    <SelectValue placeholder="0%" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="0">0%</SelectItem>
-                                    <SelectItem value="5">5%</SelectItem>
-                                    <SelectItem value="10">10%</SelectItem>
-                                    <SelectItem value="15">15%</SelectItem>
-                                    <SelectItem value="20">20%</SelectItem>
-                                    <SelectItem value="25">25%</SelectItem>
-                                    <SelectItem value="30">30%</SelectItem>
-                                    <SelectItem value="40">40%</SelectItem>
-                                    <SelectItem value="50">50%</SelectItem>
-                                    <SelectItem value="60">60%</SelectItem>
-                                    <SelectItem value="75">75%</SelectItem>
-                                    <SelectItem value="80">80%</SelectItem>
-                                    <SelectItem value="90">90%</SelectItem>
-                                    <SelectItem value="100">100%</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <span className="text-xs ml-auto">
-                                  Total: {formatMoney(lineTotalDisplay)}
-                                </span>
-                              </div>
-
-                              {item.is_paid && (
-                                <div className="flex items-center gap-2 pt-2 border-t">
-                                  <Label className="text-xs">Paid Amount:</Label>
-                                  <Input
-                                    type="number"
-                                    step="0.001"
-                                    min="0"
-                                    max={lineTotalDisplay}
-                                    value={paidAmountDisplay}
-                                    onChange={(e) =>
-                                      updateItemPaidAmount(
-                                        item.product.id,
-                                        displayToUsdForLine(parseFloat(e.target.value) || 0, item),
-                                      )
-                                    }
-                                    className="h-7 text-xs w-24"
-                                    placeholder="0.000"
-                                  />
-                                  <span className="text-xs text-muted-foreground">
-                                    {remainingAmountDisplay > 0
-                                      ? `Remaining: ${formatMoney(remainingAmountDisplay)}`
-                                      : "Fully Paid"}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Notes</Label>
-                    <Input
-                      placeholder="Add notes to invoice..."
-                      value={invoiceNotes}
-                      onChange={(e) => setInvoiceNotes(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="space-y-2 bg-muted p-4 rounded-lg">
-                    <div className="flex justify-between">
-                      <span>Subtotal</span>
-                      <span>{formatMoney(uiSubtotal)}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center">
-                      <span>Discount</span>
-                      <div className="flex items-center gap-2">
-                        <Select
-                          value={discountPercentage.toString()}
-                          onValueChange={(value) => {
-                            const pct = Number(value)
-                            setDiscountPercentage(pct)
-                            if (isStoreCustomer && pct > 0) {
-                              setCart((prev) =>
-                                prev.map((i) => ({ ...i, discount_percent: 0 })),
-                              )
-                            }
-                            setTimeout(() => {
-                              allocatePayInFullRef.current?.()
-                            }, 0)
-                          }}
-                          disabled={cartHasStoreItemDiscount}
-                        >
-                          <SelectTrigger className={cn("w-[100px] h-8", cartHasStoreItemDiscount && "bg-muted cursor-not-allowed")}>
-                            <SelectValue placeholder="0%" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="0">0%</SelectItem>
-                            <SelectItem value="5">5%</SelectItem>
-                            <SelectItem value="10">10%</SelectItem>
-                            <SelectItem value="15">15%</SelectItem>
-                            <SelectItem value="20">20%</SelectItem>
-                            <SelectItem value="25">25%</SelectItem>
-                            <SelectItem value="30">30%</SelectItem>
-                            <SelectItem value="40">40%</SelectItem>
-                            <SelectItem value="50">50%</SelectItem>
-                            <SelectItem value="60">60%</SelectItem>
-                            <SelectItem value="75">75%</SelectItem>
-                            <SelectItem value="80">80%</SelectItem>
-                            <SelectItem value="90">90%</SelectItem>
-                            <SelectItem value="100">100%</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <span className="min-w-[60px] text-right">
-                          {uiGlobalDiscountAmount > 0 ? `-${uiGlobalDiscountAmount.toFixed(3)}` : "0.000"} {getCurrencyLabel()}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center">
-                      <span>Tax</span>
-                      <div className="flex items-center gap-2">
-                        <Select
-                          value={taxPercentage.toString()}
-                          onValueChange={(value) => setTaxPercentage(Number(value))}
-                        >
-                          <SelectTrigger className="w-[100px] h-8">
-                            <SelectValue placeholder="5%" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="0">0%</SelectItem>
-                            <SelectItem value="5">5%</SelectItem>
-                            <SelectItem value="7">7%</SelectItem>
-                            <SelectItem value="10">10%</SelectItem>
-                            <SelectItem value="15">15%</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <span className="min-w-[60px] text-right">{formatMoney(uiTax)}</span>
-                      </div>
-                    </div>
-
-                    <Separator />
-                    <div className="flex justify-between font-bold text-lg">
-                      <span>Total</span>
-                      <span>{formatMoney(uiTotal)}</span>
-                    </div>
-
-                    {/* Payment Summary Section */}
-                    {(totalPaidAmount > 0 || hasPartialPayment) && (
-                      <>
-                        <Separator />
-                        <div className="space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium">Payment Summary</span>
-                          </div>
-                          
-                          {paidItems.length > 0 && (
-                            <div className="flex justify-between items-center text-sm">
-                              <span className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                                Paid Items ({paidItems.length})
-                              </span>
-                              <span className="text-green-600 font-medium">
-                                {formatMoney(uiTotalPaidAmount)}
-                              </span>
-                            </div>
-                          )}
-                          
-                          {unpaidItems.length > 0 && (
-                            <div className="flex justify-between items-center text-sm">
-                              <span className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                                Unpaid Items ({unpaidItems.length})
-                              </span>
-                              <span className="text-red-600 font-medium">
-                                {formatMoney(uiTotalUnpaidAmount)}
-                              </span>
-                            </div>
-                          )}
-                          
-                          {hasPartialPayment && (
-                            <div className="flex justify-between items-center text-sm">
-                              <span className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
-                                Partial Payments
-                              </span>
-                              <span className="text-orange-600 font-medium">
-                                {cart.filter(item => {
-                                  const target = calculateItemTotal(item);
-                                  const paidAmount = item.paid_amount;
-                                  const difference = Math.abs(paidAmount - target);
-                                  return paidAmount > 0.001 && difference >= 0.001 && paidAmount < target;
-                                }).length} items
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-
-                    <Separator />
-                    <div className="flex justify-between font-bold text-lg">
-                      <span>Amount Due</span>
-                      <span className={uiTotalUnpaidAmount > 0 ? "text-red-600" : "text-green-600"}>
-                        {formatMoney(uiTotalUnpaidAmount)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <Button
-                    type="button"
-                    className="w-full mt-4"
-                    size="lg"
-                    disabled={cart.length === 0 || isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
-                    onPointerDown={(e) => {
-                      if (e.pointerType === "mouse" && e.button !== 0) return
-                      e.preventDefault()
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => void handleCompleteSale()}
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <div className="flex items-center justify-between w-full">
-                        <span>Complete Sale</span>
-                        <span className="text-sm">
-                          {uiTotalUnpaidAmount > 0 ? `Pay ${formatMoney(uiTotalUnpaidAmount)}` : "Fully Paid"}
-                        </span>
-                      </div>
-                    )}
-                  </Button>
-                </div>
-              </SheetContent>
-            </Sheet>
+            <PosCart
+              isCartOpen={isCartOpen}
+              onCartOpenChange={setIsCartOpen}
+              cart={cart}
+              selectedCustomer={selectedCustomer}
+              filteredCustomers={filteredCustomers}
+              customerSearchOpen={customerSearchOpen}
+              onCustomerSearchOpenChange={setCustomerSearchOpen}
+              customerSearchQuery={customerSearchQuery}
+              onCustomerSearchQueryChange={setCustomerSearchQuery}
+              onSelectCustomer={setSelectedCustomer}
+              activeDialog={activeDialog}
+              onActiveDialogChange={setActiveDialog}
+              newCustomer={newCustomer}
+              onNewCustomerChange={setNewCustomer}
+              customerTypes={customerTypes}
+              isAddingCustomer={isAddingCustomer}
+              onAddCustomer={handleAddCustomer}
+              selectedPaymentMethod={selectedPaymentMethod}
+              paymentMethods={paymentMethods}
+              isIndividualCustomer={isIndividualCustomer}
+              onApplyPaymentMethodToExistingItems={applyPaymentMethodToExistingItems}
+              processingItems={processingItems}
+              isStoreCustomer={isStoreCustomer}
+              discountPercentage={discountPercentage}
+              onUpdateItemPaymentStatus={updateItemPaymentStatus}
+              onUpdateQuantity={updateQuantity}
+              onQuantityInputChange={handleQuantityInputChange}
+              onQuantityBlur={(productId, rawValue) => {
+                const parsedQuantity = parseInt(rawValue, 10)
+                if (isNaN(parsedQuantity) || parsedQuantity < 1) {
+                  updateQuantity(productId, 1)
+                }
+              }}
+              onRemoveFromCart={removeFromCart}
+              onUpdateItemDiscount={updateItemDiscount}
+              onUpdateItemPaidAmount={updateItemPaidAmount}
+              getAvailableStock={getAvailableStock}
+              getDisplayPrice={getDisplayPrice}
+              getCurrencyLabel={getCurrencyLabel}
+              calculateItemTotal={calculateItemTotal}
+              getLineTotalForDisplay={getLineTotalForDisplay}
+              usdToDisplayForLine={usdToDisplayForLine}
+              displayToUsdForLine={displayToUsdForLine}
+              formatMoney={formatMoney}
+              renderPaymentStatusBadge={getPaymentStatusBadge}
+              paymentsSection={
+                <PosPayments
+                  selectedWarehouse={selectedWarehouse}
+                  warehouses={warehouses}
+                  selectedInvoiceType={selectedInvoiceType}
+                  invoiceTypes={invoiceTypes}
+                  onInvoiceTypeChange={setSelectedInvoiceType}
+                  selectedPaymentMethod={selectedPaymentMethod}
+                  paymentMethods={paymentMethods}
+                  isIndividualCustomer={isIndividualCustomer}
+                  onPaymentMethodChange={setSelectedPaymentMethod}
+                  invoiceNotes={invoiceNotes}
+                  onInvoiceNotesChange={setInvoiceNotes}
+                  discountPercentage={discountPercentage}
+                  onDiscountPercentageChange={setDiscountPercentage}
+                  cartHasStoreItemDiscount={cartHasStoreItemDiscount}
+                  isStoreCustomer={isStoreCustomer}
+                  onClearStoreItemDiscounts={() =>
+                    setCart((prev) => prev.map((i) => ({ ...i, discount_percent: 0 })))
+                  }
+                  onReallocatePayments={() => allocatePayInFullRef.current?.()}
+                  taxPercentage={taxPercentage}
+                  onTaxPercentageChange={setTaxPercentage}
+                  formatMoney={formatMoney}
+                  getCurrencyLabel={getCurrencyLabel}
+                  uiSubtotal={uiSubtotal}
+                  uiGlobalDiscountAmount={uiGlobalDiscountAmount}
+                  uiTax={uiTax}
+                  uiTotal={uiTotal}
+                  uiTotalPaidAmount={uiTotalPaidAmount}
+                  uiTotalUnpaidAmount={uiTotalUnpaidAmount}
+                  totalPaidAmount={totalPaidAmount}
+                  hasPartialPayment={hasPartialPayment}
+                  paidItems={paidItems}
+                  unpaidItems={unpaidItems}
+                  cart={cart}
+                  calculateItemTotal={calculateItemTotal}
+                  cartLength={cart.length}
+                  isSubmitting={isSubmitting}
+                  selectedCustomer={selectedCustomer}
+                  totalUnpaidAmount={totalUnpaidAmount}
+                  onCompleteSale={handleCompleteSale}
+                />
+              }
+            />
             <Button
               variant="outline"
               onClick={handleNewSale}
             >
-              New Sale
+              {t("pos.header.newSale")}
             </Button>
           </div>
         </header>
 
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            {/* Metrics Toggle Button */}
-            <div className="mb-4">
-              <Button
-                variant="ghost"
-                className="w-full justify-between"
-                onClick={() => setShowMetrics(!showMetrics)}
-              >
-                <span className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4" />
-                  <span>Sales Metrics</span>
-                </span>
-                {showMetrics ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </Button>
-            </div>
-
-            {/* Dashboard Cards */}
-            {showMetrics && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <Card>
-                  <CardContent className="p-6 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Today's Sales</p>
-                      <h3 className="text-2xl font-bold">{formatMoney(uiTodaySales)}</h3>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <DollarSign className="h-6 w-6 text-primary" />
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-6 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total Customers</p>
-                      <h3 className="text-2xl font-bold">{totalCustomers}</h3>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Users className="h-6 w-6 text-primary" />
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-6 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Popular Product</p>
-                      <h3 className="text-2xl font-bold">{popularProduct}</h3>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <TrendingUp className="h-6 w-6 text-primary" />
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {/* Products Section - Now takes full width */}
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Products</CardTitle>
-                <div className="flex items-center gap-2">
-                  
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-2">
-                    <div className="relative flex items-center gap-2">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Search products by title, ISBN..."
-                          value={searchInput}
-                          onChange={(e) => setSearchInput(e.target.value)}
-                          className="pl-8"
-                        />
-                      </div>
-                      <Popover open={isWarehouseDropdownOpen} onOpenChange={setIsWarehouseDropdownOpen}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setIsWarehouseDropdownOpen(true)}
-                          >
-                            {selectedWarehouse ? warehouses.find(w => w.id === selectedWarehouse)?.name_en : "Select Warehouse"}
-                            <ChevronDown className="ml-2 h-4 w-4" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[200px] p-0">
-                          <Command>
-                            <CommandInput placeholder="Search warehouses..." />
-                            <CommandList>
-                              <CommandEmpty>No warehouse found.</CommandEmpty>
-                              <CommandGroup>
-                                {warehouses.map((warehouse) => (
-                                  <CommandItem
-                                    key={warehouse.id}
-                                    onSelect={() => {
-                                      setSelectedWarehouse(warehouse.id);
-                                      setIsWarehouseDropdownOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-4 w-4",
-                                        selectedWarehouse === warehouse.id ? "opacity-100" : "opacity-0"
-                                      )}
-                                    />
-                                    {warehouse.name_en}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
-                      <Popover open={isGenreDropdownOpen} onOpenChange={setIsGenreDropdownOpen}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setIsGenreDropdownOpen(true)}
-                          >
-                            {selectedGenre ? selectedGenre.display_name_en : "All Genres"}
-                            <ChevronDown className="ml-2 h-4 w-4" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[200px] p-0">
-                          <Command>
-                            <CommandInput placeholder="Search genres..." />
-                            <CommandList>
-                              <CommandEmpty>No genre found.</CommandEmpty>
-                              <CommandGroup>
-                                <CommandItem
-                                  onSelect={() => {
-                                    setSelectedGenre(null);
-                                    setIsGenreDropdownOpen(false);
-                                  }}
-                                >
-                                  <Check
-                                    className={cn(
-                                      "mr-2 h-4 w-4",
-                                      selectedGenre === null ? "opacity-100" : "opacity-0"
-                                    )}
-                                  />
-                                  All Genres
-                                </CommandItem>
-                                {genres.map((genre) => (
-                                  <CommandItem
-                                    key={genre.id}
-                                    onSelect={() => {
-                                      setSelectedGenre(genre);
-                                      setIsGenreDropdownOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-4 w-4",
-                                        selectedGenre?.id === genre.id ? "opacity-100" : "opacity-0"
-                                      )}
-                                    />
-                                    {genre.display_name_en}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {selectedGenre && (
-                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 rounded-full text-sm">
-                          {selectedGenre.display_name_en}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-4 w-4 p-0 hover:bg-transparent"
-                            onClick={() => setSelectedGenre(null)}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      )}
-                      {selectedWarehouse && (
-                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 rounded-full text-sm">
-                          {warehouses.find(w => w.id === selectedWarehouse)?.name_en}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-4 w-4 p-0 hover:bg-transparent"
-                            onClick={() => {
-                              setSelectedWarehouse(null);
-                              setProducts([]);
-                            }}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {!selectedWarehouse ? (
-                    <div className="text-center py-12">
-                      <div className="flex flex-col items-center gap-4">
-                        <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center">
-                          <ShoppingCart className="h-8 w-8 text-muted-foreground" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-semibold">Select a Warehouse</h3>
-                          <p className="text-muted-foreground">Please select a warehouse to view available products</p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : isLoading ? (
-                    <div className="flex justify-center items-center py-12">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <span className="ml-2">Loading products for {warehouses.find(w => w.id === selectedWarehouse)?.name_en}...</span>
-                    </div>
-                  ) : products.length === 0 ? (
-                    <div className="text-center py-12">
-                      <div className="flex flex-col items-center gap-4">
-                        <p className="text-muted-foreground">No products found in this warehouse</p>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => {
-                            fetchProducts(selectedWarehouse, debouncedSearchInput, selectedGenre?.id || null, currentPage);
-                          }}
-                        >
-                          Retry Load Products
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {products.map((product) => (
-                          <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                            <CardContent className="p-2">
-                              <div className="relative aspect-square rounded-md overflow-hidden mb-2">
-                                <img
-                                  src={product.cover_design_url || "/placeholder.svg"}
-                                  alt={product.title_en}
-                                  className="w-full h-full object-cover"
-                                  onError={handleImageError}
-                                />
-                                {product.genre_name && (
-                                  <div className="absolute top-2 right-2">
-                                    <span className="text-xs px-2 py-1 bg-primary/90 text-primary-foreground rounded-full">
-                                      {product.genre_name}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="space-y-1">
-                                <h3 className="font-medium text-sm line-clamp-1">{product.title_en}</h3>
-                                <div className="flex justify-between items-center">
-                                  <div>
-                                    <p className="font-bold text-sm">
-                                      {(() => {
-                                        const displayPrice = getDisplayPrice(product);
-                                        return displayPrice ? `${parseFloat(displayPrice).toFixed(3)} ${getCurrencyLabel()}` : "N/A";
-                                      })()}
-                                    </p>
-                                    <TooltipProvider>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <p className="text-xs text-muted-foreground cursor-help">
-                                            Stock: {getAvailableStock(product)}
-                                          </p>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <div className="space-y-1">
-                                            <p className="font-medium">Stock Information</p>
-                                            <p>Current Stock: {getAvailableStock(product)}</p>
-                                            <p>ISBN: {product.isbn || 'N/A'}</p>
-                                            <p>Author: {product.author_name || 'N/A'}</p>
-                                            <p>Translator: {product.translator_name || 'N/A'}</p>
-                                          </div>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  </div>
-                                  <Button 
-                                    size="sm" 
-                                    className="h-7 px-2 text-xs"
-                                    disabled={getAvailableStock(product) < 1}
-                                    onClick={() => addToCart(product)}
-                                  >
-                                    Add
-                                  </Button>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                      <PaginationControls />
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <PosMetrics
+              showMetrics={showMetrics}
+              onToggleMetrics={() => setShowMetrics(!showMetrics)}
+              todaySalesFormatted={formatMoney(uiTodaySales)}
+              totalCustomers={totalCustomers}
+              popularProduct={popularProduct}
+            />
+            <PosProductGrid
+              searchInput={searchInput}
+              onSearchInputChange={setSearchInput}
+              selectedWarehouse={selectedWarehouse}
+              warehouses={warehouses}
+              isWarehouseDropdownOpen={isWarehouseDropdownOpen}
+              onWarehouseDropdownOpenChange={setIsWarehouseDropdownOpen}
+              onSelectWarehouse={(id) => setSelectedWarehouse(id)}
+              onClearWarehouse={() => {
+                setSelectedWarehouse(null)
+                setProducts([])
+              }}
+              selectedGenre={selectedGenre}
+              genres={genres}
+              isGenreDropdownOpen={isGenreDropdownOpen}
+              onGenreDropdownOpenChange={setIsGenreDropdownOpen}
+              onSelectGenre={setSelectedGenre}
+              isLoading={isLoading}
+              products={products}
+              currentPage={currentPage}
+              pageSize={pageSize}
+              totalPages={totalPages}
+              totalCount={totalCount}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+              onRetryLoadProducts={() => {
+                if (selectedWarehouse) {
+                  fetchProducts(selectedWarehouse, debouncedSearchInput, selectedGenre?.id || null, currentPage)
+                }
+              }}
+              onAddToCart={addToCart}
+              getDisplayPrice={getDisplayPrice}
+              getCurrencyLabel={getCurrencyLabel}
+              getAvailableStock={getAvailableStock}
+              onImageError={handleImageError}
+            />
           </div>
         </div>
 
-        {/* Floating Action Button */}
-        {cart.length > 0 && (
-          <div className="fixed bottom-6 right-6 z-50">
-            <Button
-              size="lg"
-              className="rounded-full h-14 w-14 shadow-lg"
-              onClick={() => setConfirmSaleOpen(true)}
-            >
-              <CheckCircle2 className="h-6 w-6" />
-            </Button>
-          </div>
-        )}
-
-        {/* Confirm Sale Dialog */}
-        <Dialog open={confirmSaleOpen} onOpenChange={setConfirmSaleOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Confirm Sale</DialogTitle>
-              <DialogDescription>
-                Review the sale details before completing the transaction.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">Customer</span>
-                  <span className="font-medium">
-                    {selectedCustomer?.institution_name || "Walk-in Customer"}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">Items</span>
-                  <span className="font-medium">{cart.length}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">Subtotal</span>
-                  <span className="font-medium">{formatMoney(uiSubtotal)}</span>
-                </div>
-                {discountPercentage > 0 && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Discount</span>
-                    <span className="font-medium text-green-600">
-                      -{uiGlobalDiscountAmount.toFixed(3)} {getCurrencyLabel()}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">Tax</span>
-                  <span className="font-medium">{formatMoney(uiTax)}</span>
-                </div>
-                <Separator />
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold">Total</span>
-                  <span className="font-bold text-lg">{formatMoney(uiTotal)}</span>
-                </div>
-                
-                {/* Payment Summary */}
-                {(totalPaidAmount > 0 || hasPartialPayment) && (
-                  <>
-                    <Separator />
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">Amount Paid</span>
-                        <span className="font-medium text-green-600">{formatMoney(uiTotalPaidAmount)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">Amount Due</span>
-                        <span className="font-medium text-red-600">{formatMoney(uiTotalUnpaidAmount)}</span>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setConfirmSaleOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onPointerDown={(e) => {
-                  if (e.pointerType === "mouse" && e.button !== 0) return
-                  e.preventDefault()
-                }}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => void handleCompleteSale()}
-                disabled={isSubmitting || !selectedCustomer || !selectedWarehouse || isNaN(totalUnpaidAmount) || totalUnpaidAmount < 0}
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <div className="flex items-center justify-between w-full">
-                    <span>Confirm Sale</span>
-                    <span className="text-sm">
-                      {uiTotalUnpaidAmount > 0 ? `Pay ${formatMoney(uiTotalUnpaidAmount)}` : "Fully Paid"}
-                    </span>
-                  </div>
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-      {/* Print Receipt Dialog */}
-      <Dialog open={activeDialog === 'print'} onOpenChange={(open) => {
-        setActiveDialog(open ? 'print' : null);
-        if (!open) {
-          // Clear all cart and sale-related state when closing receipt (same as New Sale)
-          handleNewSale();
-          // Reset payment method and invoice type to defaults
-          if (paymentMethods.length > 0) {
-            setSelectedPaymentMethod(paymentMethods[0].id);
-          }
-          if (invoiceTypes.length > 0) {
-            setSelectedInvoiceType(invoiceTypes[0].id);
-          }
-        }
-      }}>
-        <DialogContent className="w-full max-w-md h-[90vh] flex flex-col">
-          <div className="shrink-0">
-            <DialogHeader>
-              <DialogTitle>Receipt</DialogTitle>
-              <DialogDescription>View, print, or download your receipt.</DialogDescription>
-            </DialogHeader>
-          </div>
-          {receiptData && (
-            <ReceiptContent
-              receiptData={{
-                id: receiptData.id,
-                composite_id: receiptData.composite_id,
-                customer_name: receiptData.customer_name || selectedCustomer?.institution_name || "Walk-in Customer",
-                customer_contact: receiptData.customer_contact || selectedCustomer?.contact_person || "",
-                warehouse_name: receiptData.warehouse_name || warehouses.find(w => w.id === selectedWarehouse)?.name_en || "N/A",
-                warehouse_location: warehouses.find(w => w.id === selectedWarehouse)?.location || "",
-                invoice_type_name: receiptData.invoice_type_name || invoiceTypes.find(t => t.id === selectedInvoiceType)?.display_name_en || "N/A",
-                payment_method_name: receiptData.payment_method_name || paymentMethods.find(m => m.id === selectedPaymentMethod)?.display_name_en || "N/A",
-                items: cart.map((item, idx) => ({
-                  id: idx,
-                  product_name: item.product.title_en,
-                  product: {
-                    id: item.product.id,
-                    title_en: item.product.title_en,
-                    price: item.product.price,
-                    price_omr: item.product.price_omr,
-                    latest_price: item.product.latest_price,
-                    latest_price_omr: item.product.latest_price_omr,
-                  },
-                  quantity: item.quantity,
-                  unit_price: (() => {
-                    if (isMuscatWarehouse) {
-                      const displayPrice = getDisplayPrice(item.product);
-                      return displayPrice ? parseFloat(displayPrice) : 0;
-                    }
-                    const price = item.product.price || item.product.latest_price;
-                    return price ? parseFloat(price) : 0;
-                  })(),
-                  discount_percent: getEffectiveLineDiscountPercent(item),
-                  total_price: isMuscatWarehouse
-                    ? calculateItemDisplayTotal(item)
-                    : calculateItemTotal(item),
-                  paid_amount: isMuscatWarehouse
-                    ? usdToDisplayForLine(item.paid_amount, item)
-                    : item.paid_amount,
-                  is_paid: item.is_paid,
-                })),
-                total_amount: uiTotal,
-                total_paid: uiTotalPaidAmount,
-                remaining_amount: uiTotalUnpaidAmount,
-                notes: receiptData.notes || invoiceNotes,
-                created_at_formatted: receiptData.created_at_formatted || format(new Date(), "PPP"),
-                global_discount_percent: appliesGlobalDiscountPerLine ? 0 : discountPercentage,
-                tax_percent: taxPercentage,
-                // Pass POS-specific calculated values (OMR for Muscat display, USD saved to API)
-                subtotal: uiSubtotal,
-                globalDiscountAmount: uiGlobalDiscountAmount,
-                tax: uiTax,
-                total: uiTotal,
-                totalUnpaidAmount: uiTotalUnpaidAmount,
-                hasPartialPayment,
-              }}
-              currencyLabel={getCurrencyLabel()}
-              getDisplayPrice={(item) => {
-                // For receipt items, check if product exists
-                if (item.product) {
-                  return getDisplayPrice(item.product);
-                }
-                // Fallback to unit_price if no product data
-                return item.unit_price ? item.unit_price.toString() : null;
-              }}
-              onClose={() => {
-                handleNewSale();
-                if (paymentMethods.length > 0) {
-                  setSelectedPaymentMethod(paymentMethods[0].id);
-                }
-                if (invoiceTypes.length > 0) {
-                  setSelectedInvoiceType(invoiceTypes[0].id);
-                }
-                setActiveDialog(null);
-              }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+        <PosCheckout
+          cartLength={cart.length}
+          confirmSaleOpen={confirmSaleOpen}
+          onConfirmSaleOpenChange={setConfirmSaleOpen}
+          selectedCustomer={selectedCustomer}
+          discountPercentage={discountPercentage}
+          totalPaidAmount={totalPaidAmount}
+          hasPartialPayment={hasPartialPayment}
+          formatMoney={formatMoney}
+          getCurrencyLabel={getCurrencyLabel}
+          uiSubtotal={uiSubtotal}
+          uiGlobalDiscountAmount={uiGlobalDiscountAmount}
+          uiTax={uiTax}
+          uiTotal={uiTotal}
+          uiTotalPaidAmount={uiTotalPaidAmount}
+          uiTotalUnpaidAmount={uiTotalUnpaidAmount}
+          totalUnpaidAmount={totalUnpaidAmount}
+          isSubmitting={isSubmitting}
+          selectedWarehouse={selectedWarehouse}
+          onCompleteSale={handleCompleteSale}
+          activeDialog={activeDialog}
+          onActiveDialogChange={setActiveDialog}
+          onNewSale={handleNewSale}
+          onResetPaymentDefaults={() => {
+            if (paymentMethods.length > 0) {
+              setSelectedPaymentMethod(paymentMethods[0].id)
+            }
+            if (invoiceTypes.length > 0) {
+              setSelectedInvoiceType(invoiceTypes[0].id)
+            }
+          }}
+          receiptData={receiptData}
+          cart={cart}
+          warehouses={warehouses}
+          invoiceTypes={invoiceTypes}
+          selectedInvoiceType={selectedInvoiceType}
+          paymentMethods={paymentMethods}
+          selectedPaymentMethod={selectedPaymentMethod}
+          invoiceNotes={invoiceNotes}
+          isMuscatWarehouse={isMuscatWarehouse}
+          getDisplayPrice={getDisplayPrice}
+          getEffectiveLineDiscountPercent={getEffectiveLineDiscountPercent}
+          calculateItemDisplayTotal={calculateItemDisplayTotal}
+          calculateItemTotal={calculateItemTotal}
+          usdToDisplayForLine={usdToDisplayForLine}
+          appliesGlobalDiscountPerLine={appliesGlobalDiscountPerLine}
+          taxPercentage={taxPercentage}
+        />
       </SidebarInset>
-    </SidebarProvider>
+  </ErrorBoundary>
   )
 }

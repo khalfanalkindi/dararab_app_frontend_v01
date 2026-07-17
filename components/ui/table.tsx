@@ -2,18 +2,37 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-const Table = React.forwardRef<
-  HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
-  </div>
-))
+type TableProps = React.HTMLAttributes<HTMLTableElement> & {
+  /** Extra classes for the overflow wrapper (ignored when `disableWrapper` is set). */
+  containerClassName?: string
+  /**
+   * Render bare `<table>` without the default overflow wrapper.
+   * Use when a parent already owns scroll (e.g. inventory / products virtualization).
+   */
+  disableWrapper?: boolean
+}
+
+const Table = React.forwardRef<HTMLTableElement, TableProps>(
+  ({ className, containerClassName, disableWrapper = false, ...props }, ref) => {
+    const table = (
+      <table
+        ref={ref}
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props}
+      />
+    )
+
+    if (disableWrapper) {
+      return table
+    }
+
+    return (
+      <div className={cn("relative w-full overflow-auto", containerClassName)}>
+        {table}
+      </div>
+    )
+  }
+)
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<

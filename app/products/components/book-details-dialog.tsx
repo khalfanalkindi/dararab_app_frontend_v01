@@ -6,6 +6,14 @@ import { Edit, MoveRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 import type { BookInterface, Genre, Inventory, Language, Status } from "../page"
 
@@ -180,56 +188,54 @@ export function BookDetailsDialog({
             <div className="border-t pt-6">
               <h3 className="text-lg font-medium mb-4">Print Runs</h3>
               <div className="border rounded-md">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-3">Print Run Number</th>
-                        <th className="text-left font-medium p-3">Price ($)</th>
-                        <th className="text-left font-medium p-3">Price OMR (OMR)</th>
-                        <th className="text-left font-medium p-3">Status</th>
-                        <th className="text-left font-medium p-3">Published Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedBook.print_runs && selectedBook.print_runs.length > 0 ? (
-                        selectedBook.print_runs.map((printRun, index) => (
-                          <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
-                            <td className="p-3">
-                              <span className="font-medium">Print Run {printRun.edition_number}</span>
-                            </td>
-                            <td className="p-3">
-                              <span className="font-medium">${printRun.price}</span>
-                            </td>
-                            <td className="p-3">
-                              <span className="font-medium">OMR{printRun.price_omr}</span>
-                            </td>
-                            <td className="p-3">
-                              <Badge className={getPrintRunStatusClass(printRun.status?.display_name_en)}>
-                                {printRun.status?.display_name_en || "Not set"}
-                              </Badge>
-                            </td>
-                            <td className="p-3">
-                              <span className="font-medium">
-                                {printRun.published_at
-                                  ? format(new Date(printRun.published_at), "MMM dd, yyyy")
-                                  : "Not set"}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center">
-                            <div className="flex flex-col items-center">
-                              <p className="text-muted-foreground">No Print Runs available for this book.</p>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Print Run Number</TableHead>
+                      <TableHead>Price ($)</TableHead>
+                      <TableHead>Price OMR (OMR)</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Published Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedBook.print_runs && selectedBook.print_runs.length > 0 ? (
+                      selectedBook.print_runs.map((printRun, index) => (
+                        <TableRow key={index}>
+                          <TableCell>
+                            <span className="font-medium">Print Run {printRun.edition_number}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-medium">${printRun.price}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-medium">OMR{printRun.price_omr}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={getPrintRunStatusClass(printRun.status?.display_name_en)}>
+                              {printRun.status?.display_name_en || "Not set"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-medium">
+                              {printRun.published_at
+                                ? format(new Date(printRun.published_at), "MMM dd, yyyy")
+                                : "Not set"}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-8 text-center">
+                          <div className="flex flex-col items-center">
+                            <p className="text-muted-foreground">No Print Runs available for this book.</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             </div>
 

@@ -1,19 +1,15 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, ExternalLink } from "lucide-react"
 import {
@@ -33,19 +29,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 // Define page type
@@ -57,13 +44,14 @@ type Page = {
 }
 
 export default function PagesManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [pages, setPages] = useState<Page[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [pageToDelete, setPageToDelete] = useState<number | null>(null)
   const [editingPage, setEditingPage] = useState<Page | null>(null)
   const [isAddPageOpen, setIsAddPageOpen] = useState(false)
   const [isEditPageOpen, setIsEditPageOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null;
     message: string;
@@ -88,53 +76,7 @@ export default function PagesManagement() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -150,12 +92,8 @@ export default function PagesManagement() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Form state for new page
   const [newPage, setNewPage] = useState<Omit<Page, 'id'>>({
@@ -241,11 +179,7 @@ export default function PagesManagement() {
       setIsAddPageOpen(false)
 
       // Show toast notification
-      toast({
-        title: "Page Added Successfully",
-        description: `${addedPage.name} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.added", { entity: t("admin.permissions.page") }))
 
       // Show alert message
       showAlert("success", `New page "${addedPage.name}" has been successfully added to the system.`)
@@ -281,11 +215,7 @@ export default function PagesManagement() {
       setIsEditPageOpen(false)
 
       // Show toast notification
-      toast({
-        title: "Page Updated Successfully",
-        description: `${updatedPage.name} has been updated.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.updated", { entity: t("admin.permissions.page") }))
 
       // Show alert message
       showAlert("success", `Page "${updatedPage.name}" has been successfully updated.`)
@@ -321,14 +251,9 @@ export default function PagesManagement() {
       setPages(pages.filter((page) => page.id !== pageToDelete))
       setPageToDelete(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
 
       // Show toast notification
-      toast({
-        title: "Page Deleted",
-        description: `${pageToDeleteData.name} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.success(t("adminToasts.deleted", { entity: t("admin.permissions.page") }))
 
       // Show alert message
       showAlert("warning", `Page "${pageToDeleteData.name}" has been permanently deleted from the system.`)
@@ -359,26 +284,15 @@ export default function PagesManagement() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+    <>
+      <DocumentTitle title={t("nav.pages")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Pages</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("nav.pages") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -405,46 +319,46 @@ export default function PagesManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Page Management</h2>
-            <p className="mb-6">Manage website pages and their URLs.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.pages.management")}</h2>
+            <p className="mb-6">{t("admin.pages.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Pages</h3>
+                <h3 className="font-medium">{t("nav.pages")}</h3>
                 <Dialog open={isAddPageOpen} onOpenChange={setIsAddPageOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Page
+                      {t("admin.pages.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Page</DialogTitle>
+                      <DialogTitle>{t("admin.pages.addNew")}</DialogTitle>
                       <DialogDescription>Create a new page for your website.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Page Name (English)</Label>
+                        <Label htmlFor="name">{t("admin.pages.nameEn")}</Label>
                         <Input
                           id="name"
                           value={newPage.name}
                           onChange={(e) => setNewPage({ ...newPage, name: e.target.value })}
-                          placeholder="Enter page name in English"
+                          placeholder={t("admin.pages.nameEn")}
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="name_ar">Page Name (Arabic)</Label>
+                        <Label htmlFor="name_ar">{t("admin.pages.nameAr")}</Label>
                         <Input
                           id="name_ar"
                           value={newPage.name_ar}
                           onChange={(e) => setNewPage({ ...newPage, name_ar: e.target.value })}
-                          placeholder="Enter page name in Arabic"
+                          placeholder={t("admin.pages.nameAr")}
                           dir="rtl"
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="url">Page URL</Label>
+                        <Label htmlFor="url">{t("admin.pages.url")}</Label>
                         <Input
                           id="url"
                           value={newPage.url}
@@ -458,24 +372,24 @@ export default function PagesManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddPageOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddPage}>Add Page</Button>
+                      <Button onClick={handleAddPage}>{t("admin.pages.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-5 font-medium text-sm mb-2 border-b pb-2">
-                  <div>Page Name (English)</div>
-                  <div>Page Name (Arabic)</div>
-                  <div className="col-span-2">URL</div>
-                  <div className="text-right">Actions</div>
+                  <div>{t("admin.pages.nameEn")}</div>
+                  <div>{t("admin.pages.nameAr")}</div>
+                  <div className="col-span-2">{t("admin.pages.url")}</div>
+                  <div className="text-right">{t("common.actions")}</div>
                 </div>
                 {isLoading ? (
-                  <div className="py-8 text-center">Loading pages...</div>
+                  <div className="py-8 text-center">{t("admin.pages.loading")}</div>
                 ) : pages.length === 0 ? (
-                  <div className="py-8 text-center">No pages found</div>
+                  <div className="py-8 text-center">{t("admin.pages.empty")}</div>
                 ) : (
                   pages.map((page) => (
                     <div key={page.id} className="grid grid-cols-5 text-sm py-3 border-b last:border-0 items-center">
@@ -507,7 +421,7 @@ export default function PagesManagement() {
                             onClick={() => openEditDialog(page)}
                           >
                             <Edit className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
+                            <span className="sr-only">{t("common.edit")}</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -516,7 +430,7 @@ export default function PagesManagement() {
                             onClick={() => openDeleteDialog(page.id)}
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete</span>
+                            <span className="sr-only">{t("common.delete")}</span>
                           </Button>
                         </div>
 
@@ -526,19 +440,19 @@ export default function PagesManagement() {
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon" className="h-8 w-8">
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions</span>
+                                <span className="sr-only">{t("common.actions")}</span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => openEditDialog(page)}>
                                 <Edit className="h-4 w-4 mr-2" />
-                                Edit
+                                {t("common.edit")}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(page.id)}>
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
+                                {t("common.delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -557,13 +471,13 @@ export default function PagesManagement() {
       <Dialog open={isEditPageOpen} onOpenChange={setIsEditPageOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Page</DialogTitle>
+            <DialogTitle>{t("admin.pages.editTitle")}</DialogTitle>
             <DialogDescription>Update page information.</DialogDescription>
           </DialogHeader>
           {editingPage && (
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Page Name (English)</Label>
+                <Label htmlFor="edit-name">{t("admin.pages.nameEn")}</Label>
                 <Input
                   id="edit-name"
                   value={editingPage.name || ""}
@@ -571,7 +485,7 @@ export default function PagesManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_ar">Page Name (Arabic)</Label>
+                <Label htmlFor="edit-name_ar">{t("admin.pages.nameAr")}</Label>
                 <Input
                   id="edit-name_ar"
                   value={editingPage.name_ar || ""}
@@ -580,7 +494,7 @@ export default function PagesManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-url">Page URL</Label>
+                <Label htmlFor="edit-url">{t("admin.pages.url")}</Label>
                 <Input
                   id="edit-url"
                   value={editingPage.url || ""}
@@ -594,49 +508,29 @@ export default function PagesManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditPageOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdatePage}>Save Changes</Button>
+            <Button onClick={handleUpdatePage}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pageToDelete !== null && (
-                <>
-                  You are about to delete <strong>{pages.find((p) => p.id === pageToDelete)?.name}</strong>. This action
-                  cannot be undone. This will permanently remove the page from your website.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeletePage}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          pageToDelete !== null ? (
+            <>
+              You are about to delete <strong>{pages.find((p) => p.id === pageToDelete)?.name}</strong>. This action
+              cannot be undone. This will permanently remove the page from your website.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeletePage}
+      />
+    </>
+  </ErrorBoundary>
   )
 }
-

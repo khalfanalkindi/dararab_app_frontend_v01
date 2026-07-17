@@ -1,18 +1,22 @@
 "use client"
 
-import Link from "next/link"
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
+import { TableSkeleton } from "@/components/table-skeleton"
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -32,19 +36,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -55,29 +50,34 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { API_URL } from "@/lib/config"
+import { ListPagination } from "@/components/list-pagination"
 
 interface ListItem {
   id: number
-  name: string
+  value: string
+  display_name_en: string
+  display_name_ar: string
 }
 
 interface Warehouse {
   id: number
   name_en: string
   name_ar: string
-  type: ListItem | null
+  type: number | ListItem | null
   location: string
 }
 
 export default function WarehouseManagement() {
+  const { t, language } = useLanguage()
+  const { dashboard: dashboardCrumb, definitions: definitionsCrumb } = useAppCrumbs()
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [warehouseTypes, setWarehouseTypes] = useState<ListItem[]>([])
+  const [isLoadingWarehouseTypes, setIsLoadingWarehouseTypes] = useState(false)
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [deleteWarehouseId, setDeleteWarehouseId] = useState<number | null>(null)
   const [editWarehouse, setEditWarehouse] = useState<Warehouse | null>(null)
   const [isAddWarehouseOpen, setIsAddWarehouseOpen] = useState(false)
   const [isEditWarehouseOpen, setIsEditWarehouseOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -86,6 +86,11 @@ export default function WarehouseManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalCount, setTotalCount] = useState(0)
 
   // Form state for new warehouse
   const [newWarehouse, setNewWarehouse] = useState<Partial<Warehouse>>({
@@ -117,53 +122,7 @@ export default function WarehouseManagement() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((
     error: unknown,
     defaultMessage: string,
@@ -189,23 +148,19 @@ export default function WarehouseManagement() {
     }
 
     // Show toast notification
-    toast({
-      title: options?.title || "Error",
-      description: errorMessage,
-      variant: "destructive",
-      duration: options?.duration || 5000,
-    })
-  }, [])
+    toast.error(options?.title || t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   useEffect(() => {
-    fetchWarehouses()
+    fetchWarehouses(currentPage, pageSize)
     fetchWarehouseTypes()
-    
+
     // Cleanup: abort pending requests on unmount
     return () => {
       fetchWarehousesAbortControllerRef.current?.abort()
       fetchWarehouseTypesAbortControllerRef.current?.abort()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial + page/size driven by handlers
   }, [])
 
   const fetchWarehouseTypes = async () => {
@@ -213,57 +168,104 @@ export default function WarehouseManagement() {
     fetchWarehouseTypesAbortControllerRef.current?.abort()
     fetchWarehouseTypesAbortControllerRef.current = new AbortController()
 
+    setIsLoadingWarehouseTypes(true)
     try {
       const res = await fetchWithRetry(
-        `${API_URL}/common/list-items/warehouse_type`,
+        `${API_URL}/common/list-items/warehouse_type/`,
         {
           headers,
           signal: fetchWarehouseTypesAbortControllerRef.current.signal
         }
       )
-      
+
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
-      
+
       const data = await res.json()
-      const typesData = Array.isArray(data) ? data : data.results || []
+      const typesData = Array.isArray(data)
+        ? data
+        : data.results || data.data || data.items || []
       setWarehouseTypes(typesData)
     } catch (error) {
       handleError(error, "Failed to fetch warehouse types")
       setWarehouseTypes([])
+    } finally {
+      setIsLoadingWarehouseTypes(false)
     }
   }
 
-  const fetchWarehouses = async () => {
+  const getTypeId = (type: Warehouse["type"]) =>
+    typeof type === "number" ? type : type?.id
+
+  const getTypeLabel = (type: ListItem) =>
+    language === "ar"
+      ? type.display_name_ar || type.display_name_en || type.value
+      : type.display_name_en || type.display_name_ar || type.value
+
+  const getWarehouseTypeLabel = (type: Warehouse["type"]) => {
+    if (!type) return "-"
+    const item =
+      typeof type === "number"
+        ? warehouseTypes.find((warehouseType) => warehouseType.id === type)
+        : type
+    return item ? getTypeLabel(item) : "-"
+  }
+
+  const fetchWarehouses = async (page: number = currentPage, size: number = pageSize) => {
     // Abort previous request if still pending
     fetchWarehousesAbortControllerRef.current?.abort()
     fetchWarehousesAbortControllerRef.current = new AbortController()
 
+    setIsLoading(true)
     try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(size),
+        ordering: "name_en",
+      })
       const res = await fetchWithRetry(
-        `${API_URL}/inventory/warehouses/`,
+        `${API_URL}/inventory/warehouses/?${params.toString()}`,
         {
           headers,
           signal: fetchWarehousesAbortControllerRef.current.signal
         }
       )
-      
+
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
-      
+
       const data = await res.json()
-      // Ensure data is an array
       const warehousesData = Array.isArray(data) ? data : data.results || []
+
       setWarehouses(warehousesData)
+      setTotalCount(
+        Array.isArray(data)
+          ? warehousesData.length
+          : typeof data.count === "number"
+            ? data.count
+            : warehousesData.length,
+      )
+      setCurrentPage(page)
+      setPageSize(size)
     } catch (error) {
       handleError(error, "Failed to fetch warehouses")
-      // Set empty array on error
       setWarehouses([])
+      setTotalCount(0)
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    fetchWarehouses(newPage, pageSize)
+  }
+
+  // Handle items per page change
+  const handlePageSizeChange = (size: number) => {
+    fetchWarehouses(1, size)
   }
 
   // Handle adding a new warehouse
@@ -281,7 +283,7 @@ export default function WarehouseManagement() {
       }
 
       const data = await res.json()
-      setWarehouses([...warehouses, data])
+      setIsAddWarehouseOpen(false)
 
       // Reset form
       setNewWarehouse({
@@ -291,14 +293,10 @@ export default function WarehouseManagement() {
         location: "",
       })
 
-      setIsAddWarehouseOpen(false)
+      await fetchWarehouses(1, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Warehouse Added Successfully",
-        description: `${data.name_ar} / ${data.name_en} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success(t("definitionsToasts.added", { entity: t("definitions.warehouses.title") }))
 
       // Show alert message
       showAlert("success", `New warehouse "${data.name_ar} / ${data.name_en}" has been successfully added to the system.`)
@@ -329,16 +327,12 @@ export default function WarehouseManagement() {
 
       const responseData = await res.json()
 
-      setWarehouses(warehouses.map((w) => (w.id === responseData.id ? responseData : w)))
       setEditWarehouse(null)
       setIsEditWarehouseOpen(false)
+      await fetchWarehouses(currentPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Warehouse Updated Successfully",
-        description: `${responseData.name_ar} / ${responseData.name_en} has been updated.`,
-        variant: "default",
-      })
+      toast.success(t("definitionsToasts.updated", { entity: t("definitions.warehouses.title") }))
 
       // Show alert message
       showAlert("success", `Warehouse "${responseData.name_ar} / ${responseData.name_en}" has been successfully updated.`)
@@ -370,17 +364,15 @@ export default function WarehouseManagement() {
         throw new Error(errorData.message || errorData.detail || "Failed to delete warehouse")
       }
 
-      setWarehouses(warehouses.filter((w) => w.id !== deleteWarehouseId))
       setDeleteWarehouseId(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
+
+      const nextPage =
+        warehouses.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage
+      await fetchWarehouses(nextPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Warehouse Deleted",
-        description: `${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.success(t("definitionsToasts.deleted", { entity: t("definitions.warehouses.title") }), { description: t("definitionsToasts.deletedDesc", { name: `${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en}` }) })
 
       // Show alert message
       showAlert("warning", `Warehouse "${warehouseToDelete.name_ar} / ${warehouseToDelete.name_en}" has been permanently deleted from the system.`)
@@ -397,6 +389,7 @@ export default function WarehouseManagement() {
   const openEditDialog = (warehouse: Warehouse) => {
     setEditWarehouse(warehouse)
     setIsEditWarehouseOpen(true)
+    void fetchWarehouseTypes()
   }
 
   // Open delete confirmation
@@ -406,26 +399,14 @@ export default function WarehouseManagement() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <>
+      <DocumentTitle title={t("definitions.warehouses.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Warehouses</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, definitionsCrumb, { label: t("nav.warehouses") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -452,27 +433,33 @@ export default function WarehouseManagement() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Warehouse Management</h2>
-            <p className="mb-6">Manage warehouses and their information.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("definitions.warehouses.management")}</h2>
+            <p className="mb-6">{t("definitions.warehouses.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Warehouses</h3>
-                <Dialog open={isAddWarehouseOpen} onOpenChange={setIsAddWarehouseOpen}>
+                <h3 className="font-medium">{t("definitions.warehouses.title")}</h3>
+                <Dialog
+                  open={isAddWarehouseOpen}
+                  onOpenChange={(open) => {
+                    setIsAddWarehouseOpen(open)
+                    if (open) void fetchWarehouseTypes()
+                  }}
+                >
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Warehouse
+                      {t("definitions.warehouses.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Warehouse</DialogTitle>
-                      <DialogDescription>Create a new warehouse entry.</DialogDescription>
+                      <DialogTitle>{t("definitions.warehouses.addNew")}</DialogTitle>
+                      <DialogDescription>{t("definitions.warehouses.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name_en">English Name</Label>
+                        <Label htmlFor="name_en">{t("definitions.warehouses.nameEn")}</Label>
                         <Input
                           id="name_en"
                           value={newWarehouse.name_en}
@@ -481,7 +468,7 @@ export default function WarehouseManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="name_ar">Arabic Name</Label>
+                        <Label htmlFor="name_ar">{t("definitions.warehouses.nameAr")}</Label>
                         <Input
                           id="name_ar"
                           value={newWarehouse.name_ar}
@@ -490,28 +477,36 @@ export default function WarehouseManagement() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="type">Type</Label>
+                        <Label htmlFor="type">{t("definitions.warehouses.type")}</Label>
                         <Select
-                          value={newWarehouse.type?.id?.toString()}
+                          value={getTypeId(newWarehouse.type ?? null)?.toString()}
                           onValueChange={(value) => {
-                            const selectedType = warehouseTypes.find((t) => t.id.toString() === value)
-                            setNewWarehouse({ ...newWarehouse, type: selectedType || null })
+                            setNewWarehouse({ ...newWarehouse, type: Number(value) })
                           }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select warehouse type" />
                           </SelectTrigger>
                           <SelectContent>
+                            {isLoadingWarehouseTypes ? (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                {t("common.loading")}
+                              </div>
+                            ) : warehouseTypes.length === 0 ? (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                {t("common.noResults")}
+                              </div>
+                            ) : null}
                             {warehouseTypes.map((type) => (
                               <SelectItem key={type.id} value={type.id.toString()}>
-                                {type.name}
+                                {getTypeLabel(type)}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="location">Location</Label>
+                        <Label htmlFor="location">{t("definitions.warehouses.location")}</Label>
                         <Input
                           id="location"
                           value={newWarehouse.location}
@@ -522,103 +517,109 @@ export default function WarehouseManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddWarehouseOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddWarehouse}>Add Warehouse</Button>
+                      <Button onClick={handleAddWarehouse}>{t("definitions.warehouses.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="text-sm border-b">
-                        <th className="text-left font-medium p-2">Name (AR/EN)</th>
-                        <th className="text-left font-medium p-2">Type</th>
-                        <th className="text-left font-medium p-2">Location</th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan={4} className="py-8 text-center">
-                            Loading warehouses...
-                          </td>
-                        </tr>
-                      ) : warehouses.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="py-8 text-center">
-                            No warehouses found
-                          </td>
-                        </tr>
-                      ) : (
-                        warehouses.map((warehouse) => (
-                          <tr key={warehouse.id} className="border-b last:border-0">
-                            <td className="p-2 font-medium">
-                              {warehouse.name_ar} / {warehouse.name_en}
-                            </td>
-                            <td className="p-2">{warehouse.type?.name || "No type"}</td>
-                            <td className="p-2">{warehouse.location || "No location"}</td>
-                            <td className="p-2 text-right">
-                              <div className="flex justify-end gap-2">
-                                {/* Desktop view - separate buttons */}
-                                <div className="hidden sm:flex gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => openEditDialog(warehouse)}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                    <span className="sr-only">Edit</span>
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => openDeleteDialog(warehouse.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Delete</span>
-                                  </Button>
-                                </div>
-
-                                {/* Mobile view - dropdown menu */}
-                                <div className="sm:hidden">
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="outline" size="icon" className="h-8 w-8">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        <span className="sr-only">Actions</span>
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openEditDialog(warehouse)}>
-                                        <Edit className="h-4 w-4 mr-2" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={() => openDeleteDialog(warehouse.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("common.name")}</TableHead>
+                      <TableHead>{t("definitions.warehouses.type")}</TableHead>
+                      <TableHead>{t("definitions.warehouses.location")}</TableHead>
+                      <TableHead className="text-right">{t("common.actions")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading ? (
+                      <TableSkeleton columns={4} rows={5} hasActions />
+                    ) : warehouses.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-8 text-center">
+                          {t("definitions.warehouses.empty")}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      warehouses.map((warehouse) => (
+                        <TableRow key={warehouse.id}>
+                          <TableCell className="font-medium">
+                            {warehouse.name_ar} / {warehouse.name_en}
+                          </TableCell>
+                          <TableCell>{getWarehouseTypeLabel(warehouse.type)}</TableCell>
+                          <TableCell>{warehouse.location || "No location"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              {/* Desktop view - separate buttons */}
+                              <div className="hidden sm:flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => openEditDialog(warehouse)}
+                                >
+                                  <Edit className="h-4 w-4" />
+                                  <span className="sr-only">{t("common.edit")}</span>
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive hover:text-destructive"
+                                  onClick={() => openDeleteDialog(warehouse.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  <span className="sr-only">{t("common.delete")}</span>
+                                </Button>
                               </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+
+                              {/* Mobile view - dropdown menu */}
+                              <div className="sm:hidden">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="outline" size="icon" className="h-8 w-8">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                      <span className="sr-only">{t("common.actions")}</span>
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
+                                    <DropdownMenuItem onClick={() => openEditDialog(warehouse)}>
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      {t("common.edit")}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => openDeleteDialog(warehouse.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      {t("common.delete")}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+
+                {/* Pagination Controls */}
+                {!isLoading && totalCount > 0 && (
+                  <ListPagination
+                    currentPage={currentPage}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    disabled={isLoading}
+                    onPageChange={handlePageChange}
+                    onPageSizeChange={handlePageSizeChange}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -626,16 +627,22 @@ export default function WarehouseManagement() {
       </SidebarInset>
 
       {/* Edit Warehouse Dialog */}
-      <Dialog open={isEditWarehouseOpen} onOpenChange={setIsEditWarehouseOpen}>
+      <Dialog
+        open={isEditWarehouseOpen}
+        onOpenChange={(open) => {
+          setIsEditWarehouseOpen(open)
+          if (open) void fetchWarehouseTypes()
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Warehouse</DialogTitle>
-            <DialogDescription>Update warehouse information.</DialogDescription>
+            <DialogTitle>{t("definitions.warehouses.editTitle")}</DialogTitle>
+            <DialogDescription>{t("definitions.warehouses.editDescription")}</DialogDescription>
           </DialogHeader>
           {editWarehouse && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_en">English Name</Label>
+                <Label htmlFor="edit-name_en">{t("definitions.warehouses.nameEn")}</Label>
                 <Input
                   id="edit-name_en"
                   value={editWarehouse.name_en}
@@ -643,7 +650,7 @@ export default function WarehouseManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_ar">Arabic Name</Label>
+                <Label htmlFor="edit-name_ar">{t("definitions.warehouses.nameAr")}</Label>
                 <Input
                   id="edit-name_ar"
                   value={editWarehouse.name_ar}
@@ -651,28 +658,36 @@ export default function WarehouseManagement() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-type">Type</Label>
+                <Label htmlFor="edit-type">{t("definitions.warehouses.type")}</Label>
                 <Select
-                  value={editWarehouse.type?.id?.toString()}
+                  value={getTypeId(editWarehouse.type)?.toString()}
                   onValueChange={(value) => {
-                    const selectedType = warehouseTypes.find((t) => t.id.toString() === value)
-                    setEditWarehouse({ ...editWarehouse, type: selectedType || null })
+                    setEditWarehouse({ ...editWarehouse, type: Number(value) })
                   }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select warehouse type" />
                   </SelectTrigger>
                   <SelectContent>
+                    {isLoadingWarehouseTypes ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        {t("common.loading")}
+                      </div>
+                    ) : warehouseTypes.length === 0 ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        {t("common.noResults")}
+                      </div>
+                    ) : null}
                     {warehouseTypes.map((type) => (
                       <SelectItem key={type.id} value={type.id.toString()}>
-                        {type.name}
+                        {getTypeLabel(type)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-location">Location</Label>
+                <Label htmlFor="edit-location">{t("definitions.warehouses.location")}</Label>
                 <Input
                   id="edit-location"
                   value={editWarehouse.location}
@@ -683,54 +698,32 @@ export default function WarehouseManagement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditWarehouseOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateWarehouse}>Save Changes</Button>
+            <Button onClick={handleUpdateWarehouse}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteWarehouseId !== null && (
-                <>
-                  You are about to delete{" "}
-                  <strong>
-                    {warehouses.find((w) => w.id === deleteWarehouseId)?.name_ar} /{" "}
-                    {warehouses.find((w) => w.id === deleteWarehouseId)?.name_en}
-                  </strong>
-                  . This action cannot be undone. This will permanently remove the warehouse from your system.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteWarehouse}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          deleteWarehouseId !== null ? (
+            <>
+              You are about to delete{" "}
+              <strong>
+                {warehouses.find((w) => w.id === deleteWarehouseId)?.name_ar} /{" "}
+                {warehouses.find((w) => w.id === deleteWarehouseId)?.name_en}
+              </strong>
+              . This action cannot be undone. This will permanently remove the warehouse from your system.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeleteWarehouse}
+      />
+    </>
   )
 }
-
-

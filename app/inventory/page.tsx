@@ -1,19 +1,14 @@
 "use client"
 
-import Link from "next/link"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { AppSidebar } from "@/components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
 import {
@@ -33,25 +28,24 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
+import { TableSkeleton } from "@/components/table-skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { MultiSelectProducts } from "@/components/multi-select-products"
 import { API_URL } from "@/lib/config"
@@ -80,7 +74,85 @@ type Inventory = {
   updated_at?: string
 }
 
+function WarehouseSearchableCombobox({
+  value,
+  onChange,
+  placeholder,
+  items,
+  allowAll = false,
+  onOpen,
+}: {
+  value: string | number | undefined
+  onChange: (value: string) => void
+  placeholder: string
+  items: { id: number; name: string }[]
+  allowAll?: boolean
+  onOpen?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const currentLabel =
+    value && value !== "all"
+      ? items.find((item) => item.id === Number(value))?.name
+      : undefined
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) onOpen?.()
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between"
+        >
+          {currentLabel || (value === "all" ? placeholder : placeholder)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[280px] p-0">
+        <Command>
+          <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
+          <CommandList>
+            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandGroup>
+              {allowAll ? (
+                <CommandItem
+                  value="all"
+                  onSelect={() => {
+                    onChange("all")
+                    setOpen(false)
+                  }}
+                >
+                  {placeholder}
+                </CommandItem>
+              ) : null}
+              {items.map((item) => (
+                <CommandItem
+                  key={item.id}
+                  value={`${item.name} ${item.id}`}
+                  onSelect={() => {
+                    onChange(String(item.id))
+                    setOpen(false)
+                  }}
+                >
+                  {item.name}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export default function InventoryManagementPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [mounted, setMounted] = useState<boolean>(false)
   const [items, setItems] = useState<Inventory[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -97,7 +169,6 @@ export default function InventoryManagementPage() {
   
   // Loading states for async dropdowns
   const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(false)
-  const [isLoadingWarehouses, setIsLoadingWarehouses] = useState<boolean>(false)
 
   // Filter states - using array for products (like transfer page)
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([])
@@ -116,7 +187,6 @@ export default function InventoryManagementPage() {
 
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [isDeleteOpen, setIsDeleteOpen] = useState<boolean>(false)
-  const [deleteConfirm, setDeleteConfirm] = useState<string>("")
 
   const [newInventory, setNewInventory] = useState<Partial<Inventory>>({
     product_id: undefined,
@@ -203,77 +273,7 @@ export default function InventoryManagementPage() {
     return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
   }
 
-  // Exponential backoff retry utility
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  useEffect(() => {
+useEffect(() => {
     setMounted(true)
     
     // Wait for accessToken to be available before fetching lookups
@@ -421,61 +421,6 @@ export default function InventoryManagementPage() {
     }
   }
 
-  // Fetch warehouses with server-side search (for dropdowns)
-  const fetchWarehousesSearch = async (search: string = "", signal?: AbortSignal): Promise<Warehouse[]> => {
-    setIsLoadingWarehouses(true)
-    try {
-      // Get token directly from localStorage to ensure it's fresh
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token || ""}`,
-      }
-      
-      const params = new URLSearchParams()
-      params.append("page_size", "50") // Only fetch 50 items initially
-      if (search.trim()) {
-        params.append("search", search.trim())
-      }
-      
-      const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/?${params.toString()}`, { 
-        headers, 
-        signal: signal || abortControllerRef.current?.signal 
-      })
-      
-      const ensureJson = async (res: Response) => {
-        const ct = res.headers.get("content-type") || ""
-        if (!ct.includes("application/json")) {
-          const text = await res.text()
-          throw new Error(`Warehouses request failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
-        }
-        return res.json()
-      }
-      
-      const data = await ensureJson(res)
-      const normalizeList = (payload: any) => {
-        if (!payload) return []
-        if (Array.isArray(payload)) return payload
-        if (Array.isArray(payload.results)) return payload.results
-        if (Array.isArray(payload.data)) return payload.data
-        if (Array.isArray(payload.items)) return payload.items
-        return []
-      }
-      
-      return normalizeList(data)
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        return []
-      }
-      if (process.env.NODE_ENV !== "production") {
-        console.error("Warehouses search failed", e)
-      }
-      return []
-    } finally {
-      setIsLoadingWarehouses(false)
-    }
-  }
-
   const fetchLookups = async (signal?: AbortSignal, forceRefresh: boolean = false) => {
     try {
       if (!forceRefresh) {
@@ -488,9 +433,10 @@ export default function InventoryManagementPage() {
 
           if (now - timestamp < CACHE_DURATION) {
             try {
-              const warehouses = JSON.parse(cachedData)
-              setWarehouses(Array.isArray(warehouses) ? warehouses : [])
-              return
+              const cachedWarehouses = JSON.parse(cachedData)
+              // Render cached values immediately, but always continue with a
+              // network refresh so newly-created warehouses are not hidden.
+              setWarehouses(Array.isArray(cachedWarehouses) ? cachedWarehouses : [])
             } catch (parseError) {
               if (process.env.NODE_ENV !== "production") {
                 console.error("Error parsing cached warehouse data:", parseError)
@@ -507,7 +453,7 @@ export default function InventoryManagementPage() {
         if (process.env.NODE_ENV !== "production") {
           console.warn("No access token available for fetchLookups")
         }
-        toast({ title: "Error", description: "Authentication required. Please log in again.", variant: "destructive" })
+        toast.error(t("toasts.error"), { description: t("toasts.authRequired") })
         return
       }
 
@@ -517,7 +463,7 @@ export default function InventoryManagementPage() {
       }
 
       const wRes = await fetchWithRetry(
-        `${API_URL}/inventory/warehouses/?page_size=1000`,
+        `${API_URL}/inventory/warehouses/?page_size=100`,
         { headers, signal: signal || abortControllerRef.current?.signal },
       )
 
@@ -558,7 +504,7 @@ export default function InventoryManagementPage() {
       if (process.env.NODE_ENV !== "production") {
         console.error("Lookup fetch failed", e)
       }
-      toast({ title: "Error", description: "Failed to load warehouses", variant: "destructive" })
+      toast.error(t("toasts.error"), { description: t("toasts.loadWarehousesFailed") })
     }
   }
 
@@ -611,7 +557,7 @@ export default function InventoryManagementPage() {
       setItems([])
       setCount(0)
       setTotalPages(0)
-      toast({ title: "Error", description: "Failed to load inventory list", variant: "destructive" })
+      toast.error(t("toasts.error"), { description: t("inventoryToasts.loadFailed") })
     } finally {
       setIsLoading(false)
     }
@@ -626,7 +572,7 @@ export default function InventoryManagementPage() {
       
       // Validate warehouse and quantity
       if (!newInventory.warehouse_id) {
-        toast({ title: "Error", description: "Please select a warehouse", variant: "destructive" })
+        toast.error(t("toasts.error"), { description: t("inventoryToasts.selectWarehouse") })
         setIsCreating(false)
         return
       }
@@ -723,10 +669,7 @@ export default function InventoryManagementPage() {
         }
 
         setIsCreating(false)
-        toast({ 
-          title: "Inventory saved", 
-          description: message
-        })
+        toast.success(t("inventoryToasts.saved"), { description: message })
         // Refresh to ensure consistency
         await fetchInventory(currentPage, pageSize)
       } else if (newInventory.product_id) {
@@ -779,11 +722,11 @@ export default function InventoryManagementPage() {
         })
 
         setIsCreating(false)
-      toast({ title: "Inventory saved", description: "Entry created/updated successfully" })
+      toast.success(t("inventoryToasts.saved"), { description: t("inventoryToasts.savedDesc") })
         // Refresh to ensure consistency
         await fetchInventory(currentPage, pageSize)
       } else {
-        toast({ title: "Error", description: "Please select at least one product", variant: "destructive" })
+        toast.error(t("toasts.error"), { description: t("toasts.selectProduct") })
         setIsCreating(false)
       }
     } catch (e) {
@@ -793,7 +736,7 @@ export default function InventoryManagementPage() {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save inventory"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast.error(t("toasts.error"), { description: msg })
       setIsCreating(false)
     }
   }
@@ -841,7 +784,7 @@ export default function InventoryManagementPage() {
       // Replace with server response
       setItems(prev => prev.map(item => item.id === data.id ? data : item))
       
-      toast({ title: "Inventory updated", description: "Entry updated successfully" })
+      toast.success(t("inventoryToasts.updated"), { description: t("inventoryToasts.updatedDesc") })
       // Refresh to ensure consistency
       await fetchInventory(currentPage, pageSize)
     } catch (e) {
@@ -851,7 +794,7 @@ export default function InventoryManagementPage() {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to update inventory"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsUpdating(false)
     }
@@ -871,7 +814,6 @@ export default function InventoryManagementPage() {
       setIsDeleteOpen(false)
       const idToDelete = deleteId
       setDeleteId(null)
-      setDeleteConfirm("")
 
       const res = await fetchWithRetry(`${API_URL}/inventory/inventory/${idToDelete}/delete/`, {
         method: "DELETE",
@@ -883,12 +825,11 @@ export default function InventoryManagementPage() {
         setItems(originalItems)
         setIsDeleteOpen(true)
         setDeleteId(idToDelete)
-        setDeleteConfirm("")
         const text = await res.text().catch(() => "")
         throw new Error(`Delete failed (${res.status}) for ${res.url}: ${text.slice(0, 200)}`)
       }
       
-      toast({ title: "Inventory deleted", description: "Inventory entry deleted successfully", variant: "destructive" })
+      toast.success(t("inventoryToasts.deleted"), { description: t("inventoryToasts.deletedDesc") })
       
       // If we deleted the last item on the page and it's not page 1, go to previous page
       if (originalItems.length === 1 && currentPage > 1) {
@@ -906,7 +847,7 @@ export default function InventoryManagementPage() {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to delete inventory"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsDeleting(false)
     }
@@ -940,11 +881,6 @@ export default function InventoryManagementPage() {
     [selectedProductIds, productLabelById, products, getProductDisplayName],
   )
 
-  const warehouseOptions = useMemo(
-    () => warehouses.map((w) => ({ id: w.id, name: w.name_en || (w as any).name || String(w.id) })),
-    [warehouses]
-  )
-
   // Memoized lookup Maps for O(1) access
   const productMap = useMemo(() => {
     const map = new Map<number, Product>()
@@ -953,6 +889,15 @@ export default function InventoryManagementPage() {
     })
     return map
   }, [products])
+
+  const warehouseOptions = useMemo(
+    () =>
+      warehouses.map((warehouse) => ({
+        id: warehouse.id,
+        name: warehouse.name_en || warehouse.name || String(warehouse.id),
+      })),
+    [warehouses],
+  )
 
   const warehouseMap = useMemo(() => {
     const map = new Map<number, Warehouse>()
@@ -986,27 +931,6 @@ export default function InventoryManagementPage() {
     return undefined
   }, [productMap, getProductDisplayName])
 
-  const getWarehouseNameAsync = useCallback(async (id: number): Promise<string | undefined> => {
-    // First check cache
-    const cached = warehouseMap.get(id)
-    if (cached) {
-      return cached.name_en || (cached as any).name || undefined
-    }
-    // If not in cache, fetch it
-    try {
-      const items = await fetchWarehousesSearch("", abortControllerRef.current?.signal)
-      const found = items.find((w: Warehouse) => w.id === id)
-      if (found) {
-        return found.name_en || (found as any).name || undefined
-      }
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") {
-        console.error("Failed to fetch warehouse name:", e)
-      }
-    }
-    return undefined
-  }, [warehouseMap])
-
   // Wrapper functions for async dropdowns
   const fetchProductsForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
     const fetchedProducts = await fetchProductsSearch(search, signal, { trackLoading: false })
@@ -1022,14 +946,6 @@ export default function InventoryManagementPage() {
       name: getProductDisplayName(p),
     }))
   }, [getProductDisplayName])
-
-  const fetchWarehousesForDropdown = useCallback(async (search: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> => {
-    const warehouses = await fetchWarehousesSearch(search, signal)
-    return warehouses.map((w: Warehouse) => ({
-      id: w.id,
-      name: w.name_en || (w as any).name || String(w.id)
-    }))
-  }, [])
 
   const mergedRows = useMemo(() => {
     if (!hasRequested) return []
@@ -1133,7 +1049,7 @@ export default function InventoryManagementPage() {
       // Replace with server response
       setItems(prev => prev.map(item => item.id === data.id ? data : item))
       
-      toast({ title: "Saved", description: "Inventory updated" })
+      toast.success(t("inventoryToasts.rowSaved"), { description: t("inventoryToasts.updated") })
       // Refresh to ensure consistency
       await fetchInventory(currentPage, pageSize)
     } catch (e) {
@@ -1143,7 +1059,7 @@ export default function InventoryManagementPage() {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsUpdatingRow(null)
     }
@@ -1167,7 +1083,7 @@ export default function InventoryManagementPage() {
       })
 
       if (changes.length === 0) {
-        toast({ title: "No changes", description: "No changes to save" })
+        toast.success(t("inventoryToasts.noChanges"), { description: t("inventoryToasts.noChangesDesc") })
         setIsSavingAll(false)
         return
       }
@@ -1246,9 +1162,9 @@ export default function InventoryManagementPage() {
       const resultsMap = new Map(results.map((item: any) => [item.id, item as Inventory]))
       setItems(prev => prev.map(item => (resultsMap.get(item.id) || item) as Inventory))
 
-      toast({ 
-        title: "All changes saved", 
-        description: `Successfully updated ${results.length} inventory ${results.length === 1 ? 'item' : 'items'}` 
+      toast.success(t("inventoryToasts.allSaved"), {
+        description: t("inventoryToasts.allSavedDesc", { count: results.length }),
+        duration: 4000,
       })
       // Refresh to ensure consistency
       await fetchInventory(currentPage, pageSize)
@@ -1259,7 +1175,7 @@ export default function InventoryManagementPage() {
         return
       }
       const msg = e instanceof Error ? e.message : "Failed to save changes"
-      toast({ title: "Error", description: msg, variant: "destructive" })
+      toast.error(t("toasts.error"), { description: msg })
     } finally {
       setIsSavingAll(false)
     }
@@ -1451,98 +1367,15 @@ export default function InventoryManagementPage() {
     )
   }
 
-  // Legacy SearchableCombobox (kept for backward compatibility)
-  const SearchableCombobox = ({
-    value,
-    onChange,
-    items,
-    placeholder,
-    allowAll,
-    onOpen,
-  }: {
-    value: string | number | undefined
-    onChange: (val: string) => void
-    items: { id: number; name: string }[]
-    placeholder: string
-    allowAll?: boolean
-    onOpen?: () => void
-  }) => {
-    const [open, setOpen] = useState(false)
-    const currentLabel = value && value !== "all" ? items.find((i) => i.id === Number(value))?.name : undefined
-    return (
-      <Popover
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next)
-          if (next && onOpen) onOpen()
-        }}
-      >
-        <PopoverTrigger asChild>
-          <Button variant="outline" role="combobox" aria-expanded={open} className="justify-between">
-            {currentLabel || (value === "all" ? "All" : placeholder)}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="p-0 w-[280px]">
-          <Command>
-            <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
-            <CommandList>
-              <CommandEmpty>No results found.</CommandEmpty>
-              <CommandGroup>
-                {allowAll && (
-                  <CommandItem
-                    key="all"
-                    value="all"
-                    onSelect={() => {
-                      onChange("all")
-                      setOpen(false)
-                    }}
-                  >
-                    All
-                  </CommandItem>
-                )}
-                {items.map((it) => (
-                  <CommandItem
-                    key={it.id}
-                    value={String(it.id)}
-                    onSelect={(v) => {
-                      onChange(v)
-                      setOpen(false)
-                    }}
-                  >
-                    {it.name}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    )
-  }
-
-
   return (
     <ErrorBoundary>
-    <SidebarProvider>
-      <AppSidebar />
+      <DocumentTitle title={t("inventory.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Inventory</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("inventory.title") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1550,7 +1383,7 @@ export default function InventoryManagementPage() {
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-semibold">Inventory Management</h2>
+                <h2 className="text-xl font-semibold">{t("inventory.management")}</h2>
                 <p className="text-sm text-muted-foreground">Manage product stock per warehouse.</p>
               </div>
               <div className="flex gap-2">
@@ -1571,7 +1404,7 @@ export default function InventoryManagementPage() {
                 >
                 <DialogTrigger asChild>
                   <Button size="sm" className="bg-primary text-primary-foreground">
-                    <PlusCircle className="h-4 w-4 mr-2" /> Add Inventory
+                    <PlusCircle className="h-4 w-4 mr-2" /> {t("inventory.add")}
                   </Button>
                 </DialogTrigger>
                 </Dialog>
@@ -1593,14 +1426,14 @@ export default function InventoryManagementPage() {
               >
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Add Inventory (Bulk)</DialogTitle>
+                    <DialogTitle>{t("inventory.add")}</DialogTitle>
                     <DialogDescription>
                       Select multiple products and set inventory quantity for a warehouse. All selected products will be created with the same quantity.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 py-4">
                     <div className="grid gap-2">
-                      <Label>Products (Select Multiple)</Label>
+                      <Label>{t("inventory.product")}</Label>
                       <MultiSelectProducts
                         selectedIds={selectedProducts}
                         onSelectionChange={setSelectedProducts}
@@ -1616,16 +1449,17 @@ export default function InventoryManagementPage() {
                       )}
                     </div>
                     <div className="grid gap-2">
-                      <Label>Warehouse *</Label>
-                      <SearchableCombobox
+                      <Label>{t("inventory.warehouse")} *</Label>
+                      <WarehouseSearchableCombobox
                         value={newInventory.warehouse_id?.toString()}
                         onChange={(v) => setNewInventory((s) => ({ ...s, warehouse_id: Number(v) }))}
                         items={warehouseOptions}
-                        placeholder="Select warehouse"
+                        placeholder={t("inventory.warehouse")}
+                        onOpen={() => void fetchLookups(undefined, true)}
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label>Quantity *</Label>
+                      <Label>{t("inventory.quantity")} *</Label>
                       <Input 
                         type="number" 
                         value={newInventory.quantity ?? 0} 
@@ -1649,7 +1483,7 @@ export default function InventoryManagementPage() {
                         setIsCreating(false)
                       }}
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </Button>
                     <Button 
                       onClick={handleCreate}
@@ -1667,7 +1501,7 @@ export default function InventoryManagementPage() {
               <div className="bg-muted p-4">
                 <div className="grid gap-4 md:grid-cols-4 md:gap-4">
                   <div className="grid gap-2">
-                    <Label>Filter by Products (Multi-select)</Label>
+                    <Label>{t("transfer.products")}</Label>
                     <MultiSelectProducts
                       selectedIds={selectedProductIds}
                       onSelectionChange={setSelectedProductIds}
@@ -1678,26 +1512,26 @@ export default function InventoryManagementPage() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label>Filter by Warehouse</Label>
-                    <SearchableCombobox
+                    <Label>{t("inventory.warehouse")}</Label>
+                    <WarehouseSearchableCombobox
                       value={filterWarehouseId || "all"}
                       onChange={(v) => setFilterWarehouseId(v === "all" ? "" : v)}
                       items={warehouseOptions}
-                      placeholder="All warehouses"
+                      placeholder={t("common.allWarehouses")}
                       allowAll
-                      onOpen={() => { if (!warehouses.length) void fetchLookups() }}
+                      onOpen={() => void fetchLookups(undefined, true)}
                     />
                   </div>
                   <div className="flex gap-2 items-end">
                     <Button disabled={isSavingAll} onClick={() => { 
                       if (selectedProductIds.length === 0 && !filterWarehouseId) { 
-                        toast({ title: "Select a filter", description: "Choose products or warehouse, then click Search." })
+                        toast.success(t("inventoryToasts.selectFilter"), { description: t("inventoryToasts.selectFilterDesc") })
                         return
                       }
                       setHasRequested(true)
                       setCurrentPage(1) // Reset to first page on new search
                       void fetchInventory(1, pageSize)
-                    }}>Search</Button>
+                    }}>{t("common.search")}</Button>
                     <Button variant="outline" disabled={isSavingAll} onClick={() => { 
                       setSelectedProductIds([])
                       setProductLabelById({})
@@ -1710,7 +1544,7 @@ export default function InventoryManagementPage() {
                       setSortField("-created_at")
                       setSortOrder("desc")
                     }}>
-                      Reset
+                      {t("common.reset")}
                     </Button>
                   </div>
                 </div>
@@ -1769,14 +1603,14 @@ export default function InventoryManagementPage() {
               {hasRequested && (
                 <div className="border-t bg-background px-4 py-3 flex justify-end">
                   <Button variant="default" disabled={isLoading || isSavingAll} onClick={() => void saveAll()}>
-                    {isSavingAll ? "Saving..." : "Save All Changes"}
+                    {isSavingAll ? t("common.loading") : t("common.saveChanges")}
                   </Button>
                 </div>
               )}
 
               <div className="p-4">
-                <div className="overflow-x-auto">
                   <div
+                    className="overflow-x-auto"
                     ref={tableContainerRef}
                     style={{
                       height: shouldVirtualize ? '600px' : 'auto',
@@ -1784,101 +1618,78 @@ export default function InventoryManagementPage() {
                       position: 'relative'
                     }}
                   >
-                  <table className="w-full border-collapse">
-                      <thead className={shouldVirtualize ? "sticky top-0 bg-background z-10" : ""}>
-                      <tr className="text-sm border-b">
-                          <th 
-                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                  <Table disableWrapper>
+                      <TableHeader className={shouldVirtualize ? "sticky top-0 bg-background z-10" : ""}>
+                      <TableRow>
+                          <TableHead 
+                            className="cursor-pointer select-none"
                             onClick={() => handleSort("product")}
                           >
                             <div className="flex items-center">
-                              Product
+                              {t("inventory.product")}
                               {getSortIndicator("product")}
                             </div>
-                          </th>
-                          <th 
-                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                          </TableHead>
+                          <TableHead 
+                            className="cursor-pointer select-none"
                             onClick={() => handleSort("warehouse")}
                           >
                             <div className="flex items-center">
-                              Warehouse
+                              {t("inventory.warehouse")}
                               {getSortIndicator("warehouse")}
                             </div>
-                          </th>
-                          <th 
-                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                          </TableHead>
+                          <TableHead 
+                            className="cursor-pointer select-none"
                             onClick={() => handleSort("quantity")}
                           >
                             <div className="flex items-center">
-                              Quantity
+                              {t("inventory.quantity")}
                               {getSortIndicator("quantity")}
                             </div>
-                          </th>
-                          <th 
-                            className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 select-none"
+                          </TableHead>
+                          <TableHead 
+                            className="cursor-pointer select-none"
                             onClick={() => handleSort("updated_at")}
                           >
                             <div className="flex items-center">
-                              Updated At
+                              {t("inventory.updatedAt")}
                               {getSortIndicator("updated_at")}
                             </div>
-                          </th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                      <tbody style={{ position: 'relative', height: shouldVirtualize && totalSize > 0 ? `${totalSize}px` : 'auto' }}>
+                          </TableHead>
+                        <TableHead className="text-right">{t("common.actions")}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                      <TableBody style={{ position: 'relative', height: shouldVirtualize && totalSize > 0 ? `${totalSize}px` : 'auto' }}>
                       {!hasRequested ? (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center text-muted-foreground">
+                        <TableRow>
+                          <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                               Select product or warehouse and click Search to load inventory
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ) : isLoading ? (
-                          // Skeleton loaders matching table structure
-                          Array.from({ length: 5 }).map((_, index) => (
-                            <tr key={`skeleton-${index}`} className="border-b last:border-0">
-                              <td className="p-2">
-                                <Skeleton className="h-5 w-32" />
-                              </td>
-                              <td className="p-2">
-                                <Skeleton className="h-5 w-28" />
-                              </td>
-                              <td className="p-2">
-                                <Skeleton className="h-8 w-24" />
-                              </td>
-                              <td className="p-2">
-                                <Skeleton className="h-4 w-36" />
-                              </td>
-                              <td className="p-2 text-right">
-                                <div className="flex justify-end gap-2">
-                                  <Skeleton className="h-8 w-8 rounded" />
-                                  <Skeleton className="h-8 w-8 rounded" />
-                                </div>
-                          </td>
-                        </tr>
-                          ))
+                          <TableSkeleton columns={5} rows={5} hasActions />
                       ) : mergedRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="py-8 text-center">
-                            No inventory entries found
-                          </td>
-                        </tr>
+                        <TableRow>
+                          <TableCell colSpan={5} className="py-8 text-center">
+                            {t("inventory.empty")}
+                          </TableCell>
+                        </TableRow>
                         ) : shouldVirtualize && virtualItems.length > 0 ? (
                           <>
                             {/* Spacer for items before the first visible item */}
-                            <tr>
-                              <td colSpan={5} style={{ height: virtualItems[0]?.start ?? 0 }} />
-                            </tr>
+                            <TableRow>
+                              <TableCell colSpan={5} style={{ height: virtualItems[0]?.start ?? 0 }} />
+                            </TableRow>
                             {/* Render only visible items */}
                             {virtualItems.map((virtualItem) => {
                               const inv = mergedRows[virtualItem.index]
                               if (!inv) return null
                               return (
-                                <tr
+                                <TableRow
                                   key={inv.id}
                                   data-index={virtualItem.index}
                                   ref={rowVirtualizer.measureElement}
-                                  className="border-b last:border-0 hover:bg-muted/50"
                                   style={{
                                     position: 'absolute',
                                     top: 0,
@@ -1889,27 +1700,27 @@ export default function InventoryManagementPage() {
                                     display: 'table-row',
                                   }}
                                 >
-                                  <td className="p-2 font-medium">{getInventoryProductLabel(inv)}</td>
-                                  <td className="p-2">{getInventoryWarehouseLabel(inv)}</td>
-                                  <td className="p-2">
+                                  <TableCell className="font-medium">{getInventoryProductLabel(inv)}</TableCell>
+                                  <TableCell>{getInventoryWarehouseLabel(inv)}</TableCell>
+                                  <TableCell>
                                     <Input
                                       type="number"
                                       className="h-8 w-24"
                                       value={getDraftQty(inv)}
                                       onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
                                     />
-                                  </td>
-                                  <td className="p-2">{formatDateUTC(inv.updated_at)}</td>
-                                  <td className="p-2 text-right">
+                                  </TableCell>
+                                  <TableCell>{formatDateUTC(inv.updated_at)}</TableCell>
+                                  <TableCell className="text-right">
                                     <div className="flex justify-end gap-2">
                                       <div className="hidden sm:flex gap-2">
                                         <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
                                           <Edit className="h-4 w-4" />
-                                          <span className="sr-only">Edit</span>
+                                          <span className="sr-only">{t("common.edit")}</span>
                                         </Button>
                                         <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
                                           <Trash2 className="h-4 w-4" />
-                                          <span className="sr-only">Delete</span>
+                                          <span className="sr-only">{t("common.delete")}</span>
                                         </Button>
                                       </div>
                                       <div className="sm:hidden">
@@ -1917,52 +1728,52 @@ export default function InventoryManagementPage() {
                                           <DropdownMenuTrigger asChild>
                                             <Button variant="outline" size="icon" className="h-8 w-8">
                                               <MoreHorizontal className="h-4 w-4" />
-                                              <span className="sr-only">Actions</span>
+                                              <span className="sr-only">{t("common.actions")}</span>
                                             </Button>
                                           </DropdownMenuTrigger>
                                           <DropdownMenuContent align="end">
-                                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                            <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                             <DropdownMenuItem onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
-                                              <Edit className="h-4 w-4 mr-2" /> Edit
+                                              <Edit className="h-4 w-4 mr-2" /> {t("common.edit")}
                                             </DropdownMenuItem>
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
-                                              <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                              <Trash2 className="h-4 w-4 mr-2" /> {t("common.delete")}
                                             </DropdownMenuItem>
                                           </DropdownMenuContent>
                                         </DropdownMenu>
                                       </div>
                                     </div>
-                                  </td>
-                                </tr>
+                                  </TableCell>
+                                </TableRow>
                               )
                             })}
                           </>
                         ) : (
                           // Non-virtualized rendering for small lists
                         mergedRows.map((inv: any) => (
-                          <tr key={inv.id} className="border-b last:border-0">
-                            <td className="p-2 font-medium">{getInventoryProductLabel(inv)}</td>
-                            <td className="p-2">{getInventoryWarehouseLabel(inv)}</td>
-                            <td className="p-2">
+                          <TableRow key={inv.id}>
+                            <TableCell className="font-medium">{getInventoryProductLabel(inv)}</TableCell>
+                            <TableCell>{getInventoryWarehouseLabel(inv)}</TableCell>
+                            <TableCell>
                                 <Input
                                   type="number"
                                   className="h-8 w-24"
                                   value={getDraftQty(inv)}
                                   onChange={(e) => setDraftForRow(inv, Number(e.target.value || 0))}
                                 />
-                            </td>
-                            <td className="p-2">{formatDateUTC(inv.updated_at)}</td>
-                            <td className="p-2 text-right">
+                            </TableCell>
+                            <TableCell>{formatDateUTC(inv.updated_at)}</TableCell>
+                            <TableCell className="text-right">
                               <div className="flex justify-end gap-2">
                                 <div className="hidden sm:flex gap-2">
                                     <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
                                     <Edit className="h-4 w-4" />
-                                    <span className="sr-only">Edit</span>
+                                    <span className="sr-only">{t("common.edit")}</span>
                                   </Button>
                                     <Button variant="outline" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
                                     <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Delete</span>
+                                    <span className="sr-only">{t("common.delete")}</span>
                                   </Button>
                                 </div>
                                 <div className="sm:hidden">
@@ -1970,30 +1781,29 @@ export default function InventoryManagementPage() {
                                     <DropdownMenuTrigger asChild>
                                       <Button variant="outline" size="icon" className="h-8 w-8">
                                         <MoreHorizontal className="h-4 w-4" />
-                                        <span className="sr-only">Actions</span>
+                                        <span className="sr-only">{t("common.actions")}</span>
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
-                                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                      <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                         <DropdownMenuItem onClick={() => openEditDialog(inv)} disabled={isUpdating || isDeleting}>
-                                        <Edit className="h-4 w-4 mr-2" /> Edit
+                                        <Edit className="h-4 w-4 mr-2" /> {t("common.edit")}
                                       </DropdownMenuItem>
                                       <DropdownMenuSeparator />
                                         <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(inv.id)} disabled={isUpdating || isDeleting}>
-                                        <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                        <Trash2 className="h-4 w-4 mr-2" /> {t("common.delete")}
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
                                 </div>
                               </div>
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ))
                       )}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                   </div>
-                </div>
 
                 {/* Pagination controls */}
                 {!isLoading && hasRequested && totalPages > 0 && (
@@ -2044,75 +1854,65 @@ export default function InventoryManagementPage() {
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Inventory</DialogTitle>
+            <DialogTitle>{t("common.edit")}</DialogTitle>
             <DialogDescription>Update quantity or change associations.</DialogDescription>
           </DialogHeader>
           {editItem && (
             <div className="space-y-4 py-4">
               <div className="grid gap-2">
-                <Label>Product</Label>
+                <Label>{t("inventory.product")}</Label>
                 <AsyncSearchableCombobox
                   value={(editItem.product?.id ?? editItem.product_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, product: { id: Number(v), name: getProductName(v) || "" } } : s))}
                   fetchItems={fetchProductsForDropdown}
                   isLoading={isLoadingProducts}
                   getItemName={getProductNameAsync}
-                  placeholder="Select product"
+                  placeholder={t("inventory.product")}
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Warehouse</Label>
-                <SearchableCombobox
+                <Label>{t("inventory.warehouse")}</Label>
+                <WarehouseSearchableCombobox
                   value={(editItem.warehouse?.id ?? editItem.warehouse_id ?? "").toString()}
                   onChange={(v) => setEditItem((s) => (s ? { ...s, warehouse: { id: Number(v), name: getWarehouseName(v) || "" } } : s))}
                   items={warehouseOptions}
-                  placeholder="Select warehouse"
+                  placeholder={t("inventory.warehouse")}
+                  onOpen={() => void fetchLookups(undefined, true)}
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Quantity</Label>
+                <Label>{t("inventory.quantity")}</Label>
                 <Input type="number" value={editItem.quantity} onChange={(e) => setEditItem((s) => (s ? { ...s, quantity: Number(e.target.value || 0) } : s))} />
               </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleEdit} disabled={isUpdating}>
-              {isUpdating ? "Saving..." : "Save Changes"}
+              {isUpdating ? t("common.loading") : t("common.saveChanges")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteId !== null && (
-                <>
-                  You are about to delete inventory entry <strong>#{deleteId}</strong>. This action cannot be undone.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input id="confirm-delete" value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} className="mt-2" />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleteConfirm !== "DELETE" || isDeleting}>
-              {isDeleting ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
-    </ErrorBoundary>
+      <DeleteConfirmDialog
+        open={isDeleteOpen}
+        onOpenChange={setIsDeleteOpen}
+        description={
+          deleteId !== null ? (
+            <>
+              You are about to delete inventory entry <strong>#{deleteId}</strong>. This action cannot be undone.
+            </>
+          ) : (
+            ""
+          )
+        }
+        isDeleting={isDeleting}
+        onConfirm={handleDelete}
+      />
+</ErrorBoundary>
   )
 }
 

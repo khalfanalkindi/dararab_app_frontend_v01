@@ -92,7 +92,8 @@
     @apply bg-background text-foreground;
   }
 
-  /* RTL Support */
+  /* RTL Support — flip common physical utilities.
+     Prefer logical Tailwind (ms/me, ps/pe, start/end) in new/edited UI. */
   [dir="rtl"] .mr-auto {
     margin-right: unset;
     margin-left: auto;
@@ -103,26 +104,106 @@
     margin-right: auto;
   }
 
+  [dir="rtl"] .mr-1 {
+    margin-right: unset;
+    margin-left: 0.25rem;
+  }
+  [dir="rtl"] .ml-1 {
+    margin-left: unset;
+    margin-right: 0.25rem;
+  }
+
   [dir="rtl"] .mr-2 {
     margin-right: unset;
     margin-left: 0.5rem;
   }
-
   [dir="rtl"] .ml-2 {
     margin-left: unset;
     margin-right: 0.5rem;
   }
 
-  [dir="rtl"] .ml-4 {
+  [dir="rtl"] .mr-3 {
+    margin-right: unset;
+    margin-left: 0.75rem;
+  }
+  [dir="rtl"] .ml-3 {
     margin-left: unset;
-    margin-right: 1rem;
+    margin-right: 0.75rem;
   }
 
   [dir="rtl"] .mr-4 {
     margin-right: unset;
     margin-left: 1rem;
   }
+  [dir="rtl"] .ml-4 {
+    margin-left: unset;
+    margin-right: 1rem;
+  }
 
+  [dir="rtl"] .pr-1 {
+    padding-right: unset;
+    padding-left: 0.25rem;
+  }
+  [dir="rtl"] .pl-1 {
+    padding-left: unset;
+    padding-right: 0.25rem;
+  }
+  [dir="rtl"] .pr-2 {
+    padding-right: unset;
+    padding-left: 0.5rem;
+  }
+  [dir="rtl"] .pl-2 {
+    padding-left: unset;
+    padding-right: 0.5rem;
+  }
+  [dir="rtl"] .pr-3 {
+    padding-right: unset;
+    padding-left: 0.75rem;
+  }
+  [dir="rtl"] .pl-3 {
+    padding-left: unset;
+    padding-right: 0.75rem;
+  }
+  [dir="rtl"] .pr-4 {
+    padding-right: unset;
+    padding-left: 1rem;
+  }
+  [dir="rtl"] .pl-4 {
+    padding-left: unset;
+    padding-right: 1rem;
+  }
+  [dir="rtl"] .pl-8 {
+    padding-left: unset;
+    padding-right: 2rem;
+  }
+  [dir="rtl"] .pr-8 {
+    padding-right: unset;
+    padding-left: 2rem;
+  }
+  [dir="rtl"] .pl-10 {
+    padding-left: unset;
+    padding-right: 2.5rem;
+  }
+  [dir="rtl"] .pr-10 {
+    padding-right: unset;
+    padding-left: 2.5rem;
+  }
 
+  /*
+   * Sidebar chrome uses physical left/right for the `side` prop (shadcn).
+   * Do not remap .left-* / .right-* under RTL — that double-flips the rail.
+   * Prefer logical ms/me, ps/pe, start/end for padding/margins in content UI.
+   */
+
+  [dir="rtl"] .text-left {
+    text-align: right;
+  }
+  [dir="rtl"] .text-right {
+    text-align: left;
+  }
+
+  /* Chevron / caret pointing "forward" in menus */
+  [dir="rtl"] .rtl-flip {
+    transform: scaleX(-1);
+  }
 }
-

@@ -2,8 +2,6 @@
 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 
 import type { ProductSummary } from "../page"
 
@@ -13,8 +11,6 @@ type DeleteDialogProps = {
   onClose: () => void
   deleteBookId: number | null
   productSummaries: ProductSummary[]
-  deleteConfirm: string
-  setDeleteConfirm: (value: string) => void
   onDelete: () => void
   isSubmitting: boolean
 }
@@ -25,8 +21,6 @@ export function DeleteDialog({
   onClose,
   deleteBookId,
   productSummaries,
-  deleteConfirm,
-  setDeleteConfirm,
   onDelete,
   isSubmitting,
 }: DeleteDialogProps) {
@@ -42,15 +36,6 @@ export function DeleteDialog({
               <>
                 You are about to delete <strong>{book?.isbn}</strong>. This action cannot be undone. This will permanently
                 remove the book from your inventory.
-                <div className="mt-4">
-                  <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                  <Input
-                    id="confirm-delete"
-                    value={deleteConfirm}
-                    onChange={(e) => setDeleteConfirm(e.target.value)}
-                    className="mt-2"
-                  />
-                </div>
               </>
             )}
           </DialogDescription>
@@ -62,14 +47,12 @@ export function DeleteDialog({
           <Button
             onClick={onDelete}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            disabled={deleteConfirm !== "DELETE" || isSubmitting}
+            disabled={isSubmitting}
           >
-            Delete
+            {isSubmitting ? "Deleting..." : "Delete"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
-
-

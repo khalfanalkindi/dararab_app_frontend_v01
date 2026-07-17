@@ -63,6 +63,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-middleware.ts
-next.config.js
-.md
+# Local maintenance / planning (do not push)
+/docs/
+/scripts/
+*.md
+!README.md

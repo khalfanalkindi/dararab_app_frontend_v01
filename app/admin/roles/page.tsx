@@ -1,19 +1,15 @@
 "use client"
 
-import Link from "next/link"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DocumentTitle } from "@/components/document-title"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { useLanguage } from "@/components/language-context"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../../components/app-sidebar"
 import { API_URL } from "@/lib/config"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
@@ -33,19 +29,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 type Role = {
@@ -55,13 +42,14 @@ type Role = {
 }
 
 export default function RolesPage() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb, admin: adminCrumb } = useAppCrumbs()
   const [roles, setRoles] = useState<Role[]>([])
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false)
   const [roleToDelete, setRoleToDelete] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<Role | null>(null)
   const [isAddRoleOpen, setIsAddRoleOpen] = useState(false)
   const [isEditRoleOpen, setIsEditRoleOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null;
     message: string;
@@ -86,53 +74,7 @@ export default function RolesPage() {
     }
   }, [])
 
-  // fetchWithRetry utility with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options)
-        
-        // For 5xx errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        }
-        
-        return response
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on 4xx client errors (except 429)
-        if (error instanceof Error && error.message.includes('HTTP 4')) {
-          throw error
-        }
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Wait before retrying (exponential backoff)
-        const delay = baseDelay * Math.pow(2, attempt)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-    
-    throw lastError || new Error('Unknown error in fetchWithRetry')
-  }, [])
-
-  // Standardized error handling utility
+// Standardized error handling utility
   const handleError = useCallback((error: unknown, defaultMessage: string) => {
     // Silently handle AbortError (request cancellation)
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -148,12 +90,8 @@ export default function RolesPage() {
       console.error('Error:', errorMessage, error)
     }
 
-    toast({
-      title: "Error",
-      description: errorMessage,
-      variant: "destructive",
-    })
-  }, [])
+    toast.error(t("toasts.error"), { description: errorMessage })
+  }, [t])
 
   // Form state for new role
   const [newRole, setNewRole] = useState({
@@ -237,11 +175,7 @@ export default function RolesPage() {
       setIsAddRoleOpen(false)
 
       // Show toast notification
-      toast({
-        title: "Role Added Successfully",
-        description: `${addedRole.name} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.added", { entity: t("admin.permissions.role") }))
 
       // Show alert message
       showAlert("success", `New role "${addedRole.name}" has been successfully added to the system.`)
@@ -277,11 +211,7 @@ export default function RolesPage() {
       setIsEditRoleOpen(false)
 
       // Show toast notification
-      toast({
-        title: "Role Updated Successfully",
-        description: `${updatedRole.name} has been updated.`,
-        variant: "default",
-      })
+      toast.success(t("adminToasts.updated", { entity: t("admin.permissions.role") }))
 
       // Show alert message
       showAlert("success", `Role "${updatedRole.name}" has been successfully updated.`)
@@ -318,14 +248,9 @@ export default function RolesPage() {
       setRoles(roles.filter((role) => role.id !== roleToDelete))
       setRoleToDelete(null)
       setIsDeleteAlertOpen(false)
-      setDeleteConfirm("")
 
       // Show toast notification
-      toast({
-        title: "Role Deleted",
-        description: `${roleToDeleteData.name} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.success(t("adminToasts.deleted", { entity: t("admin.permissions.role") }))
 
       // Show alert message
       showAlert("warning", `Role "${roleToDeleteData.name}" has been permanently deleted from the system.`)
@@ -347,26 +272,15 @@ export default function RolesPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <ErrorBoundary>
+    <>
+      <DocumentTitle title={t("nav.roles")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Roles</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, adminCrumb, { label: t("nav.roles") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -393,64 +307,64 @@ export default function RolesPage() {
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Role Management</h2>
-            <p className="mb-6">Configure user roles and permission sets for your application.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("admin.roles.management")}</h2>
+            <p className="mb-6">{t("admin.roles.description")}</p>
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Roles</h3>
+                <h3 className="font-medium">{t("nav.roles")}</h3>
                 <Dialog open={isAddRoleOpen} onOpenChange={setIsAddRoleOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Role
+                      {t("admin.roles.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Add New Role</DialogTitle>
+                      <DialogTitle>{t("admin.roles.addNew")}</DialogTitle>
                       <DialogDescription>Create a new role with specific permissions.</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Role Name (English)</Label>
+                        <Label htmlFor="name">{t("admin.roles.nameEn")}</Label>
                         <Input
                           id="name"
                           value={newRole.name}
                           onChange={(e) => setNewRole({ ...newRole, name: e.target.value })}
-                          placeholder="Enter role name in English"
+                          placeholder={t("admin.roles.nameEn")}
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="name_ar">Role Name (Arabic)</Label>
+                        <Label htmlFor="name_ar">{t("admin.roles.nameAr")}</Label>
                         <Input
                           id="name_ar"
                           value={newRole.name_ar}
                           onChange={(e) => setNewRole({ ...newRole, name_ar: e.target.value })}
-                          placeholder="Enter role name in Arabic"
+                          placeholder={t("admin.roles.nameAr")}
                           dir="rtl"
                         />
                       </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddRoleOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
-                      <Button onClick={handleAddRole}>Add Role</Button>
+                      <Button onClick={handleAddRole}>{t("admin.roles.add")}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-4 font-medium text-sm mb-2 border-b pb-2">
-                  <div>Role Name (English)</div>
-                  <div className="col-span-2">Role Name (Arabic)</div>
-                  <div className="text-right">Actions</div>
+                  <div>{t("admin.roles.nameEn")}</div>
+                  <div className="col-span-2">{t("admin.roles.nameAr")}</div>
+                  <div className="text-right">{t("common.actions")}</div>
                 </div>
                 {isLoading ? (
-                  <div className="py-8 text-center">Loading roles...</div>
+                  <div className="py-8 text-center">{t("admin.roles.loading")}</div>
                 ) : roles.length === 0 ? (
-                  <div className="py-8 text-center">No roles found</div>
+                  <div className="py-8 text-center">{t("admin.roles.empty")}</div>
                 ) : (
                   roles.map((role) => (
                     <div key={role.id} className="grid grid-cols-4 text-sm py-3 border-b last:border-0 items-center">
@@ -468,7 +382,7 @@ export default function RolesPage() {
                             onClick={() => openEditDialog(role)}
                           >
                             <Edit className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
+                            <span className="sr-only">{t("common.edit")}</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -477,7 +391,7 @@ export default function RolesPage() {
                             onClick={() => openDeleteDialog(role.id)}
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete</span>
+                            <span className="sr-only">{t("common.delete")}</span>
                           </Button>
                         </div>
 
@@ -487,19 +401,19 @@ export default function RolesPage() {
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon" className="h-8 w-8">
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions</span>
+                                <span className="sr-only">{t("common.actions")}</span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => openEditDialog(role)}>
                                 <Edit className="h-4 w-4 mr-2" />
-                                Edit
+                                {t("common.edit")}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(role.id)}>
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
+                                {t("common.delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -518,13 +432,13 @@ export default function RolesPage() {
       <Dialog open={isEditRoleOpen} onOpenChange={setIsEditRoleOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Role</DialogTitle>
+            <DialogTitle>{t("admin.roles.editTitle")}</DialogTitle>
             <DialogDescription>Update role information.</DialogDescription>
           </DialogHeader>
           {editingRole && (
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Role Name (English)</Label>
+                <Label htmlFor="edit-name">{t("admin.roles.nameEn")}</Label>
                 <Input
                   id="edit-name"
                   value={editingRole.name || ""}
@@ -532,7 +446,7 @@ export default function RolesPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-name_ar">Role Name (Arabic)</Label>
+                <Label htmlFor="edit-name_ar">{t("admin.roles.nameAr")}</Label>
                 <Input
                   id="edit-name_ar"
                   value={editingRole.name_ar || ""}
@@ -544,49 +458,29 @@ export default function RolesPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditRoleOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={handleUpdateRole}>Save Changes</Button>
+            <Button onClick={handleUpdateRole}>{t("common.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {roleToDelete !== null && (
-                <>
-                  You are about to delete <strong>{roles.find((r) => r.id === roleToDelete)?.name}</strong>. This action
-                  cannot be undone. Users assigned to this role may lose access to certain features.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteRole}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE"}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarProvider>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        description={
+          roleToDelete !== null ? (
+            <>
+              You are about to delete <strong>{roles.find((r) => r.id === roleToDelete)?.name}</strong>. This action
+              cannot be undone. Users assigned to this role may lose access to certain features.
+            </>
+          ) : (
+            ""
+          )
+        }
+        onConfirm={handleDeleteRole}
+      />
+    </>
+  </ErrorBoundary>
   )
 }
-

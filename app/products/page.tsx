@@ -1,37 +1,20 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { useVirtualizer } from "@tanstack/react-virtual"
-import dynamic from "next/dynamic"
-import Link from "next/link"
-import { AppSidebar } from "../../components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
+
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import {
-  Edit,
-  Book,
   AlertCircle,
   CheckCircle2,
   PlusCircle,
-  Trash2,
-  MoreHorizontal,
   Loader2,
-  Search,
-  ImageIcon,
-  MoveRight,
   X,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
 } from "lucide-react"
 import {
   Dialog,
@@ -41,23 +24,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,36 +48,9 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { API_URL } from "@/lib/config"
-
-const BookDetailsDialog = dynamic(() => import("./components/book-details-dialog").then((mod) => mod.BookDetailsDialog), {
-  loading: () => null,
-  ssr: false,
-})
-
-const AddBookDialog = dynamic(() => import("./components/add-book-dialog").then((mod) => mod.AddBookDialog), {
-  loading: () => null,
-  ssr: false,
-})
-
-const TransferDialog = dynamic(() => import("./components/transfer-dialog").then((m) => m.TransferDialog), {
-  loading: () => null,
-  ssr: false,
-})
-
-const DeleteDialog = dynamic(() => import("./components/delete-dialog").then((m) => m.DeleteDialog), {
-  loading: () => null,
-  ssr: false,
-})
-
-const AddInventoryDialog = dynamic(() => import("./components/add-inventory-dialog").then((m) => m.AddInventoryDialog), {
-  loading: () => null,
-  ssr: false,
-})
-
-const EditBookDialog = dynamic(() => import("./components/edit-book-dialog").then((m) => m.EditBookDialog), {
-  loading: () => null,
-  ssr: false,
-})
+import { ProductFilters } from "./components/product-filters"
+import { ProductGrid, ProductGridPagination } from "./components/product-grid"
+import { ProductDialogs } from "./components/product-dialogs"
 
 // Book interface
 export interface PrintRun {
@@ -254,6 +198,8 @@ export interface NewInventory {
 }
 
 export default function BookManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   // State for books and filters
   const [productSummaries, setProductSummaries] = useState<ProductSummary[]>([]);
   const [genres, setGenres] = useState<Genre[]>([])
@@ -269,7 +215,6 @@ export default function BookManagement() {
   const [isTransferOpen, setIsTransferOpen] = useState(false)
   const [isAddInventoryOpen, setIsAddInventoryOpen] = useState(false)
   const [deleteBookId, setDeleteBookId] = useState<number | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null)
@@ -407,77 +352,7 @@ export default function BookManagement() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry on network errors if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            }, { once: true })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  // Fetch product summaries with server-side filtering and pagination
+// Fetch product summaries with server-side filtering and pagination
   const fetchProductSummaries = useCallback(async (page: number = 1, pageSizeParam: number = pageSize) => {
     // Cancel previous request if still pending
     if (abortControllerRef.current) {
@@ -557,11 +432,7 @@ export default function BookManagement() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error fetching product summaries:", error);
       }
-      toast({
-        title: "Error",
-        description: "Failed to load product summaries",
-        variant: "destructive",
-      });
+      toast.error("Error", { description: "Failed to load product summaries" });
       throw error;
     } finally {
       setIsLoading(false);
@@ -764,11 +635,7 @@ export default function BookManagement() {
         if (process.env.NODE_ENV !== 'production') {
           console.error("Error loading bootstrap data:", error);
         }
-        toast({
-          title: "Error",
-          description: error instanceof Error ? error.message : "Failed to load data",
-          variant: "destructive",
-        });
+        toast.error("Error", { description: error instanceof Error ? error.message : "Failed to load data" });
         setIsLoading(false);
       }
     };
@@ -1010,7 +877,6 @@ export default function BookManagement() {
     }
     try {
       setDeleteBookId(bookId);
-      setDeleteConfirm("");
       setIsDeleteAlertOpen(true);
     } catch (error) {
       if (process.env.NODE_ENV !== 'production') {
@@ -1468,18 +1334,6 @@ async function handleUpdateInventory() {
     }
   }, [sortField, sortOrder])
 
-  // Get sort indicator for a column
-  const getSortIndicator = useCallback((field: string) => {
-    const isActive = sortField === field || sortField === `-${field}`
-    if (!isActive) {
-      return <ArrowUpDown className="h-4 w-4 ml-1 opacity-30" />
-    }
-    if (sortField === `-${field}`) {
-      return <ArrowDown className="h-4 w-4 ml-1" />
-    }
-    return <ArrowUp className="h-4 w-4 ml-1" />
-  }, [sortField])
-
   const resetFilters = () => {
     setSearchQuery("")
     setSelectedGenre(null)
@@ -1647,7 +1501,6 @@ async function handleUpdateInventory() {
     setIsDeleteAlertOpen(false);
     const deletedId = deleteBookId;
     setDeleteBookId(null);
-    setDeleteConfirm("");
     
     try {
       const token = localStorage.getItem("accessToken");
@@ -2123,44 +1976,17 @@ async function handleUpdateInventory() {
     }
   };
 
-  // Virtualization setup for table rows
-  const tableContainerRef = useRef<HTMLDivElement>(null)
-  const shouldVirtualize = productSummaries.length > 20 // Only virtualize if more than 20 items
-
-  const rowVirtualizer = useVirtualizer({
-    count: productSummaries.length,
-    getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => 80, // Estimated row height in pixels
-    overscan: 5, // Render 5 extra items above and below viewport
-  })
-
-  const virtualItems = shouldVirtualize ? rowVirtualizer.getVirtualItems() : []
-  const totalSize = shouldVirtualize ? rowVirtualizer.getTotalSize() : 0
-
   // Update totalPages when search or filters are applied
 
   return (
     <ErrorBoundary>
-      <SidebarProvider>
-      <AppSidebar />
+      <DocumentTitle title={t("products.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Books</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("products.books") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -2198,564 +2024,55 @@ async function handleUpdateInventory() {
               </Button>
             </div>
 
-            {/* Filters */}
-            <div className="flex flex-col md:flex-row gap-4 mb-6">
-              <div className="flex-1">
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search by ISBN, title, author or translator..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8"
-                  />
-                </div>
-              </div>
-              <div className="flex-1">
-                <Select 
-                  value={selectedGenre || "all"} 
-                  onValueChange={(value) => {
-                    setSelectedGenre(value === "all" ? null : value)
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Filter by genre" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Genres</SelectItem>
-                    {genres.map((genre) => (
-                      <SelectItem key={genre.id} value={genre.id.toString()}>
-                        {genre.display_name_en}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex-1">
-                <Select 
-                  value={selectedStatus || "all"} 
-                  onValueChange={(value) => {
-                    setSelectedStatus(value === "all" ? null : value)
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Filter by status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    {statusOptions.map((status) => (
-                      <SelectItem key={status.id} value={status.id.toString()}>
-                        {status.display_name_en}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button variant="outline" onClick={resetFilters}>
-                Reset Filters
-              </Button>
-            </div>
+            <ProductFilters
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              selectedGenre={selectedGenre}
+              onSelectedGenreChange={setSelectedGenre}
+              selectedStatus={selectedStatus}
+              onSelectedStatusChange={setSelectedStatus}
+              genres={genres}
+              statusOptions={statusOptions}
+              onResetFilters={resetFilters}
+            />
 
-            {/* Books Table */}
-            <div className="border rounded-md">
-              <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Books</h3>
-                {(searchQuery || selectedGenre || selectedStatus) && (
-                  <Button variant="ghost" size="sm" onClick={resetFilters} className="h-8 px-2 text-xs">
-                    Clear Filters
-                  </Button>
-                )}
-              </div>
-              <div className="p-0">
-                <div 
-                  className="overflow-x-auto" 
-                  ref={tableContainerRef} 
-                  style={{ 
-                    height: shouldVirtualize ? '600px' : 'auto', 
-                    overflowY: shouldVirtualize ? 'auto' : 'visible',
-                    position: 'relative'
-                  }}
-                >
-                  <table className="w-full border-collapse">
-                    <thead className={shouldVirtualize ? "sticky top-0 bg-background z-10" : ""}>
-                      <tr className="text-sm border-b">
-                        <th 
-                          className="p-3 text-left font-medium cursor-pointer hover:bg-muted/50 select-none"
-                          onClick={() => handleSort("title_en")}
-                        >
-                          <div className="flex items-center">
-                            Book
-                            {getSortIndicator("title_en")}
-                          </div>
-                        </th>
-                        <th 
-                          className="p-3 text-left font-medium cursor-pointer hover:bg-muted/50 select-none"
-                          onClick={() => handleSort("isbn")}
-                        >
-                          <div className="flex items-center">
-                            ISBN
-                            {getSortIndicator("isbn")}
-                          </div>
-                        </th>
-                        <th className="p-3 text-left font-medium">Authors</th>
-                        <th className="p-3 text-left font-medium">Translators</th>
-                        <th className="p-3 text-left font-medium">Genre</th>
-                        <th 
-                          className="p-3 text-left font-medium cursor-pointer hover:bg-muted/50 select-none"
-                          onClick={() => handleSort("latest_price")}
-                        >
-                          <div className="flex items-center">
-                            Price
-                            {getSortIndicator("latest_price")}
-                          </div>
-                        </th>
-                        <th 
-                          className="p-3 text-left font-medium cursor-pointer hover:bg-muted/50 select-none"
-                          onClick={() => handleSort("status_id")}
-                        >
-                          <div className="flex items-center">
-                            Status
-                            {getSortIndicator("status")}
-                          </div>
-                        </th>
-                        <th className="p-3 text-right font-medium">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody style={{ position: 'relative', height: shouldVirtualize && totalSize > 0 ? `${totalSize}px` : 'auto' }}>
-                      {isLoading ? (
-                        // Skeleton loaders matching table structure (8 rows)
-                        Array.from({ length: 8 }).map((_, index) => (
-                          <tr key={`skeleton-${index}`} className="border-b last:border-0">
-                            <td className="p-3">
-                              <div className="flex items-center gap-3">
-                                <Skeleton className="h-10 w-10 rounded-md flex-shrink-0" />
-                                <div className="flex-1 space-y-2">
-                                  <Skeleton className="h-4 w-32" />
-                                  <Skeleton className="h-3 w-24" />
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <Skeleton className="h-4 w-24" />
-                            </td>
-                            <td className="p-3">
-                              <Skeleton className="h-4 w-28" />
-                            </td>
-                            <td className="p-3">
-                              <Skeleton className="h-4 w-28" />
-                            </td>
-                            <td className="p-3">
-                              <Skeleton className="h-5 w-20" />
-                            </td>
-                            <td className="p-3">
-                              <div className="flex flex-col gap-1">
-                                <Skeleton className="h-4 w-16" />
-                                <Skeleton className="h-3 w-20" />
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <Skeleton className="h-5 w-24" />
-                            </td>
-                            <td className="p-3 text-right">
-                              <div className="flex justify-end gap-2">
-                                <Skeleton className="h-8 w-8 rounded" />
-                                <Skeleton className="h-8 w-8 rounded" />
-                                <Skeleton className="h-8 w-8 rounded" />
-                                <Skeleton className="h-8 w-8 rounded" />
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      ) : productSummaries.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="py-8 text-center">
-                            <div className="flex flex-col items-center">
-                              <Book className="h-12 w-12 text-muted-foreground mb-2" />
-                              <p className="font-medium mb-1">No books found</p>
-                              <p className="text-muted-foreground text-sm mb-4">
-                                {searchQuery || selectedGenre || selectedStatus
-                                  ? "Try adjusting your filters"
-                                  : "Add your first book to get started"}
-                              </p>
-                              {searchQuery || selectedGenre || selectedStatus ? (
-                                <Button variant="outline" size="sm" onClick={resetFilters}>
-                                  Clear Filters
-                                </Button>
-                              ) : (
-                                <Button size="sm" onClick={() => setIsAddBookOpen(true)}>
-                                  <PlusCircle className="h-4 w-4 mr-2" />
-                                  Add Book
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ) : shouldVirtualize && virtualItems.length > 0 ? (
-                        <>
-                          {/* Spacer for items before the first visible item */}
-                          <tr>
-                            <td colSpan={8} style={{ height: virtualItems[0]?.start ?? 0 }} />
-                          </tr>
-                          {/* Render only visible items */}
-                          {virtualItems.map((virtualItem) => {
-                            const book = productSummaries[virtualItem.index]
-                            if (!book) return null
-                            return (
-                              <tr
-                                key={book.id}
-                                data-index={virtualItem.index}
-                                ref={rowVirtualizer.measureElement}
-                                className="border-b last:border-0 hover:bg-muted/50"
-                                style={{
-                                  position: 'absolute',
-                                  top: 0,
-                                  left: 0,
-                                  width: '100%',
-                                  height: `${virtualItem.size}px`,
-                                  transform: `translateY(${virtualItem.start}px)`,
-                                  display: 'table-row',
-                                }}
-                              >
-                                <td className="p-3">
-                                  <div className="flex items-center gap-3">
-                                    <div className="h-10 w-10 rounded-md overflow-hidden bg-muted flex-shrink-0">
-                                      {book.cover_design_url ? (
-                                        <img
-                                          src={book.cover_design_url}
-                                          alt={`Book ${book.isbn}`}
-                                          className="h-full w-full object-cover"
-                                        />
-                                      ) : (
-                                        <div className="h-full w-full flex items-center justify-center">
-                                          <ImageIcon className="h-4 w-4 text-muted-foreground" />
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div>
-                                      <p className="font-medium">{book.title_en}</p>
-                                      <p className="text-xs text-muted-foreground line-clamp-1">
-                                        {book.title_ar}
-                                      </p>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="p-3">
-                                  <p className="font-mono text-sm">{book.isbn}</p>
-                                </td>
-                                <td className="p-3">
-                                  <span className="text-sm">{book.author_name || "-"}</span>
-                                </td>
-                                <td className="p-3">
-                                  <span className="text-sm">{book.translator_name || "-"}</span>
-                                </td>
-                                <td className="p-3">
-                                  <Badge variant="outline" className="font-normal">
-                                    {book.genre_name || 'Unknown'}
-                                  </Badge>
-                                </td>
-                                <td className="p-3">
-                                  <div className="flex flex-col">
-                                    <span className="font-medium">${book.latest_price || 0}</span>
-                                    <span className="text-xs text-muted-foreground">PriceOMR: OMR{book.latest_price_omr || 0}</span>
-                                  </div>
-                                </td>
-                                <td className="p-3">
-                                  <Badge
-                                    className={`${
-                                      book.status_name === "Available"
-                                        ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
-                                        : book.status_name === "unavailable"
-                                          ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
-                                          : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
-                                    }`}
-                                  >
-                                    {book.status_name || 'Unknown'}
-                                  </Badge>
-                                </td>
-                                <td className="p-3 text-right">
-                                  <div className="flex justify-end gap-2">
-                                    {/* Desktop view - separate buttons */}
-                                    <div className="hidden sm:flex gap-2">
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => openBookDetails(book)}
-                                      >
-                                        <Book className="h-4 w-4" />
-                                        <span className="sr-only">View Details</span>
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => openEditBook(book)}
-                                      >
-                                        <Edit className="h-4 w-4" />
-                                        <span className="sr-only">Edit</span>
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => openTransferModal(book)}
-                                      >
-                                        <MoveRight className="h-4 w-4" />
-                                        <span className="sr-only">Transfer</span>
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8 text-destructive hover:text-destructive"
-                                        onClick={() => openDeleteDialog(book.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                        <span className="sr-only">Delete</span>
-                                      </Button>
-                                    </div>
-
-                                    {/* Mobile view - dropdown menu */}
-                                    <div className="sm:hidden">
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                          <Button variant="outline" size="icon" className="h-8 w-8">
-                                            <MoreHorizontal className="h-4 w-4" />
-                                            <span className="sr-only">Actions</span>
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                          <DropdownMenuItem onClick={() => openBookDetails(book)}>
-                                            <Book className="h-4 w-4 mr-2" />
-                                            View Details
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem onClick={() => openEditBook(book)}>
-                                            <Edit className="h-4 w-4 mr-2" />
-                                            Edit
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem onClick={() => openTransferModal(book)}>
-                                            <MoveRight className="h-4 w-4 mr-2" />
-                                            Transfer
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            className="text-destructive"
-                                            onClick={() => openDeleteDialog(book.id)}
-                                          >
-                                            <Trash2 className="h-4 w-4 mr-2" />
-                                            Delete
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    </div>
-                                  </div>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                          {/* Spacer for items after the last visible item */}
-                          <tr>
-                            <td colSpan={8} style={{ height: totalSize - (virtualItems[virtualItems.length - 1]?.end ?? 0) }} />
-                          </tr>
-                        </>
-                      ) : (
-                        productSummaries.map((book) => (
-                          <tr key={book.id} className="border-b last:border-0 hover:bg-muted/50">
-                            <td className="p-3">
-                              <div className="flex items-center gap-3">
-                                <div className="h-10 w-10 rounded-md overflow-hidden bg-muted flex-shrink-0">
-                                  {book.cover_design_url ? (
-                                    <img
-                                      src={book.cover_design_url}
-                                      alt={`Book ${book.isbn}`}
-                                      className="h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="h-full w-full flex items-center justify-center">
-                                      <ImageIcon className="h-4 w-4 text-muted-foreground" />
-                                    </div>
-                                  )}
-                                </div>
-                                <div>
-                                  <p className="font-medium">{book.title_en}</p>
-                                  <p className="text-xs text-muted-foreground line-clamp-1">
-                                    {book.title_ar}
-                                  </p>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <p className="font-mono text-sm">{book.isbn}</p>
-                            </td>
-                            <td className="p-3">
-                              <span className="text-sm">{book.author_name || "-"}</span>
-                            </td>
-                            <td className="p-3">
-                              <span className="text-sm">{book.translator_name || "-"}</span>
-                            </td>
-                            <td className="p-3">
-                              <Badge variant="outline" className="font-normal">
-                                {book.genre_name || 'Unknown'}
-                              </Badge>
-                            </td>
-                            <td className="p-3">
-                              <div className="flex flex-col">
-                                <span className="font-medium">${book.latest_price || 0}</span>
-                                <span className="text-xs text-muted-foreground">PriceOMR: OMR{book.latest_price_omr || 0}</span>
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <Badge
-                                className={`${
-                                  book.status_name === "Available"
-                                    ? "bg-green-100 text-green-800 hover:bg-green-100 border-green-200"
-                                    : book.status_name === "unavailable"
-                                      ? "bg-red-100 text-red-800 hover:bg-red-100 border-red-200"
-                                      : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200"
-                                }`}
-                              >
-                                {book.status_name || 'Unknown'}
-                              </Badge>
-                            </td>
-                            <td className="p-3 text-right">
-                              <div className="flex justify-end gap-2">
-                                {/* Desktop view - separate buttons */}
-                                <div className="hidden sm:flex gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => openBookDetails(book)}
-                                  >
-                                    <Book className="h-4 w-4" />
-                                    <span className="sr-only">View Details</span>
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => openEditBook(book)}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                    <span className="sr-only">Edit</span>
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => openTransferModal(book)}
-                                  >
-                                    <MoveRight className="h-4 w-4" />
-                                    <span className="sr-only">Transfer</span>
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => openDeleteDialog(book.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Delete</span>
-                                  </Button>
-                                </div>
-
-                                {/* Mobile view - dropdown menu */}
-                                <div className="sm:hidden">
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="outline" size="icon" className="h-8 w-8">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        <span className="sr-only">Actions</span>
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => openBookDetails(book)}>
-                                        <Book className="h-4 w-4 mr-2" />
-                                        View Details
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem onClick={() => openEditBook(book)}>
-                                        <Edit className="h-4 w-4 mr-2" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem onClick={() => openTransferModal(book)}>
-                                        <MoveRight className="h-4 w-4 mr-2" />
-                                        Transfer
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={() => openDeleteDialog(book.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <ProductGrid
+              productSummaries={productSummaries}
+              isLoading={isLoading}
+              searchQuery={searchQuery}
+              selectedGenre={selectedGenre}
+              selectedStatus={selectedStatus}
+              sortField={sortField}
+              onSort={handleSort}
+              onResetFilters={resetFilters}
+              onOpenBookDetails={(book) => {
+                void openBookDetails(book)
+              }}
+              onOpenEditBook={(book) => {
+                void openEditBook(book)
+              }}
+              onOpenTransferModal={openTransferModal}
+              onOpenDeleteDialog={openDeleteDialog}
+              onAddBook={() => setIsAddBookOpen(true)}
+            />
           </div>
 
-          {/* Pagination Controls */}
-          <div className="flex items-center justify-between mt-4">
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-              >
-                Previous
-              </Button>
-              <span className="text-sm">
-                Page {currentPage} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                disabled={currentPage === totalPages}
-              >
-                Next
-              </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm">Items per page:</span>
-              <Select
-                value={pageSize.toString()}
-                onValueChange={(value) => {
-                  setPageSize(Number(value));
-                  setCurrentPage(1);
-                }}
-              >
-                <SelectTrigger className="w-[100px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="20">20</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <ProductGridPagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size)
+              setCurrentPage(1)
+            }}
+          />
         </div>
       </SidebarInset>
 
-      {/* Book Details Modal */}
-      <BookDetailsDialog
-        open={isBookDetailsOpen}
-        onOpenChange={(open) => {
+      <ProductDialogs
+        isBookDetailsOpen={isBookDetailsOpen}
+        onBookDetailsOpenChange={(open) => {
           if (!open) {
             handleModalClose()
           }
@@ -2766,22 +2083,18 @@ async function handleUpdateInventory() {
         getGenreName={getGenreName}
         getLanguageName={getLanguageName}
         getStatusName={getStatusName}
-        onClose={() => setIsBookDetailsOpen(false)}
-        onEdit={(book) => {
+        onBookDetailsClose={() => setIsBookDetailsOpen(false)}
+        onEditFromDetails={(book) => {
           void openEditBook(book)
-                      }}
-        onTransfer={(book) => openTransferModal(book)}
-      />
-
-      {/* Add Book Dialog */}
-      <AddBookDialog
-        open={isAddBookOpen}
-        onOpenChange={(open) => setIsAddBookOpen(open)}
-        onClose={() => setIsAddBookOpen(false)}
+        }}
+        onTransferFromDetails={openTransferModal}
+        isAddBookOpen={isAddBookOpen}
+        onAddBookOpenChange={setIsAddBookOpen}
+        onAddBookClose={() => setIsAddBookOpen(false)}
         formRef={formRef}
-        onSubmit={() => {
+        onAddBookSubmit={() => {
           void handleAddBook()
-            }}
+        }}
         newBook={newBook}
         setNewBook={setNewBook}
         coverInputType={coverInputType}
@@ -2796,82 +2109,46 @@ async function handleUpdateInventory() {
         warehouses={warehouses}
         newBookInventory={newBookInventory}
         setNewBookInventory={setNewBookInventory}
-        getImageUrl={getImageUrl}
-        isSubmitting={isCreating}
-      />
-
-      {/* Edit Book Dialog */}
-      <EditBookDialog
-        open={isEditBookOpen}
-        onOpenChange={(open) => setIsEditBookOpen(open)}
-        onClose={() => setIsEditBookOpen(false)}
-        formRef={formRef}
-        selectedBook={selectedBook}
+        isCreating={isCreating}
+        isEditBookOpen={isEditBookOpen}
+        onEditBookOpenChange={setIsEditBookOpen}
+        onEditBookClose={() => setIsEditBookOpen(false)}
         setSelectedBook={(b) => setSelectedBook(b)}
         activeTab={activeTab}
         setActiveTab={(v) => setActiveTab(v)}
-        genres={genres}
-        statusOptions={statusOptions}
-        languages={languages}
-        authors={authors}
-        translators={translators}
         editCoverInputType={editCoverInputType}
         setEditCoverInputType={(v) => setEditCoverInputType(v)}
         printRunStatusOptions={printRunStatusOptions}
         editBookInventory={editBookInventory}
         setEditBookInventory={(v) => setEditBookInventory(v)}
-        warehouses={warehouses}
         handleAddInventoryItem={handleAddInventoryItem}
         handleSaveChanges={handleSaveChanges}
-        isSubmitting={isUpdating}
-      />
-
-      {/* Transfer Dialog */}
-      <TransferDialog
-        open={isTransferOpen}
-        onOpenChange={(open) => {
+        isUpdating={isUpdating}
+        isTransferOpen={isTransferOpen}
+        onTransferOpenChange={(open) => {
           if (!open) handleModalClose()
         }}
-        onClose={handleModalClose}
-        selectedBook={selectedBook}
-        warehouses={warehouses}
+        onModalClose={handleModalClose}
         transfer={transfer}
         setTransfer={(t) => setTransfer(t)}
-        onSubmit={handleTransfer}
-        isLoading={isTransferring}
-      />
-
-      {/* Delete Confirmation Dialog */}
-      <DeleteDialog
-        open={isDeleteAlertOpen}
-        onOpenChange={(open) => {
+        onTransferSubmit={handleTransfer}
+        isTransferring={isTransferring}
+        isDeleteAlertOpen={isDeleteAlertOpen}
+        onDeleteAlertOpenChange={(open) => {
           if (!open) handleModalClose()
         }}
-        onClose={handleModalClose}
         deleteBookId={deleteBookId}
         productSummaries={productSummaries}
-        deleteConfirm={deleteConfirm}
-        setDeleteConfirm={setDeleteConfirm}
-        onDelete={handleDeleteBook}
-        isSubmitting={isDeleting}
-      />
-
-      {/* Add Inventory Dialog */}
-      <AddInventoryDialog
-        open={isAddInventoryOpen}
-        onOpenChange={(open) => {
+        onDeleteBook={handleDeleteBook}
+        isDeleting={isDeleting}
+        isAddInventoryOpen={isAddInventoryOpen}
+        onAddInventoryOpenChange={(open) => {
           if (!open) handleModalClose()
         }}
-        onClose={() => setIsAddInventoryOpen(false)}
-        isAddBookOpen={isAddBookOpen}
-        selectedBook={selectedBook}
-        warehouses={warehouses}
-        items={newBookInventory}
-        setItems={setNewBookInventory}
-        onSubmit={handleAddInventory}
+        onAddInventoryClose={() => setIsAddInventoryOpen(false)}
+        onAddInventorySubmit={handleAddInventory}
         isSubmitting={isSubmitting}
       />
-    </SidebarProvider>
-    </ErrorBoundary>
+</ErrorBoundary>
   )
 }

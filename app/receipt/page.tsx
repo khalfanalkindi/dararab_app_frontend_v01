@@ -3,7 +3,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { DocumentTitle } from "@/components/document-title"
 import { Loader2 } from "lucide-react"
+import { fetchWithRetry } from "@/lib/apiClient"
 import {
   Dialog,
   DialogContent,
@@ -11,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { API_URL } from "@/lib/config"
 import { ReceiptContent } from "@/components/receipt/ReceiptContent"
 import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
@@ -93,77 +95,7 @@ export default function ReceiptPage() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            }, { once: true })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  // Fetch invoice data by ID
+// Fetch invoice data by ID
   const fetchInvoiceData = useCallback(async (id: string) => {
     // Cancel previous request if still pending
     if (fetchInvoiceAbortControllerRef.current) {
@@ -225,11 +157,7 @@ export default function ReceiptPage() {
       }
       
       handleError(error, "Failed to fetch invoice data");
-      toast({
-        title: "Error",
-        description: "Failed to load invoice data. Please try again.",
-        variant: "destructive",
-      });
+      toast.error("Error", { description: "Failed to load invoice data. Please try again." });
     } finally {
       setIsLoading(false);
     }
@@ -309,6 +237,7 @@ export default function ReceiptPage() {
 
   return (
     <Dialog open={isPrintDialogOpen} onOpenChange={handleClose}>
+      <DocumentTitle title="Receipt" />
       <DialogContent className="flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden sm:max-w-md">
         <DialogHeader className="shrink-0 space-y-1 pb-2">
           <DialogTitle>Receipt</DialogTitle>

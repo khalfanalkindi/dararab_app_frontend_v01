@@ -1,20 +1,15 @@
 "use client"
 
-import Link from "next/link"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
+
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
 import ProjectContractsModal from "@/components/ProjectContractsModal"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, MoreHorizontal, PlusCircle, AlertCircle, CheckCircle2, FileText, PenTool, Languages, Crown, Eye, User, Users, ArrowUpDown, ArrowUp, ArrowDown, Loader2, Package } from "lucide-react"
 import {
@@ -34,25 +29,24 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { API_URL } from "@/lib/config"
 
 interface Project {
@@ -107,6 +101,8 @@ interface Contract {
 }
 
 export default function ProjectManagement() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [projects, setProjects] = useState<Project[]>([])
   const [progressOptions, setProgressOptions] = useState<{ id: number; display_name_en: string }[]>([])
   const [statusOptions, setStatusOptions] = useState<{ id: number; display_name_en: string }[]>([])
@@ -121,7 +117,6 @@ export default function ProjectManagement() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false)
   const [isEditProjectOpen, setIsEditProjectOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState("")
   const [actionAlert, setActionAlert] = useState<{
     type: "success" | "error" | "warning" | null
     message: string
@@ -246,77 +241,7 @@ export default function ProjectManagement() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, signal?: AbortSignal) => {
+const fetchProjects = useCallback(async (page?: number, pageSizeParam?: number, signal?: AbortSignal) => {
     try {
       const pageToUse = page ?? currentPage
       const pageSizeToUse = pageSizeParam ?? pageSize
@@ -577,29 +502,17 @@ export default function ProjectManagement() {
           const failedCount = errors.length
           if (failedCount === results.length) {
             // All requests failed
-            toast({
-              title: "Error",
-              description: "Failed to fetch data. Please try again later.",
-              variant: "destructive",
-            })
+            toast.error(t("toasts.error"), { description: t("toasts.fetchFailed") })
           } else {
             // Some requests failed
-            toast({
-              title: "Warning",
-              description: `Some data failed to load (${failedCount} of ${results.length} requests)`,
-              variant: "destructive",
-            })
+            toast.error(t("toasts.warning"), { description: t("toasts.someDataFailed", { failed: failedCount, total: results.length }) })
           }
         }
       } catch (error) {
         if (process.env.NODE_ENV !== 'production') {
           console.error("Unexpected error in fetchData:", error)
         }
-        toast({
-          title: "Error",
-          description: "Failed to fetch data",
-          variant: "destructive",
-        })
+        toast.error(t("toasts.error"), { description: t("projects.toasts.fetchFailed") })
       } finally {
         setIsLoading(false)
       }
@@ -962,11 +875,7 @@ export default function ProjectManagement() {
       await fetchProjects(currentPage, pageSize)
 
       // Show toast notification
-      toast({
-        title: "Project Added Successfully",
-        description: `${data.title_ar} has been added to the system.`,
-        variant: "default",
-      })
+      toast.success(t("projects.toasts.added"), { description: t("projects.toasts.addedDesc", { name: data.title_ar }) })
     } catch (error) {
       // Handle AbortError silently
       if (error instanceof Error && error.name === 'AbortError') {
@@ -994,11 +903,7 @@ export default function ProjectManagement() {
         reviewer: optimisticProject.reviewer,
       })
       
-      toast({
-        title: "Error",
-        description: "Failed to add project. Please try again.",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.addFailed") })
     } finally {
       setIsAdding(false)
     }
@@ -1076,11 +981,7 @@ export default function ProjectManagement() {
       setProjects(prev => prev.map(p => p.id === editProject.id ? responseData : p))
 
       // Show toast notification
-      toast({
-        title: "Project Updated Successfully",
-        description: `${responseData.title_ar} has been updated.`,
-        variant: "default",
-      })
+      toast.success(t("projects.toasts.updated"), { description: t("projects.toasts.updatedDesc", { name: responseData.title_ar }) })
 
       // Refresh projects list to ensure consistency
       fetchProjects(currentPage, pageSize)
@@ -1101,11 +1002,7 @@ export default function ProjectManagement() {
         console.error("Update error:", error)
       }
       const errorMessage = error instanceof Error ? error.message : "Failed to update project"
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: errorMessage })
     } finally {
       setIsUpdating(false)
     }
@@ -1131,11 +1028,7 @@ export default function ProjectManagement() {
       }
 
       // Show success toast
-      toast({
-        title: "Project Converted Successfully",
-        description: `${project.title_ar} has been converted to a product.`,
-        variant: "default",
-      })
+      toast.success(t("projects.toasts.converted"), { description: t("projects.toasts.convertedDesc", { name: project.title_ar }) })
 
       // Refresh projects list
       await fetchProjects(currentPage, pageSize)
@@ -1150,11 +1043,7 @@ export default function ProjectManagement() {
       }
       
       const errorMessage = error instanceof Error ? error.message : "Failed to convert project to product"
-      toast({
-        title: "Conversion Failed",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      toast.error(t("projects.toasts.conversionFailed"), { description: errorMessage })
     } finally {
       setIsConverting(false)
       setConvertingProjectId(null)
@@ -1181,7 +1070,6 @@ export default function ProjectManagement() {
     // Close dialog immediately for better UX
     setDeleteProjectId(null)
     setIsDeleteAlertOpen(false)
-    setDeleteConfirm("")
     
     try {
       const abortController = new AbortController()
@@ -1202,11 +1090,7 @@ export default function ProjectManagement() {
       }
 
       // Show toast notification
-      toast({
-        title: "Project Deleted",
-        description: `${projectToDelete.title_ar} has been permanently removed from the system.`,
-        variant: "destructive",
-      })
+      toast.error(t("projects.toasts.deleted"), { description: t("projects.toasts.deletedDesc", { name: projectToDelete.title_ar }) })
     } catch (error) {
       // Handle AbortError silently
       if (error instanceof Error && error.name === 'AbortError') {
@@ -1227,11 +1111,7 @@ export default function ProjectManagement() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Delete error:", error)
       }
-      toast({
-        title: "Error",
-        description: "Failed to delete project. The project has been restored.",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.deleteFailed") })
     } finally {
       setIsDeleting(false)
     }
@@ -1283,7 +1163,7 @@ export default function ProjectManagement() {
       return statusId.display_name_en
     }
     const status = progressOptions.find((s) => s.id.toString() === statusId?.toString())
-    return status ? status.display_name_en : "Unknown Status"
+    return status ? status.display_name_en : t("projects.contractsModal.unknownStatus")
   }
 
   // Get status name by ID
@@ -1292,7 +1172,7 @@ export default function ProjectManagement() {
       return statusId.display_name_en
     }
     const status = statusOptions.find((s) => s.id.toString() === statusId?.toString())
-    return status ? status.display_name_en : "Unknown Status"
+    return status ? status.display_name_en : t("projects.contractsModal.unknownStatus")
   }
 
   // Get type name by ID
@@ -1300,8 +1180,8 @@ export default function ProjectManagement() {
     if (typeof typeId === "object" && typeId?.display_name_en) {
       return typeId.display_name_en
     }
-    const type = typeOptions.find((t) => t.id.toString() === typeId?.toString())
-    return type ? type.display_name_en : "Unknown Type"
+    const type = typeOptions.find((option) => option.id.toString() === typeId?.toString())
+    return type ? type.display_name_en : t("projects.contractsModal.unknownStatus")
   }
 
   // Get person name by ID
@@ -1434,26 +1314,13 @@ export default function ProjectManagement() {
 
   return (
     <ErrorBoundary>
-      <SidebarProvider>
-      <AppSidebar />
+      <DocumentTitle title={t("projects.title")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Projects</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("nav.projects") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1470,28 +1337,28 @@ export default function ProjectManagement() {
               )}
               <AlertTitle>
                 {actionAlert.type === "success"
-                  ? "Success"
+                  ? t("common.success")
                   : actionAlert.type === "warning"
-                    ? "Warning"
-                    : "Information"}
+                    ? t("common.warning")
+                    : t("common.information")}
               </AlertTitle>
               <AlertDescription>{actionAlert.message}</AlertDescription>
             </Alert>
           )}
 
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
-            <h2 className="text-xl font-semibold mb-4">Project Management</h2>
-            <p className="mb-6">Manage projects and their progress status.</p>
+            <h2 className="text-xl font-semibold mb-4">{t("projects.management")}</h2>
+            <p className="mb-6">{t("projects.description")}</p>
 
             {/* Search and Filter Section */}
             <div className="mb-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* Search Input */}
                 <div className="md:col-span-2">
-                  <Label htmlFor="search">Search Projects</Label>
+                  <Label htmlFor="search">{t("projects.search")}</Label>
                   <Input
                     id="search"
-                    placeholder="Search by title (Arabic or English)..."
+                    placeholder={t("projects.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
@@ -1505,15 +1372,15 @@ export default function ProjectManagement() {
                 
                 {/* Approval Status Filter */}
                 <div>
-                  <Label htmlFor="filter-approval">Approval Status</Label>
+                  <Label htmlFor="filter-approval">{t("projects.approvalStatus")}</Label>
                   <Select value={filterApprovalStatus} onValueChange={setFilterApprovalStatus}>
                     <SelectTrigger id="filter-approval">
-                      <SelectValue placeholder="All" />
+                      <SelectValue placeholder={t("projects.all")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="not_approved">Not Approved</SelectItem>
+                      <SelectItem value="all">{t("projects.all")}</SelectItem>
+                      <SelectItem value="approved">{t("projects.approved")}</SelectItem>
+                      <SelectItem value="not_approved">{t("projects.notApproved")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1524,14 +1391,14 @@ export default function ProjectManagement() {
                     onClick={handleSearch}
                     className="flex-1"
                   >
-                    Search
+                    {t("common.search")}
                   </Button>
                   <Button
                     variant="outline"
                     onClick={handleReset}
                     className="flex-1"
                   >
-                    Reset
+                    {t("common.reset")}
                   </Button>
                 </div>
               </div>
@@ -1539,54 +1406,54 @@ export default function ProjectManagement() {
 
             <div className="border rounded-md">
               <div className="bg-muted p-4 flex justify-between items-center">
-                <h3 className="font-medium">Projects</h3>
+                <h3 className="font-medium">{t("projects.title")}</h3>
                 <Dialog open={isAddProjectOpen} onOpenChange={setIsAddProjectOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" className="bg-primary text-primary-foreground">
                       <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Project
+                      {t("projects.add")}
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>Add New Project</DialogTitle>
-                      <DialogDescription>Create a new project for your inventory.</DialogDescription>
+                      <DialogTitle>{t("projects.addNew")}</DialogTitle>
+                      <DialogDescription>{t("projects.addDescription")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-6 py-4">
                       {/* Basic Information Section */}
                       <div className="space-y-4">
-                        <h3 className="text-lg font-medium">Basic Information</h3>
+                        <h3 className="text-lg font-medium">{t("projects.basicInfo")}</h3>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="grid gap-2">
-                            <Label htmlFor="title_ar">Title (Arabic)</Label>
+                            <Label htmlFor="title_ar">{t("projects.titleAr")}</Label>
                             <Input
                               id="title_ar"
                               value={newProject.title_ar}
                               onChange={(e) => createDebouncedHandler("title_ar", e.target.value)}
-                              placeholder="Enter project title in Arabic"
+                              placeholder={t("projects.titleArPlaceholder")}
                               dir="rtl"
                             />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="title_original">English Title</Label>
+                            <Label htmlFor="title_original">{t("projects.titleEn")}</Label>
                             <Input
                               id="title_original"
                               value={newProject.title_original || ""}
                               onChange={(e) => createDebouncedHandler("title_original", e.target.value)}
-                              placeholder="Enter title in English"
+                              placeholder={t("projects.titleEnPlaceholder")}
                             />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="description">Description</Label>
+                            <Label htmlFor="description">{t("projects.projectDescription")}</Label>
                             <Textarea
                               id="description"
                               value={newProject.description || ""}
                               onChange={(e) => createDebouncedHandler("description", e.target.value)}
-                              placeholder="Enter project description"
+                              placeholder={t("projects.descriptionPlaceholder")}
                             />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="type">Type</Label>
+                            <Label htmlFor="type">{t("projects.type")}</Label>
                             <Select
                               value={newProject.type?.id?.toString() || ""}
                               onValueChange={(value) =>
@@ -1597,7 +1464,7 @@ export default function ProjectManagement() {
                               }
                             >
                               <SelectTrigger id="type">
-                                <SelectValue placeholder="Select type" />
+                                <SelectValue placeholder={t("projects.selectType")} />
                               </SelectTrigger>
                               <SelectContent>
                                 {typeOptions.map((option) => (
@@ -1609,18 +1476,18 @@ export default function ProjectManagement() {
                             </Select>
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="approval_status">Approval Status</Label>
+                            <Label htmlFor="approval_status">{t("projects.approvalStatus")}</Label>
                             <Switch
                               id="approval_status"
                               checked={newProject.approval_status}
                               onCheckedChange={(checked) => setNewProject({ ...newProject, approval_status: checked })}
                             />
                             <p className="text-xs text-muted-foreground">
-                              {newProject.approval_status ? "Approved" : "Not Approved"}
+                              {newProject.approval_status ? t("projects.approved") : t("projects.notApproved")}
                             </p>
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="status">Status</Label>
+                            <Label htmlFor="status">{t("projects.status")}</Label>
                             <Select
                               value={newProject.status?.id?.toString() || ""}
                               onValueChange={(value) =>
@@ -1631,7 +1498,7 @@ export default function ProjectManagement() {
                               }
                             >
                               <SelectTrigger id="status">
-                                <SelectValue placeholder="Select status" />
+                                <SelectValue placeholder={t("projects.selectStatus")} />
                               </SelectTrigger>
                               <SelectContent>
                                 {statusOptions.map((option) => (
@@ -1643,7 +1510,7 @@ export default function ProjectManagement() {
                             </Select>
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="progress_status">Progress Status</Label>
+                            <Label htmlFor="progress_status">{t("projects.progressStatus")}</Label>
                             <Select
                               value={newProject.progress_status?.id?.toString() || ""}
                               onValueChange={(value) =>
@@ -1654,7 +1521,7 @@ export default function ProjectManagement() {
                               }
                             >
                               <SelectTrigger id="progress_status">
-                                <SelectValue placeholder="Select progress status" />
+                                <SelectValue placeholder={t("projects.selectProgress")} />
                               </SelectTrigger>
                               <SelectContent>
                                 {getFilteredProgressOptions(newProject.type).map((option) => (
@@ -1670,16 +1537,16 @@ export default function ProjectManagement() {
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddProjectOpen(false)}>
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
                       <Button onClick={handleAddProject} disabled={isAdding}>
                         {isAdding ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Adding...
+                            {t("common.processing")}
                           </>
                         ) : (
-                          "Add Project"
+                          t("projects.add")
                         )}
                       </Button>
                     </DialogFooter>
@@ -1688,42 +1555,36 @@ export default function ProjectManagement() {
               </div>
               <div className="p-4">
                 <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-background z-10">
-                      <tr className="text-sm border-b">
-                        <th 
-                          className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => handleSort("title_ar")}
+                  <Table disableWrapper>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow className="text-sm">
+                        <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("title_ar")}
                         >
                           <div className="flex items-center">
-                            Project Title (Arabic)
+                            {t("projects.titleAr")}
                             {getSortIndicator("title_ar")}
                           </div>
-                        </th>
-                        <th 
-                          className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => handleSort("title_original")}
+                        </TableHead>
+                        <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("title_original")}
                         >
                           <div className="flex items-center">
-                            Project Title (English)
+                            {t("projects.titleEn")}
                             {getSortIndicator("title_original")}
                           </div>
-                        </th>
-                        <th className="text-left font-medium p-2">Type</th>
-                        <th 
-                          className="text-left font-medium p-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => handleSort("approval_status")}
+                        </TableHead>
+                        <TableHead>{t("projects.type")}</TableHead>
+                        <TableHead className="cursor-pointer transition-colors" onClick={() => handleSort("approval_status")}
                         >
                           <div className="flex items-center">
-                            Approval Status
+                            {t("projects.approvalStatus")}
                             {getSortIndicator("approval_status")}
                           </div>
-                        </th>
-                        <th className="text-left font-medium p-2">Progress Status</th>
-                        <th className="text-right font-medium p-2">Actions</th>
-                      </tr>
-                    </thead>
-                  </table>
+                        </TableHead>
+                        <TableHead>{t("projects.progressStatus")}</TableHead>
+                        <TableHead className="text-right">{t("common.actions")}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                  </Table>
                   {shouldVirtualize ? (
                     <div
                       ref={containerRef}
@@ -1732,52 +1593,52 @@ export default function ProjectManagement() {
                       onScroll={handleScroll}
                     >
                       <div style={{ height: virtualizedData.totalHeight, position: 'relative' }}>
-                        <table className="w-full border-collapse">
-                          <tbody>
+                        <Table disableWrapper>
+                          <TableBody>
                             {virtualizedData.offsetY > 0 && (
-                              <tr style={{ height: virtualizedData.offsetY }}>
-                                <td colSpan={6}></td>
-                              </tr>
+                              <TableRow style={{ height: virtualizedData.offsetY }}>
+                                <TableCell colSpan={6}></TableCell>
+                              </TableRow>
                             )}
                             {isLoading ? (
                               // Skeleton loaders matching table structure
                               Array.from({ length: 5 }).map((_, index) => (
-                                <tr key={`skeleton-${index}`} className="border-b">
-                                  <td className="p-2">
+                                <TableRow key={`skeleton-${index}`}>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-32" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-40" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-24" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-6 w-20 rounded-full" />
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <Skeleton className="h-5 w-28" />
-                                  </td>
-                                  <td className="p-2 text-right">
+                                  </TableCell>
+                                  <TableCell className="text-right">
                                     <div className="flex justify-end gap-2">
                                       <Skeleton className="h-8 w-8 rounded" />
                                       <Skeleton className="h-8 w-8 rounded" />
                                     </div>
-                                  </td>
-                                </tr>
+                                  </TableCell>
+                                </TableRow>
                               ))
                             ) : virtualizedData.visibleProjects.length === 0 ? (
-                              <tr>
-                                <td colSpan={6} className="py-8 text-center">
-                                  No projects found
-                                </td>
-                              </tr>
+                              <TableRow>
+                                <TableCell colSpan={6} className="py-8 text-center">
+                                  {t("projects.empty")}
+                                </TableCell>
+                              </TableRow>
                             ) : (
                               virtualizedData.visibleProjects.map((project) => (
-                                <tr key={project.id} className="border-b last:border-0">
-                                  <td className="p-2 font-medium">{project.title_ar}</td>
-                                  <td className="p-2">{project.title_original || "No English Title"}</td>
-                                  <td className="p-2">
+                                <TableRow key={project.id}>
+                                  <TableCell className="font-medium">{project.title_ar}</TableCell>
+                                  <TableCell>{project.title_original || t("projects.noEnglishTitle")}</TableCell>
+                                  <TableCell>
                                     {project.type ? (
                                       <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
                                         {typeof project.type === "object"
@@ -1785,23 +1646,23 @@ export default function ProjectManagement() {
                                           : getTypeName(project.type)}
                                       </span>
                                     ) : (
-                                      "Not set"
+                                      t("projects.notSet")
                                     )}
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     {project.approval_status ? (
                                       <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">
                                         <CheckCircle2 className="h-4 w-4 mr-1" />
-                                        Approved
+                                        {t("projects.approved")}
                                       </span>
                                     ) : (
                                       <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-700/10">
                                         <AlertCircle className="h-4 w-4 mr-1" />
-                                        Not Approved
+                                        {t("projects.notApproved")}
                                       </span>
                                     )}
-                                  </td>
-                                  <td className="p-2">
+                                  </TableCell>
+                                  <TableCell>
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between">
                                         <span className="text-xs font-medium text-muted-foreground">
@@ -1810,7 +1671,7 @@ export default function ProjectManagement() {
                                               ? project.progress_status.display_name_en
                                               : getProgressStatusName(project.progress_status)
                                           ) : (
-                                            "Not set"
+                                            t("projects.notSet")
                                           )}
                                         </span>
                                         <span className="text-xs text-muted-foreground">
@@ -1822,8 +1683,8 @@ export default function ProjectManagement() {
                                         className="h-2"
                                       />
                                     </div>
-                                  </td>
-                                  <td className="p-2 text-right">
+                                  </TableCell>
+                                  <TableCell className="text-right">
                                     <div className="flex justify-end gap-2">
                                       {/* Desktop view - separate buttons */}
                                       <div className="hidden sm:flex gap-2">
@@ -1836,7 +1697,7 @@ export default function ProjectManagement() {
                                             variant="outline"
                                             size="icon"
                                             className="h-8 w-8 text-green-600 hover:text-green-800"
-                                            title="Convert to Product"
+                                            title={t("projects.convertToProduct")}
                                             onClick={() => handleConvertToProduct(project)}
                                             disabled={isConverting && convertingProjectId === project.id}
                                           >
@@ -1845,7 +1706,7 @@ export default function ProjectManagement() {
                                             ) : (
                                               <Package className="h-4 w-4" />
                                             )}
-                                            <span className="sr-only">Convert to Product</span>
+                                            <span className="sr-only">{t("projects.convertToProduct")}</span>
                                           </Button>
                                         )}
                                         {/* Contract button - only shown for approved projects */}
@@ -1854,11 +1715,11 @@ export default function ProjectManagement() {
                                             variant="outline"
                                             size="icon"
                                             className="h-8 w-8 text-blue-600 hover:text-blue-800"
-                                            title="Contracts"
+                                            title={t("projects.contracts")}
                                             onClick={() => openContractsModal(project)}
                                           >
                                             <FileText className="h-4 w-4" />
-                                            <span className="sr-only">Contracts</span>
+                                            <span className="sr-only">{t("projects.contracts")}</span>
                                           </Button>
                                         )}
                                         <Button
@@ -1868,7 +1729,7 @@ export default function ProjectManagement() {
                                           onClick={() => openEditDialog(project)}
                                         >
                                           <Edit className="h-4 w-4" />
-                                          <span className="sr-only">Edit</span>
+                                          <span className="sr-only">{t("common.edit")}</span>
                                         </Button>
                                         <Button
                                           variant="outline"
@@ -1877,7 +1738,7 @@ export default function ProjectManagement() {
                                           onClick={() => openDeleteDialog(project.id)}
                                         >
                                           <Trash2 className="h-4 w-4" />
-                                          <span className="sr-only">Delete</span>
+                                          <span className="sr-only">{t("common.delete")}</span>
                                         </Button>
                                       </div>
 
@@ -1887,11 +1748,11 @@ export default function ProjectManagement() {
                                           <DropdownMenuTrigger asChild>
                                             <Button variant="outline" size="icon" className="h-8 w-8">
                                               <MoreHorizontal className="h-4 w-4" />
-                                              <span className="sr-only">Actions</span>
+                                              <span className="sr-only">{t("common.actions")}</span>
                                             </Button>
                                           </DropdownMenuTrigger>
                                           <DropdownMenuContent align="end">
-                                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                            <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                             {project.status?.display_name_en?.toLowerCase() === "finalized" &&
                                              project.progress_status?.display_name_en?.toLowerCase() === "completed" &&
                                              project.all_contracts_closed === true &&
@@ -1905,18 +1766,18 @@ export default function ProjectManagement() {
                                                 ) : (
                                                   <Package className="h-4 w-4 mr-2" />
                                                 )}
-                                                Convert to Product
+                                                {t("projects.convertToProduct")}
                                               </DropdownMenuItem>
                                             )}
                                             {project.approval_status && (
                                               <DropdownMenuItem onClick={() => openContractsModal(project)}>
                                                 <FileText className="h-4 w-4 mr-2" />
-                                                Contracts
+                                                {t("projects.contracts")}
                                               </DropdownMenuItem>
                                             )}
                                             <DropdownMenuItem onClick={() => openEditDialog(project)}>
                                               <Edit className="h-4 w-4 mr-2" />
-                                              Edit
+                                              {t("common.edit")}
                                             </DropdownMenuItem>
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem
@@ -1924,23 +1785,23 @@ export default function ProjectManagement() {
                                               onClick={() => openDeleteDialog(project.id)}
                                             >
                                               <Trash2 className="h-4 w-4 mr-2" />
-                                              Delete
+                                              {t("common.delete")}
                                             </DropdownMenuItem>
                                           </DropdownMenuContent>
                                         </DropdownMenu>
                                       </div>
                                     </div>
-                                  </td>
-                                </tr>
+                                  </TableCell>
+                                </TableRow>
                               ))
                             )}
                             {(projects.length - virtualizedData.endIndex) * rowHeight > 0 && (
-                              <tr style={{ height: (projects.length - virtualizedData.endIndex) * rowHeight }}>
-                                <td colSpan={6}></td>
-                              </tr>
+                              <TableRow style={{ height: (projects.length - virtualizedData.endIndex) * rowHeight }}>
+                                <TableCell colSpan={6}></TableCell>
+                              </TableRow>
                             )}
-                          </tbody>
-                        </table>
+                          </TableBody>
+                        </Table>
                       </div>
                     </div>
                   ) : (
@@ -1949,47 +1810,47 @@ export default function ProjectManagement() {
                       className="overflow-y-auto"
                       style={{ maxHeight: '600px' }}
                     >
-                      <table className="w-full border-collapse">
-                        <tbody>
+                      <Table disableWrapper>
+                        <TableBody>
                           {isLoading ? (
                             // Skeleton loaders matching table structure
                             Array.from({ length: 5 }).map((_, index) => (
-                              <tr key={`skeleton-${index}`} className="border-b">
-                                <td className="p-2">
+                              <TableRow key={`skeleton-${index}`}>
+                                <TableCell>
                                   <Skeleton className="h-5 w-32" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-5 w-40" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-5 w-24" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-6 w-20 rounded-full" />
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <Skeleton className="h-5 w-28" />
-                                </td>
-                                <td className="p-2 text-right">
+                                </TableCell>
+                                <TableCell className="text-right">
                                   <div className="flex justify-end gap-2">
                                     <Skeleton className="h-8 w-8 rounded" />
                                     <Skeleton className="h-8 w-8 rounded" />
                                   </div>
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             ))
                           ) : projects.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} className="py-8 text-center">
-                                No projects found
-                              </td>
-                            </tr>
+                            <TableRow>
+                              <TableCell colSpan={6} className="py-8 text-center">
+                                {t("projects.empty")}
+                              </TableCell>
+                            </TableRow>
                           ) : (
                             projects.map((project) => (
-                              <tr key={project.id} className="border-b last:border-0">
-                                <td className="p-2 font-medium">{project.title_ar}</td>
-                                <td className="p-2">{project.title_original || "No English Title"}</td>
-                                <td className="p-2">
+                              <TableRow key={project.id}>
+                                <TableCell className="font-medium">{project.title_ar}</TableCell>
+                                <TableCell>{project.title_original || t("projects.noEnglishTitle")}</TableCell>
+                                <TableCell>
                                   {project.type ? (
                                     <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
                                       {typeof project.type === "object"
@@ -1997,23 +1858,23 @@ export default function ProjectManagement() {
                                         : getTypeName(project.type)}
                                     </span>
                                   ) : (
-                                    "Not set"
+                                    t("projects.notSet")
                                   )}
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   {project.approval_status ? (
                                     <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">
                                       <CheckCircle2 className="h-4 w-4 mr-1" />
-                                      Approved
+                                      {t("projects.approved")}
                                     </span>
                                   ) : (
                                     <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-700/10">
                                       <AlertCircle className="h-4 w-4 mr-1" />
-                                      Not Approved
+                                      {t("projects.notApproved")}
                                     </span>
                                   )}
-                                </td>
-                                <td className="p-2">
+                                </TableCell>
+                                <TableCell>
                                   <div className="space-y-2">
                                     <div className="flex items-center justify-between">
                                       <span className="text-xs font-medium text-muted-foreground">
@@ -2022,7 +1883,7 @@ export default function ProjectManagement() {
                                             ? project.progress_status.display_name_en
                                             : getProgressStatusName(project.progress_status)
                                         ) : (
-                                          "Not set"
+                                          t("projects.notSet")
                                         )}
                                       </span>
                                       <span className="text-xs text-muted-foreground">
@@ -2034,8 +1895,8 @@ export default function ProjectManagement() {
                                       className="h-2"
                                     />
                                   </div>
-                                </td>
-                                <td className="p-2 text-right">
+                                </TableCell>
+                                <TableCell className="text-right">
                                   <div className="flex justify-end gap-2">
                                     {/* Desktop view - separate buttons */}
                                     <div className="hidden sm:flex gap-2">
@@ -2048,7 +1909,7 @@ export default function ProjectManagement() {
                                           variant="outline"
                                           size="icon"
                                           className="h-8 w-8 text-green-600 hover:text-green-800"
-                                          title="Convert to Product"
+                                          title={t("projects.convertToProduct")}
                                           onClick={() => handleConvertToProduct(project)}
                                           disabled={isConverting && convertingProjectId === project.id}
                                         >
@@ -2057,7 +1918,7 @@ export default function ProjectManagement() {
                                           ) : (
                                             <Package className="h-4 w-4" />
                                           )}
-                                          <span className="sr-only">Convert to Product</span>
+                                          <span className="sr-only">{t("projects.convertToProduct")}</span>
                                         </Button>
                                       )}
                                       {/* Contract button - only shown for approved projects */}
@@ -2066,11 +1927,11 @@ export default function ProjectManagement() {
                                           variant="outline"
                                           size="icon"
                                           className="h-8 w-8 text-blue-600 hover:text-blue-800"
-                                          title="Contracts"
+                                          title={t("projects.contracts")}
                                           onClick={() => openContractsModal(project)}
                                         >
                                           <FileText className="h-4 w-4" />
-                                          <span className="sr-only">Contracts</span>
+                                          <span className="sr-only">{t("projects.contracts")}</span>
                                         </Button>
                                       )}
                                       <Button
@@ -2080,7 +1941,7 @@ export default function ProjectManagement() {
                                         onClick={() => openEditDialog(project)}
                                       >
                                         <Edit className="h-4 w-4" />
-                                        <span className="sr-only">Edit</span>
+                                        <span className="sr-only">{t("common.edit")}</span>
                                       </Button>
                                       <Button
                                         variant="outline"
@@ -2089,7 +1950,7 @@ export default function ProjectManagement() {
                                         onClick={() => openDeleteDialog(project.id)}
                                       >
                                         <Trash2 className="h-4 w-4" />
-                                        <span className="sr-only">Delete</span>
+                                        <span className="sr-only">{t("common.delete")}</span>
                                       </Button>
                                     </div>
 
@@ -2099,11 +1960,11 @@ export default function ProjectManagement() {
                                         <DropdownMenuTrigger asChild>
                                           <Button variant="outline" size="icon" className="h-8 w-8">
                                             <MoreHorizontal className="h-4 w-4" />
-                                            <span className="sr-only">Actions</span>
+                                            <span className="sr-only">{t("common.actions")}</span>
                                           </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
-                                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                          <DropdownMenuLabel>{t("common.actions")}</DropdownMenuLabel>
                                           {project.status?.display_name_en?.toLowerCase() === "finalized" &&
                                            project.progress_status?.display_name_en?.toLowerCase() === "completed" &&
                                            project.all_contracts_closed === true &&
@@ -2117,18 +1978,18 @@ export default function ProjectManagement() {
                                               ) : (
                                                 <Package className="h-4 w-4 mr-2" />
                                               )}
-                                              Convert to Product
+                                              {t("projects.convertToProduct")}
                                             </DropdownMenuItem>
                                           )}
                                           {project.approval_status && (
                                             <DropdownMenuItem onClick={() => openContractsModal(project)}>
                                               <FileText className="h-4 w-4 mr-2" />
-                                              Contracts
+                                              {t("projects.contracts")}
                                             </DropdownMenuItem>
                                           )}
                                           <DropdownMenuItem onClick={() => openEditDialog(project)}>
                                             <Edit className="h-4 w-4 mr-2" />
-                                            Edit
+                                            {t("common.edit")}
                                           </DropdownMenuItem>
                                           <DropdownMenuSeparator />
                                           <DropdownMenuItem
@@ -2136,18 +1997,18 @@ export default function ProjectManagement() {
                                             onClick={() => openDeleteDialog(project.id)}
                                           >
                                             <Trash2 className="h-4 w-4 mr-2" />
-                                            Delete
+                                            {t("common.delete")}
                                           </DropdownMenuItem>
                                         </DropdownMenuContent>
                                       </DropdownMenu>
                                     </div>
                                   </div>
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             ))
                           )}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     </div>
                   )}
                 </div>
@@ -2163,10 +2024,10 @@ export default function ProjectManagement() {
                       onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                       disabled={currentPage === 1}
                     >
-                      Previous
+                      {t("common.previous")}
                     </Button>
                     <span className="text-sm text-muted-foreground">
-                      Page {currentPage} of {Math.max(1, Math.ceil(totalCount / pageSize))}
+                      {t("common.pageOf", { current: currentPage, total: Math.max(1, Math.ceil(totalCount / pageSize)) })}
                     </span>
                     <Button
                       variant="outline"
@@ -2174,11 +2035,11 @@ export default function ProjectManagement() {
                       onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.max(1, Math.ceil(totalCount / pageSize))))}
                       disabled={currentPage >= Math.ceil(totalCount / pageSize)}
                     >
-                      Next
+                      {t("common.next")}
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Items per page:</span>
+                    <span className="text-sm text-muted-foreground">{t("common.itemsPerPage")}</span>
                     <Select
                       value={pageSize.toString()}
                       onValueChange={(value) => {
@@ -2197,7 +2058,7 @@ export default function ProjectManagement() {
                       </SelectContent>
                     </Select>
                     <span className="text-sm text-muted-foreground">
-                      ({totalCount} total)
+                      {t("common.totalCount", { count: totalCount })}
                     </span>
                   </div>
                 </div>
@@ -2211,17 +2072,17 @@ export default function ProjectManagement() {
       <Dialog open={isEditProjectOpen} onOpenChange={setIsEditProjectOpen}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Project</DialogTitle>
-            <DialogDescription>Update project information.</DialogDescription>
+            <DialogTitle>{t("projects.editTitle")}</DialogTitle>
+            <DialogDescription>{t("projects.editDescription")}</DialogDescription>
           </DialogHeader>
           {editProject && (
             <div className="space-y-6 py-4">
               {/* Basic Information Section */}
               <div className="space-y-4">
-                <h3 className="text-lg font-medium">Basic Information</h3>
+                <h3 className="text-lg font-medium">{t("projects.basicInfo")}</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-title_ar">Title (Arabic)</Label>
+                    <Label htmlFor="edit-title_ar">{t("projects.titleAr")}</Label>
                     <Input
                       id="edit-title_ar"
                       value={editProject.title_ar || ""}
@@ -2230,7 +2091,7 @@ export default function ProjectManagement() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-title_original">English Title</Label>
+                    <Label htmlFor="edit-title_original">{t("projects.titleEn")}</Label>
                     <Input
                       id="edit-title_original"
                       value={editProject.title_original || ""}
@@ -2238,7 +2099,7 @@ export default function ProjectManagement() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-description">Description</Label>
+                    <Label htmlFor="edit-description">{t("projects.projectDescription")}</Label>
                     <Textarea
                       id="edit-description"
                       value={editProject.description || ""}
@@ -2246,7 +2107,7 @@ export default function ProjectManagement() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-type">Type</Label>
+                    <Label htmlFor="edit-type">{t("projects.type")}</Label>
                     <Select
                       value={editProject.type?.id?.toString() || ""}
                       onValueChange={(value) =>
@@ -2257,7 +2118,7 @@ export default function ProjectManagement() {
                       }
                     >
                       <SelectTrigger id="edit-type">
-                        <SelectValue placeholder="Select type" />
+                        <SelectValue placeholder={t("projects.selectType")} />
                       </SelectTrigger>
                       <SelectContent>
                         {typeOptions.map((option) => (
@@ -2269,18 +2130,18 @@ export default function ProjectManagement() {
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-approval_status">Approval Status</Label>
+                    <Label htmlFor="edit-approval_status">{t("projects.approvalStatus")}</Label>
                     <Switch
                       id="edit-approval_status"
                       checked={editProject.approval_status}
                       onCheckedChange={(checked) => setEditProject({ ...editProject, approval_status: checked })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      {editProject.approval_status ? "Approved" : "Not Approved"}
+                      {editProject.approval_status ? t("projects.approved") : t("projects.notApproved")}
                     </p>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-status">Status</Label>
+                    <Label htmlFor="edit-status">{t("projects.status")}</Label>
                     <Select
                       value={editProject.status?.id?.toString() || ""}
                       onValueChange={(value) =>
@@ -2291,7 +2152,7 @@ export default function ProjectManagement() {
                       }
                     >
                       <SelectTrigger id="edit-status">
-                        <SelectValue placeholder="Select status" />
+                        <SelectValue placeholder={t("projects.selectStatus")} />
                       </SelectTrigger>
                       <SelectContent>
                         {statusOptions.map((option) => (
@@ -2303,7 +2164,7 @@ export default function ProjectManagement() {
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-progress_status">Progress Status</Label>
+                    <Label htmlFor="edit-progress_status">{t("projects.progressStatus")}</Label>
                     <Select
                       value={editProject.progress_status?.id?.toString() || ""}
                       onValueChange={(value) =>
@@ -2314,7 +2175,7 @@ export default function ProjectManagement() {
                       }
                     >
                       <SelectTrigger id="edit-progress_status">
-                        <SelectValue placeholder="Select progress status" />
+                        <SelectValue placeholder={t("projects.selectProgress")} />
                       </SelectTrigger>
                       <SelectContent>
                         {getFilteredProgressOptions(editProject.type).map((option) => (
@@ -2334,12 +2195,12 @@ export default function ProjectManagement() {
               <div className="space-y-4">
                 <h3 className="text-lg font-medium flex items-center gap-2">
                   <User className="h-5 w-5 text-primary" />
-                  People Information
+                  {t("projects.people.title")}
                 </h3>
                 {isContractsLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                    <span className="ml-3 text-muted-foreground">Loading people from contracts...</span>
+                    <span className="ml-3 text-muted-foreground">{t("projects.people.loading")}</span>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2351,7 +2212,7 @@ export default function ProjectManagement() {
                             <PenTool className="h-5 w-5 text-blue-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-blue-900 mb-1">Author</h4>
+                            <h4 className="font-semibold text-blue-900 mb-1">{t("projects.people.author")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('author').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2373,7 +2234,7 @@ export default function ProjectManagement() {
                             <Languages className="h-5 w-5 text-green-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-green-900 mb-1">Translator</h4>
+                            <h4 className="font-semibold text-green-900 mb-1">{t("projects.people.translator")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('translator').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2395,7 +2256,7 @@ export default function ProjectManagement() {
                             <Crown className="h-5 w-5 text-purple-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-purple-900 mb-1">Rights Owner</h4>
+                            <h4 className="font-semibold text-purple-900 mb-1">{t("projects.people.rightsOwner")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('rights').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2417,7 +2278,7 @@ export default function ProjectManagement() {
                             <Eye className="h-5 w-5 text-orange-600" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-orange-900 mb-1">Reviewer</h4>
+                            <h4 className="font-semibold text-orange-900 mb-1">{t("projects.people.reviewer")}</h4>
                             <div className="space-y-1">
                               {getPeopleFromContracts('reviewer').map((name, index) => (
                                 <div key={index} className="flex items-center gap-2">
@@ -2462,8 +2323,8 @@ export default function ProjectManagement() {
                      Object.keys(getOtherPeopleFromContracts()).length === 0 && (
                       <div className="col-span-full text-center py-12 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
                         <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                        <h4 className="text-lg font-medium text-gray-600 mb-2">No People Assigned</h4>
-                        <p className="text-gray-500">No people have been assigned to this project yet.</p>
+                        <h4 className="text-lg font-medium text-gray-600 mb-2">{t("projects.people.none")}</h4>
+                        <p className="text-gray-500">{t("projects.people.noneHint")}</p>
                       </div>
                     )}
                   </div>
@@ -2476,64 +2337,42 @@ export default function ProjectManagement() {
               setIsEditProjectOpen(false)
               setContracts([]) // Clear contracts when dialog is closed
             }}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleUpdateProject} disabled={isUpdating}>
               {isUpdating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Saving...
+                  {t("common.processing")}
                 </>
               ) : (
-                "Save Changes"
+                t("common.saveChanges")
               )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteProjectId !== null && (
-                <>
-                  You are about to delete <strong>{projects.find((p) => p.id === deleteProjectId)?.title_ar}</strong>.
-                  This action cannot be undone. This will permanently remove the project from your system.
-                  <div className="mt-4">
-                    <Label htmlFor="confirm-delete">Type "DELETE" to confirm</Label>
-                    <Input
-                      id="confirm-delete"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                      className="mt-2"
-                    />
-                  </div>
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteConfirm("")}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteProject}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteConfirm !== "DELETE" || isDeleting}
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteConfirmDialog
+        open={isDeleteAlertOpen}
+        onOpenChange={setIsDeleteAlertOpen}
+        title={t("common.areYouSure")}
+        confirmLabel={t("common.delete")}
+        description={
+          deleteProjectId !== null ? (
+            <>
+              {t("projects.deleteConfirm", {
+                name: projects.find((p) => p.id === deleteProjectId)?.title_ar ?? "",
+              })}{" "}
+              {t("projects.deleteConfirmHint")}
+            </>
+          ) : (
+            ""
+          )
+        }
+        isDeleting={isDeleting}
+        onConfirm={handleDeleteProject}
+      />
 
       {/* Project Contracts Modal */}
       <ProjectContractsModal
@@ -2542,8 +2381,7 @@ export default function ProjectManagement() {
         project={selectedProjectForContracts}
         token={localStorage.getItem("accessToken") || ""}
       />
-    </SidebarProvider>
-    </ErrorBoundary>
+</ErrorBoundary>
   )
 }
 

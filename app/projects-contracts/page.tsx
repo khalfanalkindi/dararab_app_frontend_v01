@@ -1,20 +1,15 @@
 "use client"
 
 import type React from "react"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
+import { DocumentTitle } from "@/components/document-title"
+import { useLanguage } from "@/components/language-context"
 
-import Link from "next/link"
+import { fetchWithRetry } from "@/lib/apiClient"
+
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { AppSidebar } from "../../components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
 import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import {
   Edit,
@@ -35,7 +30,7 @@ import {
   X,
 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
 import { format, parseISO } from "date-fns"
@@ -144,6 +139,8 @@ interface Reviewer {
 }
 
 export default function ProjectContract() {
+  const { t } = useLanguage()
+  const { dashboard: dashboardCrumb } = useAppCrumbs()
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isContractsModalOpen, setIsContractsModalOpen] = useState(false)
@@ -185,7 +182,6 @@ export default function ProjectContract() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
-  const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(null)
   
   // Pagination state for projects
@@ -293,77 +289,7 @@ export default function ProjectContract() {
     }
   }, [])
 
-  // Retry utility function with exponential backoff
-  const fetchWithRetry = useCallback(async (
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3,
-    baseDelay: number = 1000
-  ): Promise<Response> => {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Check if request was aborted
-        if (options.signal?.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
-        }
-        
-        const response = await fetch(url, options)
-        
-        // Don't retry on successful responses
-        if (response.ok) {
-          return response
-        }
-        
-        // Don't retry on 4xx client errors (except 429 Too Many Requests)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response // Return the error response without retrying
-        }
-        
-        // For 5xx server errors or 429, throw to trigger retry
-        if (response.status >= 500 || response.status === 429) {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
-        }
-        
-        // For other errors, return the response
-        return response
-      } catch (error) {
-        lastError = error as Error
-        
-        // Don't retry on AbortError
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error
-        }
-        
-        // Don't retry if this was the last attempt
-        if (attempt === maxRetries) {
-          break
-        }
-        
-        // Calculate exponential backoff delay: baseDelay * 2^attempt
-        const delay = baseDelay * Math.pow(2, attempt)
-        
-        // Wait before retrying (respect abort signal)
-        await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, delay)
-          
-          // If aborted during wait, clear timeout and reject
-          if (options.signal) {
-            options.signal.addEventListener('abort', () => {
-              clearTimeout(timeoutId)
-              reject(new DOMException('The operation was aborted.', 'AbortError'))
-            })
-          }
-        })
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError || new Error('Request failed after retries')
-  }, [])
-
-  // Memoized lookup maps for O(1) lookups
+// Memoized lookup maps for O(1) lookups
   const contractTypesMap = useMemo(() => {
     const map = new Map<number, ContractType>()
     contractTypes.forEach(type => {
@@ -600,11 +526,7 @@ export default function ProjectContract() {
       setTranslators([])
       setRightsOwners([])
       setReviewers([])
-      toast({
-        title: "Error",
-        description: "Failed to load data. Please try again later.",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("toasts.fetchFailed") })
       throw error
     }
   }, [headers])
@@ -668,11 +590,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error fetching projects:", error)
       }
-      toast({
-        title: "Error",
-        description: "Failed to fetch projects",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.fetchFailed") })
       setProjects([])
       setTotalCount(0)
     }
@@ -753,11 +671,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error fetching contracts:", error)
       }
-      toast({
-        title: "Error",
-        description: "Failed to fetch contracts",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("projects.toasts.fetchFailed") })
     } finally {
       setIsContractsLoading(false)
     }
@@ -835,7 +749,7 @@ export default function ProjectContract() {
   }, [contractTypesMap])
 
   const formatDate = (dateString: string | null) => {
-    if (!dateString) return "Not set"
+    if (!dateString) return t("contracts.notSet")
     try {
       return format(parseISO(dateString), "MMM d, yyyy")
     } catch (e) {
@@ -844,7 +758,7 @@ export default function ProjectContract() {
   }
 
   const formatCurrency = (amount: number | null) => {
-    if (amount === null) return "Not set"
+    if (amount === null) return t("contracts.notSet")
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
@@ -852,7 +766,7 @@ export default function ProjectContract() {
   }
 
   const getStatusName = useCallback((statusId: number | null) => {
-    if (!statusId) return "Not set"
+    if (!statusId) return t("contracts.notSet")
     const status = contractStatusesMap.get(statusId)
     return status ? status.display_name_en : "Unknown"
   }, [contractStatusesMap])
@@ -864,7 +778,7 @@ export default function ProjectContract() {
   }, [contractStatusesMap])
 
   const getTypeName = useCallback((typeId: number | null) => {
-    if (!typeId) return "Not set"
+    if (!typeId) return t("contracts.notSet")
     const type = contractTypesMap.get(typeId)
     return type ? type.display_name_en : "Unknown"
   }, [contractTypesMap])
@@ -878,7 +792,7 @@ export default function ProjectContract() {
       // Fallback to the original structure with first_name and last_name
       return `${signedBy.first_name} ${signedBy.last_name}`.trim() || signedBy.username
     }
-    if (!signatoryId) return "Not set"
+    if (!signatoryId) return t("contracts.notSet")
     const signatory = signatoriesMap.get(signatoryId)
     return signatory ? `${signatory.first_name} ${signatory.last_name}`.trim() || signatory.username : "Unknown"
   }, [signatoriesMap])
@@ -1097,18 +1011,10 @@ export default function ProjectContract() {
 
       if (modalView === "create") {
         setContracts([...contracts, savedContract])
-        toast({
-          title: "Contract Created",
-          description: "New contract has been added",
-          variant: "default",
-        })
+        toast.success(t("contracts.toasts.created"))
       } else {
         setContracts(contracts.map((c) => (c.id === savedContract.id ? savedContract : c)))
-        toast({
-          title: "Contract Updated",
-          description: "Contract has been updated",
-          variant: "default",
-        })
+        toast.success(t("contracts.toasts.updated"))
       }
 
       setModalView("list")
@@ -1120,11 +1026,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error saving contract:", error)
       }
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save contract",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: error instanceof Error ? error.message : t("toasts.tryAgain") })
     } finally {
       setIsSubmitting(false)
       setIsCreating(false)
@@ -1134,7 +1036,7 @@ export default function ProjectContract() {
 
   // Add function to get contracted party name
   const getContractedPartyName = useCallback((contract: Contract) => {
-    if (!contract.content_type_id || !contract.object_id) return "Not set"
+    if (!contract.content_type_id || !contract.object_id) return t("contracts.notSet")
 
     const contentType = contentTypesMap.get(contract.content_type_id)
     if (!contentType) return "Unknown"
@@ -1164,11 +1066,10 @@ export default function ProjectContract() {
   const handleDeleteContract = async (contract: Contract) => {
     if (!selectedProject) return
     setContractToDelete(contract)
-    setDeleteConfirmation("")
   }
 
   const confirmDelete = async () => {
-    if (!contractToDelete || deleteConfirmation !== "DELETE") return
+    if (!contractToDelete) return
 
     // Store original state for rollback
     const originalContracts = [...contracts]
@@ -1177,7 +1078,6 @@ export default function ProjectContract() {
     // Optimistic update - remove contract immediately
     setContracts(contracts.filter((c) => c.id !== contractIdToDelete))
     setContractToDelete(null)
-    setDeleteConfirmation("")
 
     // Create AbortController for this request
     const abortController = new AbortController()
@@ -1194,11 +1094,7 @@ export default function ProjectContract() {
         throw new Error("Failed to delete contract")
       }
 
-      toast({
-        title: "Contract Deleted",
-        description: "Contract has been deleted",
-        variant: "default",
-      })
+      toast.success(t("contracts.toasts.deleted"))
     } catch (error) {
       // Rollback on error
       setContracts(originalContracts)
@@ -1211,11 +1107,7 @@ export default function ProjectContract() {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error deleting contract:", error)
       }
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete contract",
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: error instanceof Error ? error.message : t("toasts.tryAgain") })
     } finally {
       setIsDeleting(false)
     }
@@ -1354,11 +1246,7 @@ export default function ProjectContract() {
     }
 
     if (!newParty.name.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Name is required",
-        variant: "destructive",
-      })
+      toast.error(t("contracts.toasts.validationError"), { description: t("contracts.toasts.nameRequired") })
       return
     }
 
@@ -1420,20 +1308,12 @@ export default function ProjectContract() {
       setNewParty({ name: "", bio: "", contact_info: "" })
       setIsAddPartyModalOpen(false)
 
-      toast({
-        title: "Success",
-        description: `${partyType === 'rightsowner' ? 'Rights Owner' : partyType === 'reviewer' ? 'Reviewer' : partyType.charAt(0).toUpperCase() + partyType.slice(1)} "${createdParty.name}" has been created and selected.`,
-        variant: "default",
-      })
+      toast.success(t("common.success"), { description: t("contracts.toasts.partyCreated") })
     } catch (error: any) {
       if (process.env.NODE_ENV !== 'production') {
         console.error("Error creating party:", error)
       }
-      toast({
-        title: "Error",
-        description: `Failed to create ${partyType}. Please try again.`,
-        variant: "destructive",
-      })
+      toast.error(t("toasts.error"), { description: t("toasts.tryAgain") })
     } finally {
       setIsCreatingParty(false)
     }
@@ -1450,26 +1330,13 @@ export default function ProjectContract() {
 
   return (
     <ErrorBoundary>
-      <SidebarProvider>
-        <AppSidebar />
+      <DocumentTitle title={t("contracts.title")} />
         <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link href="/admin">Admin</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Project Contracts</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <PageBreadcrumb items={[dashboardCrumb, { label: t("nav.projectContracts") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -1486,10 +1353,10 @@ export default function ProjectContract() {
               )}
               <AlertTitle>
                 {actionAlert.type === "success"
-                  ? "Success"
+                  ? t("common.success")
                   : actionAlert.type === "warning"
-                    ? "Warning"
-                    : "Information"}
+                    ? t("common.warning")
+                    : t("common.information")}
               </AlertTitle>
               <AlertDescription>{actionAlert.message}</AlertDescription>
             </Alert>
@@ -1498,26 +1365,26 @@ export default function ProjectContract() {
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div>
-                <h2 className="text-xl font-semibold mb-2">Project Contracts</h2>
-                <p className="text-muted-foreground">Manage contracts for your approved projects.</p>
+                <h2 className="text-xl font-semibold mb-2">{t("contracts.title")}</h2>
+                <p className="text-muted-foreground">{t("contracts.description")}</p>
               </div>
             </div>
 
             {/* Search Input */}
             <div className="mb-6">
               <div className="relative max-w-md">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 transform text-muted-foreground" />
                 <Input
                   type="text"
-                  placeholder="Search projects by name..."
+                  placeholder={t("contracts.searchPlaceholder")}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 pr-10"
+                  className="ps-10 pe-10"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery("")}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="absolute end-3 top-1/2 -translate-y-1/2 transform text-muted-foreground hover:text-foreground"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -1546,12 +1413,12 @@ export default function ProjectContract() {
                   <div className="flex flex-col items-center p-6">
                     <FileText className="h-16 w-16 text-muted-foreground mb-4" />
                     <h3 className="text-xl font-medium mb-2">
-                      {searchQuery ? "No projects found" : "No approved projects found"}
+                      {searchQuery ? t("contracts.empty") : t("contracts.emptyApproved")}
                     </h3>
                     <p className="text-muted-foreground text-center">
                       {searchQuery
-                        ? `No projects match "${searchQuery}". Try a different search term.`
-                        : "There are no approved projects available for contracts."}
+                        ? t("contracts.emptySearchHint")
+                        : t("contracts.emptyApproved")}
                     </p>
                     {searchQuery && (
                       <Button
@@ -1559,7 +1426,7 @@ export default function ProjectContract() {
                         className="mt-4"
                         onClick={() => setSearchQuery("")}
                       >
-                        Clear Search
+                        {t("contracts.clearSearch")}
                       </Button>
                     )}
                   </div>
@@ -1594,7 +1461,7 @@ export default function ProjectContract() {
                         onClick={() => openContractsModal(project)}
                       >
                         <FileText className="h-4 w-4 mr-2" />
-                        View Contracts
+                        {t("contracts.viewContracts")}
                       </Button>
                     </div>
 
@@ -1613,10 +1480,10 @@ export default function ProjectContract() {
                         onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                         disabled={currentPage === 1}
                       >
-                        Previous
+                        {t("common.previous")}
                       </Button>
                       <span className="text-sm text-muted-foreground">
-                        Page {currentPage} of {Math.max(1, Math.ceil(totalCount / pageSize))}
+                        {t("common.pageOf", { current: currentPage, total: Math.max(1, Math.ceil(totalCount / pageSize)) })}
                       </span>
                       <Button
                         variant="outline"
@@ -1624,11 +1491,11 @@ export default function ProjectContract() {
                         onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.max(1, Math.ceil(totalCount / pageSize))))}
                         disabled={currentPage >= Math.ceil(totalCount / pageSize)}
                       >
-                        Next
+                        {t("common.next")}
                       </Button>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Items per page:</span>
+                      <span className="text-sm text-muted-foreground">{t("common.itemsPerPage")}</span>
                       <Select
                         value={pageSize.toString()}
                         onValueChange={(value) => {
@@ -1647,7 +1514,7 @@ export default function ProjectContract() {
                         </SelectContent>
                       </Select>
                       <span className="text-sm text-muted-foreground">
-                        ({totalCount} total)
+                        {t("common.totalCount", { count: totalCount })}
                       </span>
                     </div>
                   </div>
@@ -1675,9 +1542,9 @@ export default function ProjectContract() {
               )}
             </DialogTitle>
             <DialogDescription>
-              {modalView === "list" && "Manage contracts for this project"}
-              {modalView === "create" && "Create a new contract"}
-              {modalView === "edit" && "Edit contract details"}
+              {modalView === "list" && t("contracts.manage")}
+              {modalView === "create" && t("contracts.createDesc")}
+              {modalView === "edit" && t("contracts.editDesc")}
             </DialogDescription>
           </DialogHeader>
 
@@ -1685,39 +1552,30 @@ export default function ProjectContract() {
           <Dialog open={!!contractToDelete} onOpenChange={() => setContractToDelete(null)}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Delete Contract</DialogTitle>
+                <DialogTitle>{t("contracts.delete")}</DialogTitle>
                 <DialogDescription>
-                  Are you sure you want to delete this contract? This action cannot be undone.
+                  {t("contracts.deleteConfirm")}
                   <div className="mt-4">
-                    <p className="text-sm font-medium mb-2">Contract Details:</p>
+                    <p className="text-sm font-medium mb-2">{t("contracts.deleteDetails")}</p>
                     <ul className="text-sm text-muted-foreground space-y-1">
-                      <li>Title: {contractToDelete?.title || "Untitled"}</li>
-                      <li>Type: {getTypeName(contractToDelete?.contract_type_id ?? null)}</li>
-                      <li>Status: {getStatusName(contractToDelete?.status_id ?? null)}</li>
+                      <li>{t("contracts.form.title")}: {contractToDelete?.title || t("contracts.untitled")}</li>
+                      <li>{t("contracts.form.type")}: {getTypeName(contractToDelete?.contract_type_id ?? null)}</li>
+                      <li>{t("contracts.form.status")}: {getStatusName(contractToDelete?.status_id ?? null)}</li>
                     </ul>
-                  </div>
-                  <div className="mt-4">
-                    <p className="text-sm font-medium mb-2">Type DELETE to confirm:</p>
-                    <Input
-                      value={deleteConfirmation}
-                      onChange={(e) => setDeleteConfirmation(e.target.value)}
-                      placeholder="Type DELETE"
-                      className="w-full"
-                    />
                   </div>
                 </DialogDescription>
               </DialogHeader>
               <div className="flex justify-end space-x-2">
                 <Button variant="outline" onClick={() => setContractToDelete(null)}>
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button
                   variant="destructive"
                   onClick={confirmDelete}
-                  disabled={deleteConfirmation !== "DELETE" || isDeleting}
+                  disabled={isDeleting}
                 >
                   {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Delete Contract
+                  {t("contracts.delete")}
                 </Button>
               </div>
             </DialogContent>
@@ -1726,10 +1584,10 @@ export default function ProjectContract() {
           {modalView === "list" && (
             <div className="py-4">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-medium">Project Contracts</h3>
+                <h3 className="text-lg font-medium">{t("contracts.title")}</h3>
                 <Button onClick={handleCreateContract}>
                   <PlusCircle className="h-4 w-4 mr-2" />
-                  Add Contract
+                  {t("contracts.add")}
                 </Button>
               </div>
 
@@ -1776,8 +1634,8 @@ export default function ProjectContract() {
               ) : contracts.length === 0 ? (
                 <div className="text-center py-8 border rounded-md bg-muted/30">
                   <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <h3 className="text-lg font-medium mb-2">No contracts available</h3>
-                  <p className="text-muted-foreground">Add your first contract to get started.</p>
+                  <h3 className="text-lg font-medium mb-2">{t("contracts.emptyContracts")}</h3>
+                  <p className="text-muted-foreground">{t("contracts.addFirst")}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -1793,7 +1651,7 @@ export default function ProjectContract() {
 
                         <div className="p-4 pl-6">
                           <div className="flex justify-between items-start mb-3">
-                            <h4 className="text-lg font-medium">{contract.title || "Untitled Contract"}</h4>
+                            <h4 className="text-lg font-medium">{contract.title || t("contracts.untitled")}</h4>
                             <div className="flex space-x-2">
                               <Button
                                 variant="ghost"
@@ -1817,25 +1675,25 @@ export default function ProjectContract() {
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
                             <div>
                               <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <User className="h-3 w-3 mr-1" /> Contracted Party
+                                <User className="h-3 w-3 mr-1" /> {t("contracts.form.party")}
                               </p>
                               <p className="text-sm">{getContractedPartyName(contract)}</p>
                             </div>
                             <div>
                               <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <Calendar className="h-3 w-3 mr-1" /> Start Date
+                                <Calendar className="h-3 w-3 mr-1" /> {t("contracts.form.startDate")}
                               </p>
                               <p className="text-sm">{formatDate(contract.start_date)}</p>
                             </div>
                             <div>
                               <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <Calendar className="h-3 w-3 mr-1" /> End Date
+                                <Calendar className="h-3 w-3 mr-1" /> {t("contracts.form.endDate")}
                               </p>
                               <p className="text-sm">{formatDate(contract.end_date)}</p>
                             </div>
                             <div>
                               <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <User className="h-3 w-3 mr-1" /> Signed By
+                                <User className="h-3 w-3 mr-1" /> {t("contracts.form.signedBy")}
                               </p>
                               <p className="text-sm">{getSignatoryName(contract.signed_by_id, contract.signed_by)}</p>
                             </div>
@@ -1850,10 +1708,10 @@ export default function ProjectContract() {
                                 visibleItems.push(
                                   <div key="commission_percent">
                                     <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                      <DollarSign className="h-3 w-3 mr-1" /> Royalties
+                                      <DollarSign className="h-3 w-3 mr-1" /> {t("contracts.form.royaltiesPercent")}
                                     </p>
                                     <p className="text-sm">
-                                      {contract.commission_percent !== null ? `${contract.commission_percent}%` : "Not set"}
+                                      {contract.commission_percent !== null ? `${contract.commission_percent}%` : t("contracts.notSet")}
                                     </p>
                                   </div>
                                 )
@@ -1863,10 +1721,10 @@ export default function ProjectContract() {
                                 visibleItems.push(
                                   <div key="free_copies">
                                     <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                      <FileText className="h-3 w-3 mr-1" /> Free Copies
+                                      <FileText className="h-3 w-3 mr-1" /> {t("contracts.form.freeCopies")}
                                     </p>
                                     <p className="text-sm">
-                                      {contract.free_copies !== null ? contract.free_copies : "Not set"}
+                                      {contract.free_copies !== null ? contract.free_copies : t("contracts.notSet")}
                                     </p>
                                   </div>
                                 )
@@ -1876,10 +1734,10 @@ export default function ProjectContract() {
                                 visibleItems.push(
                                   <div key="fixed_amount">
                                     <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                      <DollarSign className="h-3 w-3 mr-1" /> Advanced Amount
+                                      <DollarSign className="h-3 w-3 mr-1" /> {t("contracts.form.advancedAmount")}
                                     </p>
                                     <p className="text-sm">
-                                      {contract.fixed_amount !== null ? formatCurrency(contract.fixed_amount) : "Not set"}
+                                      {contract.fixed_amount !== null ? formatCurrency(contract.fixed_amount) : t("contracts.notSet")}
                                     </p>
                                   </div>
                                 )
@@ -1888,10 +1746,10 @@ export default function ProjectContract() {
                               visibleItems.push(
                                 <div key="duration">
                                   <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                    <Clock className="h-3 w-3 mr-1" /> Duration
+                                    <Clock className="h-3 w-3 mr-1" /> {t("contracts.form.duration")}
                                   </p>
                                   <p className="text-sm">
-                                    {contract.contract_duration !== null ? `${contract.contract_duration} months` : "Not set"}
+                                    {contract.contract_duration !== null ? t("contracts.months", { count: contract.contract_duration }) : t("contracts.notSet")}
                                   </p>
                                 </div>
                               )
@@ -1899,7 +1757,7 @@ export default function ProjectContract() {
                               visibleItems.push(
                                 <div key="created">
                                   <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                    <Calendar className="h-3 w-3 mr-1" /> Created
+                                    <Calendar className="h-3 w-3 mr-1" /> {t("contracts.created")}
                                   </p>
                                   <p className="text-sm">{formatDate(contract.created_at)}</p>
                                 </div>
@@ -1912,7 +1770,7 @@ export default function ProjectContract() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
                             <div>
                               <p className="text-xs text-muted-foreground mb-1 flex items-center">
-                                <FileSignature className="h-3 w-3 mr-1" /> Contracted Party
+                                <FileSignature className="h-3 w-3 mr-1" /> {t("contracts.form.party")}
                               </p>
                               <p className="text-sm">{getContractedPartyName(contract)}</p>
                             </div>
@@ -1941,7 +1799,7 @@ export default function ProjectContract() {
 
                           {contract.payment_schedule && (
                             <div className="mt-3">
-                              <p className="text-xs text-muted-foreground mb-1">Payment Schedule</p>
+                              <p className="text-xs text-muted-foreground mb-1">{t("contracts.form.paymentSchedule")}</p>
                               <div className="text-sm bg-muted/30 p-2 rounded-md">{contract.payment_schedule}</div>
                             </div>
                           )}
@@ -1959,18 +1817,18 @@ export default function ProjectContract() {
     
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div className="space-y-2">
-        <Label htmlFor="title">Contract Title</Label>
+        <Label htmlFor="title">{t("contracts.form.title")}</Label>
         <Input
           id="title"
           name="title"
           defaultValue={selectedContract?.title || ""}
-          placeholder="Enter contract title"
+          placeholder={t("contracts.titlePlaceholder")}
           required
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="contract_type_id">Contract Type</Label>
+        <Label htmlFor="contract_type_id">{t("contracts.form.type")}</Label>
         <Select
           name="contract_type_id"
           defaultValue={selectedContract?.contract_type_id?.toString() || ""}
@@ -2000,7 +1858,7 @@ export default function ProjectContract() {
           required
         >
           <SelectTrigger id="contract_type_id">
-            <SelectValue placeholder="Select contract type" />
+            <SelectValue placeholder={t("contracts.selectType")} />
           </SelectTrigger>
           <SelectContent className="z-[100]">
             {contractTypes.length > 0 ? (
@@ -2010,7 +1868,7 @@ export default function ProjectContract() {
                 </SelectItem>
               ))
             ) : (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading contract types...</div>
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">{t("contracts.loadingTypes")}</div>
             )}
           </SelectContent>
         </Select>
@@ -2019,7 +1877,7 @@ export default function ProjectContract() {
       {selectedContractType && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor="contracted_party_id">Contracted Party</Label>
+            <Label htmlFor="contracted_party_id">{t("contracts.form.party")}</Label>
             {(() => {
               const partyType = getContractedPartyTypeFromContractType(selectedContractType)
               const showAddButton = partyType === 'author' || partyType === 'translator' || partyType === 'rightsowner' || partyType === 'reviewer'
@@ -2032,7 +1890,7 @@ export default function ProjectContract() {
                   onClick={() => setIsAddPartyModalOpen(true)}
                 >
                   <PlusCircle className="h-3 w-3 mr-1" />
-                  Add New
+                  {t("common.add")}
                 </Button>
               ) : null
             })()}
@@ -2056,7 +1914,7 @@ export default function ProjectContract() {
             }}
           >
             <SelectTrigger id="contracted_party_id">
-              <SelectValue placeholder="Select contracted party" />
+              <SelectValue placeholder={t("contracts.selectParty")} />
             </SelectTrigger>
             <SelectContent className="z-[100]">
               {getContractedPartyOptions(
@@ -2072,7 +1930,7 @@ export default function ProjectContract() {
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="status_id">Status</Label>
+        <Label htmlFor="status_id">{t("contracts.form.status")}</Label>
         <Select
           name="status_id"
           defaultValue={selectedContract?.status_id?.toString() || ""}
@@ -2084,7 +1942,7 @@ export default function ProjectContract() {
           required
         >
           <SelectTrigger id="status_id">
-            <SelectValue placeholder="Select status" />
+            <SelectValue placeholder={t("contracts.selectStatus")} />
           </SelectTrigger>
           <SelectContent className="z-[100]">
             {contractStatuses.map((status) => (
@@ -2097,14 +1955,14 @@ export default function ProjectContract() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="signed_by_id">Signed By</Label>
+        <Label htmlFor="signed_by_id">{t("contracts.form.signedBy")}</Label>
         <Select
           name="signed_by_id"
           defaultValue={selectedContract?.signed_by_id?.toString() || ""}
           required
         >
           <SelectTrigger id="signed_by_id">
-            <SelectValue placeholder="Select signatory" />
+            <SelectValue placeholder={t("contracts.selectSignatory")} />
           </SelectTrigger>
           <SelectContent className="z-[100]">
             {signatories.length > 0 ? (
@@ -2119,7 +1977,7 @@ export default function ProjectContract() {
             ) : (
               <div className="px-2 py-1.5 text-sm text-muted-foreground">
                 {process.env.NODE_ENV !== 'production' && `Loading... (count: ${signatories.length})`}
-                {process.env.NODE_ENV === 'production' && 'Loading signatories...'}
+                {process.env.NODE_ENV === 'production' && t("contracts.loadingSignatories")}
               </div>
             )}
           </SelectContent>
@@ -2127,7 +1985,7 @@ export default function ProjectContract() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="start_date">Start Date</Label>
+        <Label htmlFor="start_date">{t("contracts.form.startDate")}</Label>
         <Input
           id="start_date"
           name="start_date"
@@ -2138,7 +1996,7 @@ export default function ProjectContract() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="end_date">End Date</Label>
+        <Label htmlFor="end_date">{t("contracts.form.endDate")}</Label>
         <Input
           id="end_date"
           name="end_date"
@@ -2150,14 +2008,14 @@ export default function ProjectContract() {
 
       {visibleFields.fixed_amount && (
         <div className="space-y-2">
-          <Label htmlFor="fixed_amount">Advanced Amount</Label>
+          <Label htmlFor="fixed_amount">{t("contracts.form.advancedAmount")}</Label>
           <Input
             id="fixed_amount"
             name="fixed_amount"
             type="number"
             step="0.01"
             defaultValue={selectedContract?.fixed_amount || ""}
-            placeholder="Enter fixed amount"
+            placeholder={t("contracts.amountPlaceholder")}
           />
         </div>
       )}
@@ -2165,7 +2023,7 @@ export default function ProjectContract() {
       {visibleFields.commission_percent && (
         <>
           <div className="space-y-2">
-            <Label htmlFor="royalties_type_id">Royalties Type</Label>
+            <Label htmlFor="royalties_type_id">{t("contracts.form.royaltiesType")}</Label>
             <Select
               name="royalties_type_id"
               defaultValue={selectedContract?.royalties_type_id?.toString() || ""}
@@ -2178,7 +2036,7 @@ export default function ProjectContract() {
               }}
             >
               <SelectTrigger id="royalties_type_id">
-                <SelectValue placeholder="Select royalties type" />
+                <SelectValue placeholder={t("contracts.selectRoyaltiesType")} />
               </SelectTrigger>
               <SelectContent className="z-[100]">
                 {royaltiesTypes.length > 0 ? (
@@ -2190,7 +2048,7 @@ export default function ProjectContract() {
                 ) : (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">
                     {process.env.NODE_ENV !== 'production' && `Loading... (count: ${royaltiesTypes.length})`}
-                    {process.env.NODE_ENV === 'production' && 'Loading royalties types...'}
+                    {process.env.NODE_ENV === 'production' && t("contracts.loadingRoyalties")}
                   </div>
                 )}
               </SelectContent>
@@ -2202,14 +2060,14 @@ export default function ProjectContract() {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="commission_percent">Royalties Percentage</Label>
+            <Label htmlFor="commission_percent">{t("contracts.form.royaltiesPercent")}</Label>
             <Input
               id="commission_percent"
               name="commission_percent"
               type="number"
               step="0.01"
               defaultValue={selectedContract?.commission_percent || ""}
-              placeholder="Enter commission percentage"
+              placeholder={t("contracts.commissionPlaceholder")}
             />
           </div>
         </>
@@ -2217,25 +2075,25 @@ export default function ProjectContract() {
 
       {visibleFields.free_copies && (
         <div className="space-y-2">
-          <Label htmlFor="free_copies">Free Copies</Label>
+          <Label htmlFor="free_copies">{t("contracts.form.freeCopies")}</Label>
           <Input
             id="free_copies"
             name="free_copies"
             type="number"
             defaultValue={selectedContract?.free_copies || ""}
-            placeholder="Enter number of free copies"
+            placeholder={t("contracts.freeCopiesPlaceholder")}
           />
         </div>
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="contract_duration">Contract Duration (months)</Label>
+        <Label htmlFor="contract_duration">{t("contracts.form.duration")}</Label>
         <Input
           id="contract_duration"
           name="contract_duration"
           type="number"
           defaultValue={selectedContract?.contract_duration || ""}
-          placeholder="Enter start and end dates to auto-calculate"
+          placeholder={t("contracts.durationAutoHint")}
           readOnly
         />
         <p className="text-xs text-muted-foreground">
@@ -2244,24 +2102,24 @@ export default function ProjectContract() {
       </div>
 
       <div className="space-y-2 md:col-span-2">
-        <Label htmlFor="payment_schedule">Payment Schedule</Label>
+        <Label htmlFor="payment_schedule">{t("contracts.form.paymentSchedule")}</Label>
         <Textarea
           id="payment_schedule"
           name="payment_schedule"
           defaultValue={selectedContract?.payment_schedule || ""}
-          placeholder="Enter payment schedule details"
+          placeholder={t("contracts.paymentSchedulePlaceholder")}
           rows={3}
           required
         />
       </div>
 
       <div className="space-y-2 md:col-span-2">
-        <Label htmlFor="notes">Notes</Label>
+        <Label htmlFor="notes">{t("contracts.form.notes")}</Label>
         <Textarea
           id="notes"
           name="notes"
           defaultValue={selectedContract?.notes || ""}
-          placeholder="Enter any additional notes"
+          placeholder={t("contracts.notesPlaceholder")}
           rows={3}
         />
       </div>
@@ -2269,11 +2127,11 @@ export default function ProjectContract() {
 
     <div className="flex justify-end space-x-2 pt-4">
       <Button type="button" variant="outline" onClick={handleBackToList}>
-        Cancel
+        {t("common.cancel")}
       </Button>
       <Button type="submit" disabled={isSubmitting || isCreating || isUpdating}>
         {(isSubmitting || isCreating || isUpdating) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-        {modalView === "create" ? "Create Contract" : "Update Contract"}
+        {modalView === "create" ? t("contracts.create") : t("contracts.update")}
       </Button>
     </div>
   </form>
@@ -2289,12 +2147,12 @@ export default function ProjectContract() {
             <DialogTitle>
               {selectedContractType ? (() => {
                 const partyType = getContractedPartyTypeFromContractType(selectedContractType)
-                if (partyType === 'author') return 'Add New Author'
-                if (partyType === 'translator') return 'Add New Translator'
-                if (partyType === 'rightsowner') return 'Add New Rights Owner'
-                if (partyType === 'reviewer') return 'Add New Reviewer'
-                return 'Add New Party'
-              })() : 'Add New Party'}
+                if (partyType === 'author') return t("contracts.addParty.author")
+                if (partyType === 'translator') return t("contracts.addParty.translator")
+                if (partyType === 'rightsowner') return t("contracts.addParty.rightsOwner")
+                if (partyType === 'reviewer') return t("contracts.addParty.reviewer")
+                return t("common.add")
+              })() : t("common.add")}
             </DialogTitle>
             <DialogDescription>
               {selectedContractType ? (() => {
@@ -2310,12 +2168,12 @@ export default function ProjectContract() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="party_name">Name *</Label>
+              <Label htmlFor="party_name">{t("contracts.addParty.name")} *</Label>
               <Input
                 id="party_name"
                 value={newParty.name}
                 onChange={(e) => setNewParty({ ...newParty, name: e.target.value })}
-                placeholder="Enter name"
+                placeholder={t("contracts.namePlaceholder")}
                 required
               />
             </div>
@@ -2325,12 +2183,12 @@ export default function ProjectContract() {
               if (partyType === 'author' || partyType === 'translator' || partyType === 'reviewer') {
                 return (
                   <div className="space-y-2">
-                    <Label htmlFor="party_bio">Bio</Label>
+                    <Label htmlFor="party_bio">{t("contracts.addParty.bio")}</Label>
                     <Textarea
                       id="party_bio"
                       value={newParty.bio || ""}
                       onChange={(e) => setNewParty({ ...newParty, bio: e.target.value })}
-                      placeholder="Enter bio (optional)"
+                      placeholder={t("contracts.bioPlaceholder")}
                       rows={3}
                     />
                   </div>
@@ -2338,12 +2196,12 @@ export default function ProjectContract() {
               } else if (partyType === 'rightsowner') {
                 return (
                   <div className="space-y-2">
-                    <Label htmlFor="party_contact_info">Contact Information</Label>
+                    <Label htmlFor="party_contact_info">{t("contracts.addParty.contact")}</Label>
                     <Textarea
                       id="party_contact_info"
                       value={newParty.contact_info || ""}
                       onChange={(e) => setNewParty({ ...newParty, contact_info: e.target.value })}
-                      placeholder="Enter contact information (optional)"
+                      placeholder={t("contracts.contactPlaceholder")}
                       rows={3}
                     />
                   </div>
@@ -2362,7 +2220,7 @@ export default function ProjectContract() {
                 setNewParty({ name: "", bio: "", contact_info: "" })
               }}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               type="button"
@@ -2370,12 +2228,11 @@ export default function ProjectContract() {
               disabled={isCreatingParty || !newParty.name.trim()}
             >
               {isCreatingParty && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create
+              {t("common.add")}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
-    </SidebarProvider>
-    </ErrorBoundary>
+</ErrorBoundary>
   )
 }
