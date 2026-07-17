@@ -16,6 +16,7 @@ import { API_URL } from "@/lib/config"
 import { buildReceiptPayloadFromSummary } from "@/components/receipt/buildReceiptPayload"
 import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 import { downloadInvoiceDetailAsExcel } from "@/lib/exportInvoicesToExcel"
+import { fetchAllPages } from "@/lib/fetch-all-pages"
 
 import { InvoiceFilters } from "./components/invoice-filters"
 import { InvoiceTable } from "./components/invoice-table"
@@ -173,39 +174,19 @@ export default function InvoicesPage() {
   }, [searchQuery])
 
   const fetchAllPaginated = async <T,>(initialUrl: string, signal: AbortSignal): Promise<T[]> => {
-    const normalizeList = (payload: unknown): T[] => {
-      if (!payload) return []
-      if (Array.isArray(payload)) return payload as T[]
-      if (typeof payload === "object" && payload !== null && "results" in payload) {
-        const results = (payload as { results?: unknown }).results
-        if (Array.isArray(results)) return results as T[]
-      }
-      return []
-    }
-
-    const allItems: T[] = []
-    let nextUrl: string | null = initialUrl
-
-    while (nextUrl) {
+    const url = new URL(initialUrl, window.location.origin)
+    return fetchAllPages<T>(async (page) => {
       if (signal.aborted) {
         throw new DOMException("The operation was aborted.", "AbortError")
       }
-      const res = await fetchWithRetry(nextUrl, { headers, signal })
+      url.searchParams.set("page", String(page))
+      const requestUrl = url.toString()
+      const res = await fetchWithRetry(requestUrl, { headers, signal })
       if (!res.ok) {
-        throw new Error(`Request failed (${res.status}) for ${nextUrl}`)
+        throw new Error(`Request failed (${res.status}) for ${requestUrl}`)
       }
-      const data = await res.json()
-      allItems.push(...normalizeList(data))
-      nextUrl =
-        typeof data === "object" &&
-        data !== null &&
-        typeof (data as { next?: unknown }).next === "string" &&
-        (data as { next: string }).next
-          ? (data as { next: string }).next
-          : null
-    }
-
-    return allItems
+      return res.json()
+    })
   }
 
   const buildInvoicesUrl = useCallback(

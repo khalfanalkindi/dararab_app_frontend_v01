@@ -15,27 +15,6 @@ const nextConfig = {
       }
     ]
   },
-  // Ensure webpack doesn't split chunks too aggressively
-  webpack: (config, { isServer }) => {
-    if (!isServer) {
-      // Prevent splitting into too many chunks
-      config.optimization.splitChunks = {
-        chunks: 'all',
-        cacheGroups: {
-          default: false,
-          vendors: false,
-          // Create a single chunk for all modules
-          commons: {
-            name: 'commons',
-            chunks: 'all',
-            minChunks: 1,
-            reuseExistingChunk: true,
-          },
-        },
-      };
-    }
-    return config;
-  },
 }
 
 module.exports = nextConfig
