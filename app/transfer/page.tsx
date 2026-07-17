@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/table"
 import { toast } from "sonner"
 import { API_URL } from "@/lib/config"
+import { fetchAllPages } from "@/lib/fetch-all-pages"
 
 type Product = {
   id: number
@@ -196,36 +197,30 @@ useEffect(() => {
       }
       
       const params = new URLSearchParams()
-      params.append("page_size", "50")
+      params.set("page_size", "100")
       if (search.trim()) {
-        params.append("search", search.trim())
+        params.set("search", search.trim())
       }
-      
-      const res = await fetchWithRetry(`${API_URL}/inventory/product-summary/?${params.toString()}`, {
-        headers, 
-        signal: signal || abortControllerRef.current?.signal 
-      })
-      
-      const ensureJson = async (res: Response) => {
-        const ct = res.headers.get("content-type") || ""
-        if (!ct.includes("application/json")) {
+
+      return fetchAllPages<Product>(async (page) => {
+        params.set("page", String(page))
+        const res = await fetchWithRetry(
+          `${API_URL}/inventory/product-summary/?${params.toString()}`,
+          {
+            headers,
+            signal: signal || abortControllerRef.current?.signal,
+          },
+        )
+
+        const contentType = res.headers.get("content-type") || ""
+        if (!res.ok || !contentType.includes("application/json")) {
           const text = await res.text()
-          throw new Error(`Products request failed (${res.status}): ${text.slice(0, 200)}`)
+          throw new Error(
+            `Products request failed (${res.status}): ${text.slice(0, 200)}`,
+          )
         }
         return res.json()
-      }
-      
-      const data = await ensureJson(res)
-      const normalizeList = (payload: any) => {
-        if (!payload) return []
-        if (Array.isArray(payload)) return payload
-        if (Array.isArray(payload.results)) return payload.results
-        if (Array.isArray(payload.data)) return payload.data
-        if (Array.isArray(payload.items)) return payload.items
-        return []
-      }
-      
-      return normalizeList(data)
+      })
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         return []

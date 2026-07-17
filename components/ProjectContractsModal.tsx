@@ -12,6 +12,7 @@ import { ArrowLeft, FileText, Calendar, DollarSign, User, Clock, CheckCircle, Al
 import { useState, useEffect } from "react"
 import { toast } from "sonner"
 import { useLanguage } from "@/components/language-context"
+import { API_URL } from "@/lib/config"
 
 interface Project {
   id: number
@@ -78,10 +79,6 @@ export default function ProjectContractsModal({
   const { t } = useLanguage()
   const [contracts, setContracts] = useState<Contract[]>([])
   const [isContractsLoading, setIsContractsLoading] = useState(false)
-
-  const API_URL =
-    process.env.NEXT_PUBLIC_API_URL ||
-    "https://dararabappbackendv01-production.up.railway.app/api"
 
   const headers = {
     "Content-Type": "application/json",
