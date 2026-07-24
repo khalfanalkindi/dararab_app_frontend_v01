@@ -12,6 +12,7 @@ import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { API_URL } from "@/lib/config"
+import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { PosMetrics } from "./components/pos-metrics"
 import { PosProductGrid } from "./components/pos-product-grid"
 import { PosCart } from "./components/pos-cart"
@@ -285,9 +286,24 @@ export default function POSPage() {
         Authorization: `Bearer ${token}`,
       };
 
-      // Fetch all basic data in parallel (except products which need warehouse selection)
+      // Customers are paginated (25 default / max 100). Load every page so POS search
+      // is not limited to the first page only.
+      const customersArray = await fetchAllPages<Customer>(async (page) => {
+        const params = new URLSearchParams({
+          page: String(page),
+          page_size: "100",
+          ordering: "institution_name",
+        })
+        const res = await fetchWithRetry(
+          `${API_URL}/sales/customers/?${params.toString()}`,
+          { headers, signal: controller.signal },
+        )
+        if (!res.ok) throw new Error("Failed to fetch customers")
+        return res.json()
+      })
+
+      // Fetch remaining lookup data in parallel (products still need warehouse selection)
       const [
-        customersRes,
         genresRes,
         warehousesRes,
         paymentMethodsRes,
@@ -295,7 +311,6 @@ export default function POSPage() {
         customerTypesRes,
         warehouseTypesRes,
       ] = await Promise.all([
-        fetchWithRetry(`${API_URL}/sales/customers/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/genre/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/inventory/warehouses/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/payment_method/`, { headers, signal: controller.signal }),
@@ -304,14 +319,12 @@ export default function POSPage() {
         fetchWithRetry(`${API_URL}/common/list-items/warehouse_type/`, { headers, signal: controller.signal }),
       ]);
 
-      if (!customersRes.ok) throw new Error("Failed to fetch customers");
       if (!genresRes.ok) throw new Error("Failed to fetch genres");
       if (!warehousesRes.ok) throw new Error("Failed to fetch warehouses");
       if (!paymentMethodsRes.ok) throw new Error("Failed to fetch payment methods");
       if (!invoiceTypesRes.ok) throw new Error("Failed to fetch invoice types");
       if (!customerTypesRes.ok) throw new Error("Failed to fetch customer types");
 
-      const customersData = await customersRes.json();
       const genresData = await genresRes.json();
       const warehousesData = await warehousesRes.json();
       const paymentMethodsData = await paymentMethodsRes.json();
@@ -322,7 +335,6 @@ export default function POSPage() {
         : [];
 
       // Process other data
-      const customersArray = Array.isArray(customersData) ? customersData : customersData.results || [];
       const genresArray = Array.isArray(genresData) ? genresData : genresData.results || [];
       const rawWarehousesArray: Warehouse[] = Array.isArray(warehousesData)
         ? warehousesData

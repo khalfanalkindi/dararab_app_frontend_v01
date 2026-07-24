@@ -233,16 +233,6 @@ export default function InvoicesPage() {
     [selectedWarehouse, dateRange, debouncedSearchQuery, selectedCustomerId, currentPage, pageSize],
   )
 
-  const getCurrencyLabelForInvoice = useCallback(
-    (warehouseName?: string, warehouseId?: number) => {
-      const warehouse = warehouses.find(
-        (w) => w.id === warehouseId || w.name_en === warehouseName || w.name_ar === warehouseName,
-      )
-      return warehouse?.location === "Muscat" ? "OMR" : "$"
-    },
-    [warehouses],
-  )
-
   const handleExportInvoiceExcel = async (invoice: Invoice) => {
     setLoadingAction({ id: invoice.id, action: "export" })
     try {
@@ -261,10 +251,10 @@ export default function InvoicesPage() {
         ...data,
         warehouse_location: warehouse?.location,
       })
-      const currencyLabel = getCurrencyLabelForInvoice(data.warehouse_name, warehouse?.id)
+      // Invoice Excel always uses USD ($). OMR display is POS-only (Muscat screen).
       const filename = `invoice-${receiptData.composite_id || invoice.id}.xlsx`
 
-      downloadInvoiceDetailAsExcel(receiptData, currencyLabel, filename)
+      downloadInvoiceDetailAsExcel(receiptData, "$", filename)
 
       toast.success(t("invoicesToasts.excelExported"), {
         description: t("invoicesToasts.excelExportedDesc"),
