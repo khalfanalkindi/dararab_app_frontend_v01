@@ -170,7 +170,8 @@ export function PosCart({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[300px] p-0">
-                  <Command>
+                  {/* Parent already filters by name/contact/phone/email — disable cmdk re-filter */}
+                  <Command shouldFilter={false}>
                     <CommandInput
                       placeholder={t("pos.cart.searchCustomer")}
                       value={customerSearchQuery}
@@ -182,7 +183,7 @@ export function PosCart({
                         {filteredCustomers.map((customer) => (
                           <CommandItem
                             key={customer.id}
-                            value={customer.institution_name}
+                            value={`${customer.id}-${customer.institution_name}`}
                             onSelect={() => {
                               onSelectCustomer(customer)
                               onCustomerSearchOpenChange(false)
