@@ -1,38 +1,47 @@
 "use client"
 
 import Link from "next/link"
-import { BarChart3, Calculator, Warehouse } from "lucide-react"
+import { BarChart3, BookOpen, Calculator, Warehouse } from "lucide-react"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
 import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
-
-const links = [
-  {
-    href: "/reports/warehouse-stat",
-    title: "Warehouse Statistics",
-    description: "Sales and stock performance by warehouse and date range.",
-    icon: Warehouse,
-  },
-  {
-    href: "/reports/royalties",
-    title: "Royalties Calculation",
-    description: "Calculate royalties for contracts and projects.",
-    icon: Calculator,
-  },
-]
+import { useLanguage } from "@/components/language-context"
 
 export default function ReportsHubPage() {
+  const { t } = useLanguage()
+
+  const links = [
+    {
+      href: "/reports/warehouse-stat",
+      title: t("nav.warehouseStatistics"),
+      description: t("bookSales.hubWarehouseDesc"),
+      icon: Warehouse,
+    },
+    {
+      href: "/reports/book-sales",
+      title: t("nav.bookSalesAnalytics"),
+      description: t("bookSales.description"),
+      icon: BookOpen,
+    },
+    {
+      href: "/reports/royalties",
+      title: t("nav.royaltiesCalculation"),
+      description: t("bookSales.hubRoyaltiesDesc"),
+      icon: Calculator,
+    },
+  ]
+
   return (
     <ErrorBoundary>
-      <DocumentTitle title="Reports" />
+      <DocumentTitle title={t("nav.reports")} />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
-            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: "Reports" }]} />
+            <PageBreadcrumb items={[DASHBOARD_CRUMB, { label: t("nav.reports") }]} />
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
@@ -40,10 +49,8 @@ export default function ReportsHubPage() {
             <div className="mb-6 flex items-start gap-3">
               <BarChart3 className="mt-1 h-6 w-6 text-muted-foreground" />
               <div>
-                <h2 className="text-xl font-semibold">Reports</h2>
-                <p className="text-muted-foreground">
-                  Choose a report to explore warehouse performance or royalties.
-                </p>
+                <h2 className="text-xl font-semibold">{t("nav.reports")}</h2>
+                <p className="text-muted-foreground">{t("bookSales.hubIntro")}</p>
               </div>
             </div>
 

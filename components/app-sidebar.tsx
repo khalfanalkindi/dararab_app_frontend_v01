@@ -87,6 +87,7 @@ function buildNavGroups(t: TranslateFn): NavMainGroup[] {
           items: [
             { title: t("nav.reportsOverview"), url: "/reports" },
             { title: t("nav.warehouseStatistics"), url: "/reports/warehouse-stat" },
+            { title: t("nav.bookSalesAnalytics"), url: "/reports/book-sales" },
             { title: t("nav.royaltiesCalculation"), url: "/reports/royalties" },
           ],
         },
