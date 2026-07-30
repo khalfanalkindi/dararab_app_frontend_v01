@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -42,6 +41,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { fetchWithRetry } from "@/lib/apiClient"
 import { API_URL } from "@/lib/config"
 import { cn } from "@/lib/utils"
@@ -56,17 +65,26 @@ type ProductOption = {
   name?: string
 }
 type WriteoffType = "damage" | "loss" | "reserved"
+type ListItemOption = {
+  id: number
+  value: string
+  display_name_en: string
+  display_name_ar: string
+  is_active?: boolean
+}
 type WriteoffRow = {
   id: number
   product_title: string | null
   isbn: string | null
   warehouse_name: string | null
-  movement_type: WriteoffType
+  movement_type: WriteoffType | string
   quantity: number
   reason: string
   occurred_at: string | null
   created_by: string | null
 }
+
+const ALLOWED_TYPES = new Set(["damage", "loss", "reserved"])
 
 function productLabel(p: ProductOption) {
   const title = p.title_en || p.title_ar || p.name || `Product ${p.id}`
@@ -74,10 +92,11 @@ function productLabel(p: ProductOption) {
 }
 
 export default function StockWriteoffsPage() {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const crumbs = useAppCrumbs()
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [reasonOptions, setReasonOptions] = useState<ListItemOption[]>([])
   const [productOpen, setProductOpen] = useState(false)
   const [productQuery, setProductQuery] = useState("")
   const [productOptions, setProductOptions] = useState<ProductOption[]>([])
@@ -85,15 +104,18 @@ export default function StockWriteoffsPage() {
   const [selectedProduct, setSelectedProduct] = useState<ProductOption | null>(null)
 
   const [warehouseId, setWarehouseId] = useState<string>("")
-  const [movementType, setMovementType] = useState<WriteoffType | "">("")
+  const [reasonItemId, setReasonItemId] = useState<string>("")
   const [quantity, setQuantity] = useState("")
-  const [reason, setReason] = useState("")
+  const [availableStock, setAvailableStock] = useState<number | null>(null)
+  const [isLoadingStock, setIsLoadingStock] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const [rows, setRows] = useState<WriteoffRow[]>([])
   const [isLoadingRows, setIsLoadingRows] = useState(false)
 
   const productAbortRef = useRef<AbortController | null>(null)
+  const stockAbortRef = useRef<AbortController | null>(null)
 
   const headers = useMemo(
     () => ({
@@ -101,6 +123,31 @@ export default function StockWriteoffsPage() {
       Authorization: `Bearer ${typeof window !== "undefined" ? localStorage.getItem("accessToken") : ""}`,
     }),
     [],
+  )
+
+  const selectedReason = useMemo(
+    () => reasonOptions.find((item) => String(item.id) === reasonItemId) || null,
+    [reasonOptions, reasonItemId],
+  )
+
+  const reasonLabel = useCallback(
+    (item: ListItemOption) =>
+      language === "ar"
+        ? item.display_name_ar || item.display_name_en || item.value
+        : item.display_name_en || item.display_name_ar || item.value,
+    [language],
+  )
+
+  const typeLabel = useCallback(
+    (type: string) => {
+      const fromList = reasonOptions.find((item) => item.value === type)
+      if (fromList) return reasonLabel(fromList)
+      if (type === "damage") return t("writeoffs.damage")
+      if (type === "loss") return t("writeoffs.loss")
+      if (type === "reserved") return t("writeoffs.reserved")
+      return type
+    },
+    [reasonOptions, reasonLabel, t],
   )
 
   const loadRows = useCallback(async () => {
@@ -124,15 +171,32 @@ export default function StockWriteoffsPage() {
     const controller = new AbortController()
     void (async () => {
       try {
-        const res = await fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=100`, {
-          headers,
-          signal: controller.signal,
-        })
-        if (!res.ok) return
-        const data = await res.json()
-        setWarehouses(Array.isArray(data) ? data : data.results || [])
+        const [warehousesRes, reasonsRes] = await Promise.all([
+          fetchWithRetry(`${API_URL}/inventory/warehouses/?page_size=100`, {
+            headers,
+            signal: controller.signal,
+          }),
+          fetchWithRetry(`${API_URL}/common/list-items/movement_type/`, {
+            headers,
+            signal: controller.signal,
+          }),
+        ])
+        if (warehousesRes.ok) {
+          const data = await warehousesRes.json()
+          setWarehouses(Array.isArray(data) ? data : data.results || [])
+        }
+        if (reasonsRes.ok) {
+          const data = await reasonsRes.json()
+          const items = (Array.isArray(data) ? data : data.results || []) as ListItemOption[]
+          setReasonOptions(
+            items.filter(
+              (item) =>
+                item.is_active !== false && ALLOWED_TYPES.has((item.value || "").trim()),
+            ),
+          )
+        }
       } catch {
-        /* ignore */
+        /* ignore abort */
       }
     })()
     void loadRows()
@@ -170,33 +234,94 @@ export default function StockWriteoffsPage() {
     return () => clearTimeout(timer)
   }, [productOpen, productQuery, headers])
 
-  const typeLabel = (type: string) => {
-    if (type === "damage") return t("writeoffs.damage")
-    if (type === "loss") return t("writeoffs.loss")
-    if (type === "reserved") return t("writeoffs.reserved")
-    return type
-  }
+  useEffect(() => {
+    if (!selectedProduct || !warehouseId) {
+      setAvailableStock(null)
+      return
+    }
+    stockAbortRef.current?.abort()
+    stockAbortRef.current = new AbortController()
+    const signal = stockAbortRef.current.signal
+    setIsLoadingStock(true)
+    const params = new URLSearchParams({
+      product_id: String(selectedProduct.id),
+      warehouse_id: warehouseId,
+      page_size: "10",
+    })
+    void fetchWithRetry(`${API_URL}/inventory/inventory/?${params}`, {
+      headers,
+      signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) return null
+        const data = await res.json()
+        const rows = Array.isArray(data) ? data : data.results || []
+        const match =
+          rows.find(
+            (row: { product_id?: number; warehouse_id?: number; product?: { id?: number }; warehouse?: { id?: number } }) =>
+              (row.product_id === selectedProduct.id || row.product?.id === selectedProduct.id) &&
+              (row.warehouse_id === Number(warehouseId) ||
+                row.warehouse?.id === Number(warehouseId)),
+          ) ?? rows[0]
+        return typeof match?.quantity === "number" ? match.quantity : 0
+      })
+      .then((qty) => {
+        if (!signal.aborted) setAvailableStock(qty)
+      })
+      .catch(() => {
+        if (!signal.aborted) setAvailableStock(null)
+      })
+      .finally(() => {
+        if (!signal.aborted) setIsLoadingStock(false)
+      })
+  }, [selectedProduct, warehouseId, headers])
 
-  const handleSave = async () => {
+  const validateForm = () => {
     if (!selectedProduct) {
       toast.error(t("writeoffs.selectBookFirst"))
-      return
+      return null
     }
     if (!warehouseId) {
       toast.error(t("writeoffs.selectWarehouseFirst"))
-      return
+      return null
     }
-    if (!movementType) {
-      toast.error(t("writeoffs.selectTypeFirst"))
-      return
+    if (!selectedReason || !ALLOWED_TYPES.has(selectedReason.value)) {
+      toast.error(t("writeoffs.reasonRequired"))
+      return null
     }
     const qty = Number(quantity)
     if (!Number.isFinite(qty) || qty <= 0) {
       toast.error(t("writeoffs.invalidQuantity"))
-      return
+      return null
     }
-    if (!reason.trim()) {
-      toast.error(t("writeoffs.reasonRequired"))
+    if (availableStock == null) {
+      toast.error(t("writeoffs.stockUnknown"))
+      return null
+    }
+    if (qty > availableStock) {
+      toast.error(t("writeoffs.quantityExceedsStock"), {
+        description: t("writeoffs.availableStock", { stock: String(availableStock) }),
+      })
+      return null
+    }
+    return {
+      product: selectedProduct,
+      warehouseId: Number(warehouseId),
+      movementType: selectedReason.value as WriteoffType,
+      reasonText: reasonLabel(selectedReason),
+      qty,
+    }
+  }
+
+  const handleSaveClick = () => {
+    if (!validateForm()) return
+    setConfirmOpen(true)
+  }
+
+  const handleConfirmSave = async () => {
+    const payload = validateForm()
+    if (!payload) {
+      setConfirmOpen(false)
       return
     }
 
@@ -206,11 +331,11 @@ export default function StockWriteoffsPage() {
         method: "POST",
         headers,
         body: JSON.stringify({
-          product_id: selectedProduct.id,
-          warehouse_id: Number(warehouseId),
-          movement_type: movementType,
-          quantity: qty,
-          reason: reason.trim(),
+          product_id: payload.product.id,
+          warehouse_id: payload.warehouseId,
+          movement_type: payload.movementType,
+          quantity: payload.qty,
+          reason: payload.reasonText,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -227,12 +352,18 @@ export default function StockWriteoffsPage() {
       }
       toast.success(t("writeoffs.saved"), {
         description: t("writeoffs.savedDesc", {
-          qty: String(qty),
+          qty: String(payload.qty),
           stock: String(data.movement?.current_stock ?? ""),
         }),
       })
       setQuantity("")
-      setReason("")
+      setReasonItemId("")
+      setConfirmOpen(false)
+      setAvailableStock(
+        typeof data.movement?.current_stock === "number"
+          ? data.movement.current_stock
+          : availableStock,
+      )
       void loadRows()
     } catch (error) {
       toast.error(t("writeoffs.saveFailed"), {
@@ -343,18 +474,23 @@ export default function StockWriteoffsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>{t("writeoffs.status")}</Label>
-                <Select
-                  value={movementType}
-                  onValueChange={(v) => setMovementType(v as WriteoffType)}
-                >
+                <Label>{t("writeoffs.reason")}</Label>
+                <Select value={reasonItemId} onValueChange={setReasonItemId}>
                   <SelectTrigger>
-                    <SelectValue placeholder={t("writeoffs.selectStatus")} />
+                    <SelectValue placeholder={t("writeoffs.selectReason")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="damage">{t("writeoffs.damage")}</SelectItem>
-                    <SelectItem value="loss">{t("writeoffs.loss")}</SelectItem>
-                    <SelectItem value="reserved">{t("writeoffs.reserved")}</SelectItem>
+                    {reasonOptions.length === 0 ? (
+                      <SelectItem value="__empty" disabled>
+                        {t("writeoffs.noReasons")}
+                      </SelectItem>
+                    ) : (
+                      reasonOptions.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {reasonLabel(item)}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -364,24 +500,24 @@ export default function StockWriteoffsPage() {
                 <Input
                   type="number"
                   min={1}
+                  max={availableStock ?? undefined}
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
                 />
-              </div>
-
-              <div className="space-y-2 md:col-span-2">
-                <Label>{t("writeoffs.reason")}</Label>
-                <Textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  placeholder={t("writeoffs.reasonPlaceholder")}
-                  rows={3}
-                />
+                {selectedProduct && warehouseId && (
+                  <p className="text-xs text-muted-foreground">
+                    {isLoadingStock
+                      ? t("common.loading")
+                      : availableStock == null
+                        ? t("writeoffs.stockUnknown")
+                        : t("writeoffs.availableStock", { stock: String(availableStock) })}
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="mt-4">
-              <Button onClick={() => void handleSave()} disabled={isSaving}>
+              <Button onClick={handleSaveClick} disabled={isSaving || isLoadingStock}>
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t("writeoffs.save")}
               </Button>
@@ -407,9 +543,8 @@ export default function StockWriteoffsPage() {
                       <TableHead>{t("writeoffs.date")}</TableHead>
                       <TableHead>{t("writeoffs.book")}</TableHead>
                       <TableHead>{t("writeoffs.warehouse")}</TableHead>
-                      <TableHead>{t("writeoffs.status")}</TableHead>
-                      <TableHead className="text-right">{t("writeoffs.quantity")}</TableHead>
                       <TableHead>{t("writeoffs.reason")}</TableHead>
+                      <TableHead className="text-right">{t("writeoffs.quantity")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -429,11 +564,10 @@ export default function StockWriteoffsPage() {
                           </div>
                         </TableCell>
                         <TableCell>{row.warehouse_name || "—"}</TableCell>
-                        <TableCell>{typeLabel(row.movement_type)}</TableCell>
-                        <TableCell className="text-right">{row.quantity}</TableCell>
-                        <TableCell className="max-w-[280px] truncate">
-                          {row.reason || "—"}
+                        <TableCell>
+                          {row.reason || typeLabel(row.movement_type)}
                         </TableCell>
+                        <TableCell className="text-right">{row.quantity}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -443,6 +577,32 @@ export default function StockWriteoffsPage() {
           </Card>
         </div>
       </SidebarInset>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("writeoffs.confirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("writeoffs.confirmDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSaving}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSaving}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleConfirmSave()
+              }}
+            >
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t("writeoffs.confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ErrorBoundary>
   )
 }
