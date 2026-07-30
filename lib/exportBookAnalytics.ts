@@ -91,6 +91,7 @@ function buildWorkbookRows(payload: BookAnalyticsPayload, meta: ExportMeta): (st
     ["Transferred out", Number(payload.stock?.transferred_out ?? 0)],
     ["Damaged", Number(payload.stock?.damaged ?? 0)],
     ["Lost", Number(payload.stock?.lost ?? 0)],
+    ["Reserved", Number(payload.stock?.reserved ?? 0)],
     ["Complimentary issued", Number(payload.stock?.complimentary_issued ?? 0)],
     [],
     ["By warehouse"],

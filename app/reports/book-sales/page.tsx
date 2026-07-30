@@ -510,6 +510,7 @@ export default function BookSalesAnalyticsPage() {
                         [t("bookSales.transferredOut"), payload.stock.transferred_out],
                         [t("bookSales.damaged"), payload.stock.damaged],
                         [t("bookSales.lost"), payload.stock.lost],
+                        [t("bookSales.reserved"), payload.stock.reserved],
                         [t("bookSales.complimentaryIssued"), payload.stock.complimentary_issued],
                       ].map(([label, value]) => (
                         <div key={String(label)} className="rounded-md border p-3">

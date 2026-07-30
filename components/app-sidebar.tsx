@@ -68,6 +68,7 @@ function buildNavGroups(t: TranslateFn): NavMainGroup[] {
           items: [
             { title: t("nav.products"), url: "/products" },
             { title: t("nav.inventory"), url: "/inventory" },
+            { title: t("nav.stockWriteoffs"), url: "/inventory/writeoffs" },
             { title: t("nav.transfer"), url: "/transfer" },
           ],
         },
