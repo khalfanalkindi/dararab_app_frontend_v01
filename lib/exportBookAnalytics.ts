@@ -16,6 +16,7 @@ export type BookAnalyticsPayload = {
   }
   filters: Record<string, unknown>
   summary: Record<string, number>
+  stock?: Record<string, number | boolean | null>
   by_warehouse: Array<Record<string, unknown>>
   by_channel: Array<Record<string, unknown>>
   discounts: Array<Record<string, unknown>>
@@ -80,16 +81,40 @@ function buildWorkbookRows(payload: BookAnalyticsPayload, meta: ExportMeta): (st
   const rows: (string | number)[][] = [
     ...metaRows(payload, meta),
     ...summaryRows(payload),
+    ["Stock ledger"],
+    ["Opening", Number(payload.stock?.opening_stock ?? 0)],
+    ["Closing", Number(payload.stock?.closing_stock ?? 0)],
+    ["Current", Number(payload.stock?.current_stock ?? 0)],
+    ["Sold (ledger)", Number(payload.stock?.sold ?? 0)],
+    ["Returned (ledger)", Number(payload.stock?.returned ?? 0)],
+    ["Transferred in", Number(payload.stock?.transferred_in ?? 0)],
+    ["Transferred out", Number(payload.stock?.transferred_out ?? 0)],
+    ["Damaged", Number(payload.stock?.damaged ?? 0)],
+    ["Lost", Number(payload.stock?.lost ?? 0)],
+    ["Complimentary issued", Number(payload.stock?.complimentary_issued ?? 0)],
+    [],
     ["By warehouse"],
-    ["Warehouse", "Sold", "Returned", "Complimentary", "Net", "Net revenue", "Current stock"],
+    [
+      "Warehouse",
+      "Opening",
+      "Sold",
+      "Returned",
+      "In",
+      "Out",
+      "Closing",
+      "Current",
+      "Net revenue",
+    ],
     ...payload.by_warehouse.map((r) => [
       String(r.warehouse_name ?? ""),
-      Number(r.copies_sold || 0),
-      Number(r.copies_returned || 0),
-      Number(r.copies_complimentary || 0),
-      Number(r.copies_net || 0),
-      money(r.net_revenue, c),
+      Number(r.opening_stock ?? 0),
+      Number(r.sold ?? r.copies_sold ?? 0),
+      Number(r.returned ?? r.copies_returned ?? 0),
+      Number(r.transferred_in ?? 0),
+      Number(r.transferred_out ?? 0),
+      Number(r.closing_stock ?? 0),
       Number(r.current_stock || 0),
+      money(r.net_revenue, c),
     ]),
     [],
     ["By channel"],

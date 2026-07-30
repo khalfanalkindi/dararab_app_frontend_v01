@@ -471,7 +471,7 @@ export default function BookSalesAnalyticsPage() {
             <p className="text-muted-foreground">{t("bookSales.empty")}</p>
           )}
 
-          {payload && summary && (
+              {payload && summary && (
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
                 {[
@@ -493,6 +493,40 @@ export default function BookSalesAnalyticsPage() {
                 ))}
               </div>
 
+              {payload.stock && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>{t("bookSales.stockLedger")}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
+                      {[
+                        [t("bookSales.openingStock"), payload.stock.opening_stock],
+                        [t("bookSales.closingStock"), payload.stock.closing_stock],
+                        [t("bookSales.currentStock"), payload.stock.current_stock],
+                        [t("bookSales.ledgerSold"), payload.stock.sold],
+                        [t("bookSales.ledgerReturned"), payload.stock.returned],
+                        [t("bookSales.transferredIn"), payload.stock.transferred_in],
+                        [t("bookSales.transferredOut"), payload.stock.transferred_out],
+                        [t("bookSales.damaged"), payload.stock.damaged],
+                        [t("bookSales.lost"), payload.stock.lost],
+                        [t("bookSales.complimentaryIssued"), payload.stock.complimentary_issued],
+                      ].map(([label, value]) => (
+                        <div key={String(label)} className="rounded-md border p-3">
+                          <p className="text-xs text-muted-foreground">{label}</p>
+                          <p className="text-lg font-semibold">{Number(value || 0)}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {!payload.stock.ledger_complete && (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        {t("bookSales.ledgerIncomplete")}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <Card>
                   <CardHeader>
@@ -503,8 +537,11 @@ export default function BookSalesAnalyticsPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>{t("bookSales.warehouse")}</TableHead>
-                          <TableHead className="text-right">{t("bookSales.metric.invoiced")}</TableHead>
-                          <TableHead className="text-right">{t("bookSales.metric.returned")}</TableHead>
+                          <TableHead className="text-right">{t("bookSales.openingStock")}</TableHead>
+                          <TableHead className="text-right">{t("bookSales.ledgerSold")}</TableHead>
+                          <TableHead className="text-right">{t("bookSales.transferredIn")}</TableHead>
+                          <TableHead className="text-right">{t("bookSales.transferredOut")}</TableHead>
+                          <TableHead className="text-right">{t("bookSales.closingStock")}</TableHead>
                           <TableHead className="text-right">{t("bookSales.stock")}</TableHead>
                           <TableHead className="text-right">{t("bookSales.metric.netRevenue")}</TableHead>
                         </TableRow>
@@ -513,9 +550,20 @@ export default function BookSalesAnalyticsPage() {
                         {payload.by_warehouse.map((row) => (
                           <TableRow key={String(row.warehouse_id ?? row.warehouse_name)}>
                             <TableCell>{String(row.warehouse_name)}</TableCell>
-                            <TableCell className="text-right">{Number(row.copies_sold || 0)}</TableCell>
                             <TableCell className="text-right">
-                              {Number(row.copies_returned || 0)}
+                              {Number(row.opening_stock ?? 0)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {Number(row.sold ?? row.copies_sold ?? 0)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {Number(row.transferred_in ?? 0)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {Number(row.transferred_out ?? 0)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {Number(row.closing_stock ?? 0)}
                             </TableCell>
                             <TableCell className="text-right">
                               {Number(row.current_stock || 0)}
