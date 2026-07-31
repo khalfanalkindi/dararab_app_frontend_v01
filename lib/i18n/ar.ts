@@ -152,8 +152,8 @@ export const ar: MessageTree = {
     filters: {
       warehouse: "المستودع",
       dateRange: "نطاق التاريخ",
-      invoiceId: "رقم الفاتورة / المركّب",
-      invoiceIdPlaceholder: "ابحث برقم الفاتورة أو الرقم المركّب",
+      invoiceId: "رقم الفاتورة",
+      invoiceIdPlaceholder: "ابحث برقم الفاتورة",
       customer: "العميل",
       searchCustomer: "ابحث عن عميل...",
     },

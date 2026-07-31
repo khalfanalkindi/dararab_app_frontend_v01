@@ -155,8 +155,8 @@ export const en = {
     filters: {
       warehouse: "Warehouse",
       dateRange: "Date Range",
-      invoiceId: "Invoice / Composite ID",
-      invoiceIdPlaceholder: "Search by invoice or composite ID",
+      invoiceId: "Invoice ID",
+      invoiceIdPlaceholder: "Search by invoice ID",
       customer: "Customer",
       searchCustomer: "Search customer...",
     },
