@@ -891,66 +891,66 @@ export default function OutstandingPaymentPage() {
 
   const fetchInvoiceForCombined = useCallback(
     async (invoice: Invoice, signal: AbortSignal): Promise<Invoice> => {
+      const productNameFrom = (product: Product | number | undefined | null): string => {
+        if (!product || typeof product === "number") return ""
+        return (
+          product.title ||
+          product.title_ar ||
+          product.name_en ||
+          product.name_ar ||
+          ""
+        )
+      }
+
+      const normalizeItems = (
+        rows: Array<Partial<InvoiceItemResponse> & { product_name?: string }>,
+      ): InvoiceItem[] =>
+        rows.map((row) => {
+          const total = Number(row.total_price ?? 0) || 0
+          const paid = Number(row.paid_amount ?? 0) || 0
+          const remainingRaw =
+            row.remaining_amount ?? row.item_remaining_amount ?? Math.max(0, total - paid)
+          return {
+            id: row.id,
+            product_name:
+              row.product_name || productNameFrom(row.product as Product | number) || "—",
+            quantity: row.quantity ?? 0,
+            unit_price: row.unit_price ?? 0,
+            discount_percent: row.discount_percent ?? 0,
+            total_price: total,
+            paid_amount: paid,
+            remaining_amount: Number(remainingRaw) || 0,
+            is_paid: row.is_paid ?? paid >= total,
+            product: row.product as Product | number | undefined,
+          }
+        })
+
+      // Prefer detailed items endpoint (has ids, paid/remaining, nested product)
+      let detailedItems: InvoiceItem[] = []
+      try {
+        const rows = await fetchAllPaginated<InvoiceItemResponse>(
+          `${API_URL}/sales/invoices/${invoice.id}/items/`,
+          signal,
+        )
+        detailedItems = normalizeItems(rows)
+      } catch {
+        // Fall through to summary items
+      }
+
+      // Fallback / enrich from summary if items endpoint returned nothing
+      let summary: InvoiceSummaryResponse | null = null
       const summaryRes = await fetchWithRetry(
         `${API_URL}/sales/invoices/${invoice.id}/summary/`,
         { headers, signal },
       )
-      if (!summaryRes.ok) {
-        throw new Error(`Failed to load invoice ${invoice.id}`)
-      }
-      const summary: InvoiceSummaryResponse = await summaryRes.json()
-
-      let detailedItems: InvoiceItemResponse[] = []
-      try {
-        const itemsRes = await fetchWithRetry(
-          `${API_URL}/sales/invoices/${invoice.id}/items/`,
-          { headers, signal },
-        )
-        if (itemsRes.ok) {
-          const itemsData:
-            | { results?: InvoiceItemResponse[]; items?: InvoiceItemResponse[] }
-            | InvoiceItemResponse[] = await itemsRes.json()
-          detailedItems = Array.isArray(itemsData)
-            ? itemsData
-            : itemsData.results || itemsData.items || []
-        }
-      } catch {
-        // Summary items are enough for read-only display
+      if (summaryRes.ok) {
+        summary = await summaryRes.json()
       }
 
-      const summaryItems = summary.items || []
-      const mergedItems: InvoiceItem[] = (
-        summaryItems.length > 0 ? summaryItems : detailedItems
-      ).map((summaryItem, index) => {
-        const detailedItem =
-          detailedItems.find((item) => item.id === summaryItem.id) ||
-          detailedItems[index]
-        const total = Number(detailedItem?.total_price ?? summaryItem.total_price ?? 0) || 0
-        const paid = Number(detailedItem?.paid_amount ?? summaryItem.paid_amount ?? 0) || 0
-        return {
-          ...summaryItem,
-          id: detailedItem?.id ?? summaryItem.id,
-          product_name:
-            summaryItem.product_name ||
-            (typeof detailedItem?.product === "object" && detailedItem?.product
-              ? detailedItem.product.title ||
-                detailedItem.product.title_ar ||
-                detailedItem.product.name_en ||
-                detailedItem.product.name_ar ||
-                "—"
-              : "—"),
-          quantity: detailedItem?.quantity ?? summaryItem.quantity,
-          unit_price: detailedItem?.unit_price ?? summaryItem.unit_price,
-          discount_percent: detailedItem?.discount_percent ?? summaryItem.discount_percent,
-          total_price: total,
-          paid_amount: paid,
-          remaining_amount:
-            Number(detailedItem?.remaining_amount ?? detailedItem?.item_remaining_amount) ||
-            Math.max(0, total - paid),
-          is_paid: detailedItem?.is_paid ?? summaryItem.is_paid ?? paid >= total,
-          product: detailedItem?.product ?? summaryItem.product,
-        }
-      })
+      let mergedItems = detailedItems
+      if (mergedItems.length === 0 && summary?.items?.length) {
+        mergedItems = normalizeItems(summary.items)
+      }
 
       const calculatedTotal = mergedItems.reduce(
         (sum, item) => sum + (Number(item.total_price) || 0),
@@ -960,37 +960,43 @@ export default function OutstandingPaymentPage() {
         (sum, item) => sum + (Number(item.paid_amount) || 0),
         0,
       )
+      const fallbackTotal =
+        calculatedTotal ||
+        Number(summary?.total_amount) ||
+        Number(invoice.total_amount) ||
+        0
+      const fallbackPaid =
+        calculatedPaid ||
+        Number(summary?.total_paid) ||
+        Number(invoice.total_paid) ||
+        0
 
       return {
         ...invoice,
         composite_id:
-          summary.composite_id || invoice.composite_id || invoice.id?.toString(),
+          summary?.composite_id || invoice.composite_id || invoice.id?.toString(),
         customer_name:
-          summary.customer_name ||
-          summary.customer?.institution_name ||
+          summary?.customer_name ||
+          summary?.customer?.institution_name ||
           invoice.customer_name,
         customer_contact:
-          summary.customer_contact ||
-          summary.customer?.contact_person ||
+          summary?.customer_contact ||
+          summary?.customer?.contact_person ||
           invoice.customer_contact,
         warehouse_name:
-          summary.warehouse_name ||
-          summary.warehouse?.name_en ||
+          summary?.warehouse_name ||
+          summary?.warehouse?.name_en ||
           invoice.warehouse_name,
-        customer: summary.customer || invoice.customer,
-        warehouse: summary.warehouse || invoice.warehouse,
-        total_amount: calculatedTotal || Number(summary.total_amount) || invoice.total_amount,
-        total_paid: calculatedPaid || Number(summary.total_paid) || invoice.total_paid,
-        remaining_amount: Math.max(
-          0,
-          (calculatedTotal || Number(summary.total_amount) || invoice.total_amount) -
-            (calculatedPaid || Number(summary.total_paid) || invoice.total_paid),
-        ),
-        created_at: summary.created_at || invoice.created_at,
+        customer: summary?.customer || invoice.customer,
+        warehouse: summary?.warehouse || invoice.warehouse,
+        total_amount: fallbackTotal,
+        total_paid: fallbackPaid,
+        remaining_amount: Math.max(0, fallbackTotal - fallbackPaid),
+        created_at: summary?.created_at || invoice.created_at,
         items: mergedItems,
       }
     },
-    [headers],
+    [headers, fetchAllPaginated],
   )
 
   const handleViewCombined = async () => {
@@ -1002,39 +1008,37 @@ export default function OutstandingPaymentPage() {
       return
     }
 
-    const customerKeys = new Set(
-      selected.map(
-        (inv) =>
-          inv.customer?.id?.toString() ||
-          inv.customer_name?.trim().toLowerCase() ||
-          "",
-      ),
-    )
-    if (customerKeys.size > 1 || (customerKeys.size === 1 && customerKeys.has(""))) {
+    const customerKey = (inv: Invoice) => {
+      if (inv.customer?.id != null) return `id:${inv.customer.id}`
+      const name = inv.customer_name?.trim().toLowerCase()
+      return name ? `name:${name}` : ""
+    }
+    const warehouseKey = (inv: Invoice) => {
+      if (inv.warehouse?.id != null) return `id:${inv.warehouse.id}`
+      const name = inv.warehouse_name?.trim().toLowerCase()
+      return name ? `name:${name}` : ""
+    }
+
+    const customerKeys = new Set(selected.map(customerKey))
+    if (customerKeys.size !== 1 || customerKeys.has("")) {
       toast.error(t("outstandingToasts.sameCustomer"), {
         description: t("outstandingToasts.sameCustomerDesc"),
       })
       return
     }
 
-    const warehouseKeys = new Set(
-      selected.map(
-        (inv) =>
-          inv.warehouse?.id?.toString() ||
-          inv.warehouse_name?.trim().toLowerCase() ||
-          "",
-      ),
-    )
-    if (warehouseKeys.size > 1 || (warehouseKeys.size === 1 && warehouseKeys.has(""))) {
+    const warehouseKeys = new Set(selected.map(warehouseKey))
+    if (warehouseKeys.size !== 1 || warehouseKeys.has("")) {
       toast.error(t("outstandingToasts.sameWarehouse"), {
         description: t("outstandingToasts.sameWarehouseDesc"),
       })
       return
     }
 
-    invoiceDetailsAbortControllerRef.current?.abort()
-    invoiceDetailsAbortControllerRef.current = new AbortController()
-    const signal = invoiceDetailsAbortControllerRef.current.signal
+    // Use a dedicated abort controller so opening View later won't cancel this load
+    const controller = new AbortController()
+    billCreationAbortControllerRef.current?.abort()
+    const signal = controller.signal
 
     setIsLoadingCombined(true)
     setCombinedInvoices([])
@@ -1044,7 +1048,15 @@ export default function OutstandingPaymentPage() {
       const detailed = await Promise.all(
         selected.map((invoice) => fetchInvoiceForCombined(invoice, signal)),
       )
-      setCombinedInvoices(detailed)
+      const withItems = detailed.filter((inv) => (inv.items?.length || 0) > 0 || inv.id)
+      setCombinedInvoices(withItems)
+
+      const emptyCount = detailed.filter((inv) => !(inv.items && inv.items.length)).length
+      if (emptyCount === detailed.length) {
+        toast.error(t("outstandingToasts.combinedLoadFailed"), {
+          description: t("outstanding.dialog.noItemsHint"),
+        })
+      }
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return
       setActiveDialog(null)

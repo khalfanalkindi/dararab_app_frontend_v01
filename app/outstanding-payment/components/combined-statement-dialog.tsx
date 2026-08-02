@@ -1,6 +1,5 @@
 "use client"
 
-import { useRef } from "react"
 import { format } from "date-fns"
 import { Loader2, Printer } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,14 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { useLanguage } from "@/components/language-context"
 import { formatInvoiceUsdAmount } from "@/lib/muscatCurrency"
 import type { Invoice, InvoiceItem, Warehouse } from "./types"
@@ -43,29 +34,94 @@ function itemRemaining(item: InvoiceItem): number {
   return Math.max(0, toNum(item.total_price) - toNum(item.paid_amount))
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+}
+
 const PRINT_STYLES = `
   * { box-sizing: border-box; }
   body {
     font-family: Arial, Helvetica, sans-serif;
     color: #111;
-    margin: 24px;
+    margin: 0;
+    padding: 16mm 14mm;
     font-size: 12px;
+    background: #fff;
   }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  h2 { font-size: 14px; margin: 20px 0 8px; border-bottom: 1px solid #222; padding-bottom: 4px; }
-  .meta { margin-bottom: 16px; line-height: 1.5; }
-  .meta strong { display: inline-block; min-width: 90px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-  th { background: #f3f3f3; }
-  td.num, th.num { text-align: right; }
-  .invoice-block { margin-bottom: 20px; page-break-inside: avoid; }
-  .totals { margin-top: 20px; border-top: 2px solid #111; padding-top: 10px; }
-  .totals-row { display: flex; justify-content: space-between; max-width: 320px; margin-left: auto; padding: 3px 0; }
-  .totals-row.grand { font-weight: 700; font-size: 14px; }
-  .hint { margin-top: 16px; font-size: 11px; color: #555; }
+  .sheet { max-width: 900px; margin: 0 auto; }
+  .brand { text-align: center; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
+  .brand img { max-width: 72px; max-height: 48px; object-fit: contain; filter: grayscale(100%) contrast(180%); }
+  .brand h1 { font-size: 18px; margin: 8px 0 4px; }
+  .brand .sub { font-size: 11px; color: #333; line-height: 1.45; }
+  .doc-title {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 14px;
+  }
+  .meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 24px;
+    margin-bottom: 18px;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    background: #fafafa;
+  }
+  .meta div { line-height: 1.4; }
+  .meta strong { display: inline-block; min-width: 88px; }
+  .invoice-block {
+    margin-bottom: 18px;
+    page-break-inside: avoid;
+    border: 1px solid #bbb;
+  }
+  .invoice-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    background: #f0f0f0;
+    border-bottom: 1px solid #bbb;
+    font-weight: 700;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-top: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f7f7f7; font-size: 11px; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .invoice-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 18px;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    border-top: 1px solid #bbb;
+    background: #fcfcfc;
+    font-size: 11px;
+  }
+  .grand {
+    margin-top: 8px;
+    border: 2px solid #111;
+    padding: 12px 14px;
+  }
+  .grand-row {
+    display: flex;
+    justify-content: space-between;
+    max-width: 360px;
+    margin-left: auto;
+    padding: 3px 0;
+  }
+  .grand-row.total { font-size: 14px; font-weight: 700; margin-top: 4px; }
+  .hint { margin-top: 14px; font-size: 10px; color: #555; text-align: center; }
+  .empty { text-align: center; color: #666; padding: 16px; }
   @media print {
-    body { margin: 12mm; }
+    body { padding: 8mm; }
+    .invoice-block { break-inside: avoid; }
   }
 `
 
@@ -79,7 +135,6 @@ function buildPrintHtml(args: {
   contactName: string
   invoicesLabel: string
   invoiceLabel: string
-  dateLabel: string
   productLabel: string
   qtyLabel: string
   unitLabel: string
@@ -91,53 +146,64 @@ function buildPrintHtml(args: {
   grandPaidLabel: string
   grandOutstandingLabel: string
   viewOnlyHint: string
+  noItems: string
   invoices: Invoice[]
   warehouses: Warehouse[]
   formatAmount: (amount: number, invoice: Invoice) => string
+  logoUrl: string
 }): string {
   const first = args.invoices[0]
   const sections = args.invoices
     .map((invoice) => {
-      const invoiceId = invoice.composite_id || String(invoice.id)
+      const invoiceId = escapeHtml(invoice.composite_id || String(invoice.id))
       const date = invoice.created_at
-        ? format(new Date(invoice.created_at), "PPP")
+        ? escapeHtml(format(new Date(invoice.created_at), "PPP"))
         : "—"
-      const rows = (invoice.items || [])
-        .map(
-          (item) => `
+      const items = invoice.items || []
+      const rows =
+        items.length === 0
+          ? `<tr><td colspan="7" class="empty">${escapeHtml(args.noItems)}</td></tr>`
+          : items
+              .map(
+                (item) => `
           <tr>
-            <td>${item.product_name || "—"}</td>
+            <td>${escapeHtml(item.product_name || "—")}</td>
             <td class="num">${toNum(item.quantity)}</td>
-            <td class="num">${args.formatAmount(toNum(item.unit_price), invoice)}</td>
+            <td class="num">${escapeHtml(args.formatAmount(toNum(item.unit_price), invoice))}</td>
             <td class="num">${toNum(item.discount_percent)}%</td>
-            <td class="num">${args.formatAmount(toNum(item.total_price), invoice)}</td>
-            <td class="num">${args.formatAmount(toNum(item.paid_amount), invoice)}</td>
-            <td class="num">${args.formatAmount(itemRemaining(item), invoice)}</td>
+            <td class="num">${escapeHtml(args.formatAmount(toNum(item.total_price), invoice))}</td>
+            <td class="num">${escapeHtml(args.formatAmount(toNum(item.paid_amount), invoice))}</td>
+            <td class="num">${escapeHtml(args.formatAmount(itemRemaining(item), invoice))}</td>
           </tr>`,
-        )
-        .join("")
+              )
+              .join("")
 
       return `
-        <div class="invoice-block">
-          <h2>${args.invoiceLabel} #${invoiceId} — ${date}</h2>
+        <section class="invoice-block">
+          <div class="invoice-head">
+            <span>${escapeHtml(args.invoiceLabel)} #${invoiceId}</span>
+            <span>${date}</span>
+          </div>
           <table>
             <thead>
               <tr>
-                <th>${args.productLabel}</th>
-                <th class="num">${args.qtyLabel}</th>
-                <th class="num">${args.unitLabel}</th>
-                <th class="num">${args.discountLabel}</th>
-                <th class="num">${args.totalLabel}</th>
-                <th class="num">${args.paidLabel}</th>
-                <th class="num">${args.outstandingLabel}</th>
+                <th>${escapeHtml(args.productLabel)}</th>
+                <th class="num">${escapeHtml(args.qtyLabel)}</th>
+                <th class="num">${escapeHtml(args.unitLabel)}</th>
+                <th class="num">${escapeHtml(args.discountLabel)}</th>
+                <th class="num">${escapeHtml(args.totalLabel)}</th>
+                <th class="num">${escapeHtml(args.paidLabel)}</th>
+                <th class="num">${escapeHtml(args.outstandingLabel)}</th>
               </tr>
             </thead>
-            <tbody>${rows || `<tr><td colspan="7">—</td></tr>`}</tbody>
+            <tbody>${rows}</tbody>
           </table>
-          <div class="totals-row"><span>${args.totalLabel}</span><span>${args.formatAmount(toNum(invoice.total_amount), invoice)}</span></div>
-          <div class="totals-row"><span>${args.paidLabel}</span><span>${args.formatAmount(toNum(invoice.total_paid), invoice)}</span></div>
-          <div class="totals-row"><span>${args.outstandingLabel}</span><span>${args.formatAmount(toNum(invoice.remaining_amount), invoice)}</span></div>
-        </div>`
+          <div class="invoice-foot">
+            <span>${escapeHtml(args.totalLabel)}: <strong>${escapeHtml(args.formatAmount(toNum(invoice.total_amount), invoice))}</strong></span>
+            <span>${escapeHtml(args.paidLabel)}: <strong>${escapeHtml(args.formatAmount(toNum(invoice.total_paid), invoice))}</strong></span>
+            <span>${escapeHtml(args.outstandingLabel)}: <strong>${escapeHtml(args.formatAmount(toNum(invoice.remaining_amount), invoice))}</strong></span>
+          </div>
+        </section>`
     })
     .join("")
 
@@ -146,21 +212,31 @@ function buildPrintHtml(args: {
   const grandOutstanding = args.invoices.reduce((s, inv) => s + toNum(inv.remaining_amount), 0)
   const fmt = (n: number) => (first ? args.formatAmount(n, first) : n.toFixed(3))
 
-  return `<!DOCTYPE html><html><head><title>${args.title}</title><style>${PRINT_STYLES}</style></head><body>
-    <h1>${args.title}</h1>
-    <div class="meta">
-      <div><strong>${args.customerLabel}:</strong> ${args.customerName}</div>
-      <div><strong>${args.contactLabel}:</strong> ${args.contactName}</div>
-      <div><strong>${args.warehouseLabel}:</strong> ${args.warehouseName}</div>
-      <div><strong>${args.invoicesLabel}:</strong> ${args.invoices.length}</div>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${escapeHtml(args.title)}</title><style>${PRINT_STYLES}</style></head><body>
+    <div class="sheet">
+      <div class="brand">
+        <img src="${escapeHtml(args.logoUrl)}" alt="DarArab" onerror="this.style.display='none'" />
+        <h1>DarArab for Publishing &amp; Translation</h1>
+        <div class="sub">
+          Seeb, Muscat, Sultanate of Oman<br/>
+          Tel: +96871523542 · Email: info@dararab.co.uk · Web: dararab.co.uk
+        </div>
+      </div>
+      <div class="doc-title">${escapeHtml(args.title)}</div>
+      <div class="meta">
+        <div><strong>${escapeHtml(args.customerLabel)}:</strong> ${escapeHtml(args.customerName)}</div>
+        <div><strong>${escapeHtml(args.warehouseLabel)}:</strong> ${escapeHtml(args.warehouseName)}</div>
+        <div><strong>${escapeHtml(args.contactLabel)}:</strong> ${escapeHtml(args.contactName)}</div>
+        <div><strong>${escapeHtml(args.invoicesLabel)}:</strong> ${args.invoices.length}</div>
+      </div>
+      ${sections}
+      <div class="grand">
+        <div class="grand-row"><span>${escapeHtml(args.grandTotalLabel)}</span><span>${escapeHtml(fmt(grandTotal))}</span></div>
+        <div class="grand-row"><span>${escapeHtml(args.grandPaidLabel)}</span><span>${escapeHtml(fmt(grandPaid))}</span></div>
+        <div class="grand-row total"><span>${escapeHtml(args.grandOutstandingLabel)}</span><span>${escapeHtml(fmt(grandOutstanding))}</span></div>
+      </div>
+      <p class="hint">${escapeHtml(args.viewOnlyHint)}</p>
     </div>
-    ${sections}
-    <div class="totals">
-      <div class="totals-row"><span>${args.grandTotalLabel}</span><span>${fmt(grandTotal)}</span></div>
-      <div class="totals-row"><span>${args.grandPaidLabel}</span><span>${fmt(grandPaid)}</span></div>
-      <div class="totals-row grand"><span>${args.grandOutstandingLabel}</span><span>${fmt(grandOutstanding)}</span></div>
-    </div>
-    <p class="hint">${args.viewOnlyHint}</p>
   </body></html>`
 }
 
@@ -172,7 +248,6 @@ export function CombinedStatementDialog({
   isLoading,
 }: CombinedStatementDialogProps) {
   const { t } = useLanguage()
-  const printRef = useRef<HTMLDivElement>(null)
 
   const first = invoices[0]
   const grandTotal = invoices.reduce((s, inv) => s + toNum(inv.total_amount), 0)
@@ -184,6 +259,11 @@ export function CombinedStatementDialog({
 
   const handlePrint = () => {
     if (!invoices.length) return
+    const logoUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/dararab-logo-1.png`
+        : "/dararab-logo-1.png"
+
     const html = buildPrintHtml({
       title: t("outstanding.combined.title"),
       customerLabel: t("outstanding.table.customer"),
@@ -194,7 +274,6 @@ export function CombinedStatementDialog({
       contactName: first?.customer_contact || t("common.na"),
       invoicesLabel: t("outstanding.combined.invoiceCount"),
       invoiceLabel: t("outstanding.combined.invoice"),
-      dateLabel: t("outstanding.table.date"),
       productLabel: t("outstanding.combined.product"),
       qtyLabel: t("outstanding.combined.qty"),
       unitLabel: t("outstanding.combined.unitPrice"),
@@ -206,13 +285,17 @@ export function CombinedStatementDialog({
       grandPaidLabel: t("outstanding.combined.grandPaid"),
       grandOutstandingLabel: t("outstanding.combined.grandOutstanding"),
       viewOnlyHint: t("outstanding.combined.viewOnlyHint"),
+      noItems: t("outstanding.dialog.noItems"),
       invoices,
       warehouses,
       formatAmount,
+      logoUrl,
     })
 
-    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=900,height=1000")
-    if (!printWindow) return
+    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=960,height=1100")
+    if (!printWindow) {
+      return
+    }
     printWindow.document.open()
     printWindow.document.write(html)
     printWindow.document.close()
@@ -221,21 +304,21 @@ export function CombinedStatementDialog({
       printWindow.print()
     }
     if (printWindow.document.readyState === "complete") {
-      trigger()
+      setTimeout(trigger, 250)
     } else {
-      printWindow.onload = trigger
+      printWindow.onload = () => setTimeout(trigger, 250)
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] w-full max-w-4xl flex-col gap-0 overflow-hidden">
+      <DialogContent className="flex max-h-[92vh] w-full max-w-5xl flex-col gap-0 overflow-hidden">
         <DialogHeader className="shrink-0 space-y-1 pb-2">
           <DialogTitle>{t("outstanding.combined.title")}</DialogTitle>
           <DialogDescription>{t("outstanding.combined.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-muted/30 p-3">
           {isLoading ? (
             <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -246,122 +329,159 @@ export function CombinedStatementDialog({
               {t("outstanding.combined.empty")}
             </div>
           ) : (
-            <div ref={printRef} className="space-y-6 p-1">
-              <div className="rounded-md border bg-muted/40 p-4 text-sm space-y-1">
+            <div className="mx-auto max-w-4xl rounded-md border bg-white p-6 text-sm shadow-sm text-black">
+              <div className="mb-5 border-b-2 border-black pb-4 text-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/dararab-logo-1.png"
+                  alt="DarArab"
+                  className="mx-auto mb-2 h-10 w-auto object-contain grayscale contrast-200"
+                  onError={(e) => {
+                    ;(e.target as HTMLImageElement).style.display = "none"
+                  }}
+                />
+                <h2 className="text-base font-bold">DarArab for Publishing & Translation</h2>
+                <p className="mt-1 text-xs text-neutral-600">
+                  Seeb, Muscat, Sultanate of Oman
+                  <br />
+                  Tel: +96871523542 · Email: info@dararab.co.uk
+                </p>
+              </div>
+
+              <h3 className="mb-4 text-center text-sm font-bold uppercase tracking-wide">
+                {t("outstanding.combined.title")}
+              </h3>
+
+              <div className="mb-5 grid gap-2 rounded border bg-neutral-50 p-3 text-sm sm:grid-cols-2">
                 <p>
-                  <span className="font-medium">{t("outstanding.table.customer")}: </span>
+                  <span className="font-semibold">{t("outstanding.table.customer")}: </span>
                   {first?.customer_name || t("outstanding.table.noCustomer")}
                 </p>
                 <p>
-                  <span className="font-medium">{t("outstanding.combined.contact")}: </span>
-                  {first?.customer_contact || t("common.na")}
-                </p>
-                <p>
-                  <span className="font-medium">{t("outstanding.table.warehouse")}: </span>
+                  <span className="font-semibold">{t("outstanding.table.warehouse")}: </span>
                   {first?.warehouse_name || t("outstanding.table.noWarehouse")}
                 </p>
                 <p>
-                  <span className="font-medium">{t("outstanding.combined.invoiceCount")}: </span>
+                  <span className="font-semibold">{t("outstanding.combined.contact")}: </span>
+                  {first?.customer_contact || t("common.na")}
+                </p>
+                <p>
+                  <span className="font-semibold">{t("outstanding.combined.invoiceCount")}: </span>
                   {invoices.length}
                 </p>
               </div>
 
-              {invoices.map((invoice) => {
-                const invoiceId = invoice.composite_id || String(invoice.id)
-                return (
-                  <div key={invoice.id} className="space-y-2 border-b pb-4 last:border-0">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <h3 className="font-semibold">
-                        {t("outstanding.combined.invoice")} #{invoiceId}
-                      </h3>
-                      <span className="text-sm text-muted-foreground">
-                        {invoice.created_at
-                          ? format(new Date(invoice.created_at), "PPP")
-                          : t("outstanding.table.noDate")}
-                      </span>
-                    </div>
+              <div className="space-y-4">
+                {invoices.map((invoice) => {
+                  const invoiceId = invoice.composite_id || String(invoice.id)
+                  const items = invoice.items || []
+                  return (
+                    <section key={invoice.id} className="overflow-hidden rounded border border-neutral-300">
+                      <div className="flex flex-wrap items-center justify-between gap-2 bg-neutral-100 px-3 py-2 font-semibold">
+                        <span>
+                          {t("outstanding.combined.invoice")} #{invoiceId}
+                        </span>
+                        <span className="text-xs font-normal text-neutral-600">
+                          {invoice.created_at
+                            ? format(new Date(invoice.created_at), "PPP")
+                            : t("outstanding.table.noDate")}
+                        </span>
+                      </div>
 
-                    <div className="border rounded-md overflow-hidden">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>{t("outstanding.combined.product")}</TableHead>
-                            <TableHead className="text-right">{t("outstanding.combined.qty")}</TableHead>
-                            <TableHead className="text-right">{t("outstanding.combined.unitPrice")}</TableHead>
-                            <TableHead className="text-right">{t("outstanding.combined.discount")}</TableHead>
-                            <TableHead className="text-right">{t("outstanding.table.totalAmount")}</TableHead>
-                            <TableHead className="text-right">{t("outstanding.table.paidAmount")}</TableHead>
-                            <TableHead className="text-right">{t("outstanding.table.outstanding")}</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {(invoice.items || []).length === 0 ? (
-                            <TableRow>
-                              <TableCell colSpan={7} className="text-center text-muted-foreground">
-                                {t("outstanding.dialog.noItems")}
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            (invoice.items || []).map((item, idx) => (
-                              <TableRow key={item.id ?? `${invoice.id}-${idx}`}>
-                                <TableCell>{item.product_name || t("common.na")}</TableCell>
-                                <TableCell className="text-right">{toNum(item.quantity)}</TableCell>
-                                <TableCell className="text-right">
-                                  {formatAmount(toNum(item.unit_price), invoice)}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  {toNum(item.discount_percent)}%
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  {formatAmount(toNum(item.total_price), invoice)}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  {formatAmount(toNum(item.paid_amount), invoice)}
-                                </TableCell>
-                                <TableCell className="text-right font-medium text-red-600">
-                                  {formatAmount(itemRemaining(item), invoice)}
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b bg-neutral-50 text-left">
+                              <th className="px-3 py-2 font-medium">{t("outstanding.combined.product")}</th>
+                              <th className="px-3 py-2 text-right font-medium">{t("outstanding.combined.qty")}</th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t("outstanding.combined.unitPrice")}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t("outstanding.combined.discount")}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t("outstanding.table.totalAmount")}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t("outstanding.table.paidAmount")}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t("outstanding.table.outstanding")}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.length === 0 ? (
+                              <tr>
+                                <td colSpan={7} className="px-3 py-6 text-center text-neutral-500">
+                                  {t("outstanding.dialog.noItems")}
+                                </td>
+                              </tr>
+                            ) : (
+                              items.map((item, idx) => (
+                                <tr key={item.id ?? `${invoice.id}-${idx}`} className="border-b last:border-0">
+                                  <td className="px-3 py-2">{item.product_name || t("common.na")}</td>
+                                  <td className="px-3 py-2 text-right">{toNum(item.quantity)}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    {formatAmount(toNum(item.unit_price), invoice)}
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    {toNum(item.discount_percent)}%
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    {formatAmount(toNum(item.total_price), invoice)}
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    {formatAmount(toNum(item.paid_amount), invoice)}
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-medium text-red-700">
+                                    {formatAmount(itemRemaining(item), invoice)}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
 
-                    <div className="flex flex-wrap justify-end gap-4 text-sm">
-                      <span>
-                        {t("outstanding.table.totalAmount")}:{" "}
-                        <strong>{formatAmount(toNum(invoice.total_amount), invoice)}</strong>
-                      </span>
-                      <span>
-                        {t("outstanding.table.paidAmount")}:{" "}
-                        <strong>{formatAmount(toNum(invoice.total_paid), invoice)}</strong>
-                      </span>
-                      <span className="text-red-600">
-                        {t("outstanding.table.outstanding")}:{" "}
-                        <strong>{formatAmount(toNum(invoice.remaining_amount), invoice)}</strong>
-                      </span>
-                    </div>
+                      <div className="flex flex-wrap justify-end gap-4 border-t bg-neutral-50 px-3 py-2 text-xs">
+                        <span>
+                          {t("outstanding.table.totalAmount")}:{" "}
+                          <strong>{formatAmount(toNum(invoice.total_amount), invoice)}</strong>
+                        </span>
+                        <span>
+                          {t("outstanding.table.paidAmount")}:{" "}
+                          <strong>{formatAmount(toNum(invoice.total_paid), invoice)}</strong>
+                        </span>
+                        <span className="text-red-700">
+                          {t("outstanding.table.outstanding")}:{" "}
+                          <strong>{formatAmount(toNum(invoice.remaining_amount), invoice)}</strong>
+                        </span>
+                      </div>
+                    </section>
+                  )
+                })}
+              </div>
+
+              <div className="mt-5 border-2 border-black p-4">
+                <div className="ml-auto max-w-sm space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span>{t("outstanding.combined.grandTotal")}</span>
+                    <strong>{first ? formatAmount(grandTotal, first) : grandTotal.toFixed(3)}</strong>
                   </div>
-                )
-              })}
-
-              <div className="rounded-md border bg-primary/5 p-4 space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span>{t("outstanding.combined.grandTotal")}</span>
-                  <strong>{first ? formatAmount(grandTotal, first) : grandTotal.toFixed(3)}</strong>
+                  <div className="flex justify-between">
+                    <span>{t("outstanding.combined.grandPaid")}</span>
+                    <strong>{first ? formatAmount(grandPaid, first) : grandPaid.toFixed(3)}</strong>
+                  </div>
+                  <div className="flex justify-between text-base font-bold text-red-700">
+                    <span>{t("outstanding.combined.grandOutstanding")}</span>
+                    <span>
+                      {first ? formatAmount(grandOutstanding, first) : grandOutstanding.toFixed(3)}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>{t("outstanding.combined.grandPaid")}</span>
-                  <strong>{first ? formatAmount(grandPaid, first) : grandPaid.toFixed(3)}</strong>
-                </div>
-                <div className="flex justify-between text-base text-red-600">
-                  <span>{t("outstanding.combined.grandOutstanding")}</span>
-                  <strong>
-                    {first ? formatAmount(grandOutstanding, first) : grandOutstanding.toFixed(3)}
-                  </strong>
-                </div>
-                <p className="pt-2 text-xs text-muted-foreground">
+                <p className="mt-3 text-center text-xs text-neutral-500">
                   {t("outstanding.combined.viewOnlyHint")}
                 </p>
               </div>
@@ -374,7 +494,7 @@ export function CombinedStatementDialog({
             {t("common.close")}
           </Button>
           <Button onClick={handlePrint} disabled={isLoading || invoices.length === 0}>
-            <Printer className="h-4 w-4 mr-2" />
+            <Printer className="mr-2 h-4 w-4" />
             {t("outstanding.combined.print")}
           </Button>
         </DialogFooter>
