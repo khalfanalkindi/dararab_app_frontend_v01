@@ -891,15 +891,15 @@ export default function OutstandingPaymentPage() {
 
   const fetchInvoiceForCombined = useCallback(
     async (invoice: Invoice, signal: AbortSignal): Promise<Invoice> => {
-      const productNameFrom = (product: Product | number | undefined | null): string => {
+      const productNameFrom = (product: unknown): string => {
         if (!product || typeof product === "number") return ""
-        return (
-          product.title ||
-          product.title_ar ||
-          product.name_en ||
-          product.name_ar ||
-          ""
-        )
+        if (typeof product !== "object") return String(product)
+        const p = product as Record<string, unknown>
+        for (const key of ["title_ar", "title_en", "title", "name_ar", "name_en", "name"]) {
+          const value = p[key]
+          if (typeof value === "string" && value.trim()) return value.trim()
+        }
+        return ""
       }
 
       const normalizeItems = (
@@ -910,10 +910,13 @@ export default function OutstandingPaymentPage() {
           const paid = Number(row.paid_amount ?? 0) || 0
           const remainingRaw =
             row.remaining_amount ?? row.item_remaining_amount ?? Math.max(0, total - paid)
+          const name =
+            (typeof row.product_name === "string" && row.product_name.trim()) ||
+            productNameFrom(row.product) ||
+            ""
           return {
             id: row.id,
-            product_name:
-              row.product_name || productNameFrom(row.product as Product | number) || "—",
+            product_name: name,
             quantity: row.quantity ?? 0,
             unit_price: row.unit_price ?? 0,
             discount_percent: row.discount_percent ?? 0,
@@ -925,7 +928,7 @@ export default function OutstandingPaymentPage() {
           }
         })
 
-      // Prefer detailed items endpoint (has ids, paid/remaining, nested product)
+      // Detailed items: payment fields (product is usually just an ID here)
       let detailedItems: InvoiceItem[] = []
       try {
         const rows = await fetchAllPaginated<InvoiceItemResponse>(
@@ -937,7 +940,7 @@ export default function OutstandingPaymentPage() {
         // Fall through to summary items
       }
 
-      // Fallback / enrich from summary if items endpoint returned nothing
+      // Summary items include product_name (title_ar) — use to fill empty names
       let summary: InvoiceSummaryResponse | null = null
       const summaryRes = await fetchWithRetry(
         `${API_URL}/sales/invoices/${invoice.id}/summary/`,
@@ -946,10 +949,23 @@ export default function OutstandingPaymentPage() {
       if (summaryRes.ok) {
         summary = await summaryRes.json()
       }
+      const summaryItems = normalizeItems(summary?.items || [])
 
       let mergedItems = detailedItems
-      if (mergedItems.length === 0 && summary?.items?.length) {
-        mergedItems = normalizeItems(summary.items)
+      if (mergedItems.length === 0) {
+        mergedItems = summaryItems
+      } else if (summaryItems.length > 0) {
+        mergedItems = mergedItems.map((item, index) => {
+          if (item.product_name && item.product_name !== "—") return item
+          const fromSummary = summaryItems[index]
+          const name = fromSummary?.product_name?.trim()
+          return name ? { ...item, product_name: name } : { ...item, product_name: item.product_name || "—" }
+        })
+      } else {
+        mergedItems = mergedItems.map((item) => ({
+          ...item,
+          product_name: item.product_name || "—",
+        }))
       }
 
       const calculatedTotal = mergedItems.reduce(

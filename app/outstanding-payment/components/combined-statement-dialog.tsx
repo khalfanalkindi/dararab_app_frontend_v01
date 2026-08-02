@@ -259,6 +259,7 @@ export function CombinedStatementDialog({
 
   const handlePrint = () => {
     if (!invoices.length) return
+
     const logoUrl =
       typeof window !== "undefined"
         ? `${window.location.origin}/dararab-logo-1.png`
@@ -292,22 +293,41 @@ export function CombinedStatementDialog({
       logoUrl,
     })
 
-    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=960,height=1100")
+    // Do NOT use noopener — it makes window.open return null / a non-writable window
+    const printWindow = window.open("", "_blank", "width=960,height=1100")
     if (!printWindow) {
+      // Popup blocked: fall back to iframe print
+      const iframe = document.createElement("iframe")
+      iframe.style.position = "fixed"
+      iframe.style.right = "0"
+      iframe.style.bottom = "0"
+      iframe.style.width = "0"
+      iframe.style.height = "0"
+      iframe.style.border = "0"
+      document.body.appendChild(iframe)
+      const doc = iframe.contentDocument || iframe.contentWindow?.document
+      if (!doc) {
+        document.body.removeChild(iframe)
+        return
+      }
+      doc.open()
+      doc.write(html)
+      doc.close()
+      setTimeout(() => {
+        iframe.contentWindow?.focus()
+        iframe.contentWindow?.print()
+        setTimeout(() => document.body.removeChild(iframe), 1000)
+      }, 300)
       return
     }
+
     printWindow.document.open()
     printWindow.document.write(html)
     printWindow.document.close()
-    const trigger = () => {
+    setTimeout(() => {
       printWindow.focus()
       printWindow.print()
-    }
-    if (printWindow.document.readyState === "complete") {
-      setTimeout(trigger, 250)
-    } else {
-      printWindow.onload = () => setTimeout(trigger, 250)
-    }
+    }, 300)
   }
 
   return (
