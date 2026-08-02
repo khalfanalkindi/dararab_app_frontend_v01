@@ -222,6 +222,7 @@ export const ar: MessageTree = {
       empty: "لا توجد فواتير مستحقة",
       emptyHint: "كل الفواتير مسددة أو لا توجد نتائج مطابقة",
       view: "عرض",
+      settle: "تسوية",
       child: "فرعية",
       noCustomer: "بدون عميل",
       noWarehouse: "بدون مستودع",
@@ -274,6 +275,12 @@ export const ar: MessageTree = {
       savePdf: "حفظ كـ PDF",
       saveExcel: "حفظ كـ Excel",
       viewOnlyHint: "للعرض والطباعة فقط. الفواتير الأصلية لا تُعدَّل.",
+    },
+    settle: {
+      confirmTitle: "تسوية هذه الفاتورة؟",
+      confirmDescription:
+        "سيتم تعليم كل البنود غير المدفوعة كمدفوعة وإنشاء فاتورة فرعية. التراجع عن العملية غير سهل.",
+      confirm: "تسوية",
     },
   },
   pos: {
@@ -804,6 +811,10 @@ export const ar: MessageTree = {
     sameWarehouse: "يجب أن يكون نفس المستودع",
     sameWarehouseDesc: "الفواتير المحددة يجب أن تكون لنفس المستودع",
     combinedLoadFailed: "تعذر تحميل الكشف المجمّع",
+    settleSuccess: "تمت تسوية الفاتورة",
+    settleFailed: "تعذر تسوية الفاتورة",
+    settleNoOutstanding: "لا يوجد مستحق",
+    settleNoOutstandingDesc: "هذه الفاتورة ليس عليها رصيد مستحق",
   },
   definitionsToasts: {
     added: "تمت إضافة {entity} بنجاح",

@@ -225,6 +225,7 @@ export const en = {
       empty: "No outstanding invoices found",
       emptyHint: "All invoices are fully paid or no invoices match your search criteria",
       view: "View",
+      settle: "Settle",
       child: "Child",
       noCustomer: "No Customer",
       noWarehouse: "No Warehouse",
@@ -277,6 +278,12 @@ export const en = {
       savePdf: "Save as PDF",
       saveExcel: "Save as Excel",
       viewOnlyHint: "For display and printing only. Original invoices are not modified.",
+    },
+    settle: {
+      confirmTitle: "Settle this invoice?",
+      confirmDescription:
+        "All unpaid items will be marked paid and a child bill will be created. This cannot be undone easily.",
+      confirm: "Settle",
     },
   },
   pos: {
@@ -808,6 +815,10 @@ export const en = {
     sameWarehouse: "Same warehouse required",
     sameWarehouseDesc: "Selected invoices must belong to the same warehouse",
     combinedLoadFailed: "Could not load combined statement",
+    settleSuccess: "Invoice settled",
+    settleFailed: "Could not settle invoice",
+    settleNoOutstanding: "Nothing to settle",
+    settleNoOutstandingDesc: "This invoice has no outstanding balance",
   },
   definitionsToasts: {
     added: "{entity} Added Successfully",

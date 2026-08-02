@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { FileText, Loader2, Printer } from "lucide-react"
+import { CheckCircle2, FileText, Loader2, Printer } from "lucide-react"
 import { format } from "date-fns"
 import { ListPagination } from "@/components/list-pagination"
 import { TableSkeleton } from "@/components/table-skeleton"
@@ -28,10 +28,11 @@ type OutstandingTableProps = {
   currentPage: number
   pageSize: number
   totalCount: number
-  isRowLoading: (id: number, action: "view") => boolean
+  isRowLoading: (id: number, action: "view" | "settle") => boolean
   onSelectAllInvoices: (checked: boolean) => void
   onInvoiceSelect: (invoiceId: number) => void
   onViewInvoice: (invoice: Invoice) => void
+  onSettleInvoice: (invoice: Invoice) => void
   onViewCombined: () => void
   isCombinedLoading?: boolean
   onPageChange: (page: number) => void
@@ -66,6 +67,7 @@ export function OutstandingTable({
   onSelectAllInvoices,
   onInvoiceSelect,
   onViewInvoice,
+  onSettleInvoice,
   onViewCombined,
   isCombinedLoading = false,
   onPageChange,
@@ -178,24 +180,51 @@ export function OutstandingTable({
                       {formatInvoiceUsdAmount(invoice.remaining_amount || 0, invoice, warehouses)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onViewInvoice(invoice)}
-                        disabled={isRowLoading(invoice.id, "view")}
-                      >
-                        {isRowLoading(invoice.id, "view") ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            {t("common.loading")}
-                          </>
-                        ) : (
-                          <>
-                            <FileText className="h-4 w-4 mr-2" />
-                            {t("outstanding.table.view")}
-                          </>
-                        )}
-                      </Button>
+                      <div className="inline-flex flex-wrap justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onViewInvoice(invoice)}
+                          disabled={
+                            isRowLoading(invoice.id, "view") ||
+                            isRowLoading(invoice.id, "settle")
+                          }
+                        >
+                          {isRowLoading(invoice.id, "view") ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              {t("common.loading")}
+                            </>
+                          ) : (
+                            <>
+                              <FileText className="mr-2 h-4 w-4" />
+                              {t("outstanding.table.view")}
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => onSettleInvoice(invoice)}
+                          disabled={
+                            (invoice.remaining_amount || 0) <= 0 ||
+                            isRowLoading(invoice.id, "view") ||
+                            isRowLoading(invoice.id, "settle")
+                          }
+                        >
+                          {isRowLoading(invoice.id, "settle") ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              {t("common.loading")}
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="mr-2 h-4 w-4" />
+                              {t("outstanding.table.settle")}
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

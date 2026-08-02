@@ -28,6 +28,7 @@ import { OutstandingFilters } from "./components/outstanding-filters"
 import { OutstandingTable } from "./components/outstanding-table"
 import { PaymentAllocationDialogs } from "./components/payment-allocation-dialog"
 import { CombinedStatementDialog } from "./components/combined-statement-dialog"
+import { SettleConfirmDialog } from "./components/settle-confirm-dialog"
 import type {
   AllocationDialogType,
   Customer,
@@ -178,13 +179,15 @@ export default function OutstandingPaymentPage() {
   const [isCreatingBill, setIsCreatingBill] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = AllocationDialogType | "receipt" | "combined"
+  type DialogType = AllocationDialogType | "receipt" | "combined" | "settle"
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
   const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
   const [receiptCurrencyLabel, setReceiptCurrencyLabel] = useState("$")
   const [reopenMainInvoiceAfterReceipt, setReopenMainInvoiceAfterReceipt] = useState(false)
   const [combinedInvoices, setCombinedInvoices] = useState<Invoice[]>([])
   const [isLoadingCombined, setIsLoadingCombined] = useState(false)
+  const [settleTargetInvoice, setSettleTargetInvoice] = useState<Invoice | null>(null)
+  const [isSettling, setIsSettling] = useState(false)
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
@@ -887,6 +890,142 @@ export default function OutstandingPaymentPage() {
       ...invoice,
       selected: checked,
     })))
+  }
+
+  const handleRequestSettle = (invoice: Invoice) => {
+    if ((invoice.remaining_amount || 0) <= 0) {
+      toast.error(t("outstandingToasts.settleNoOutstanding"), {
+        description: t("outstandingToasts.settleNoOutstandingDesc"),
+      })
+      return
+    }
+    setSettleTargetInvoice(invoice)
+    setActiveDialog("settle")
+  }
+
+  const handleConfirmSettle = async () => {
+    if (!settleTargetInvoice) return
+
+    const parentInvoice = settleTargetInvoice
+    setIsSettling(true)
+    setLoadingAction({ id: parentInvoice.id, action: "settle" })
+
+    const controller = new AbortController()
+    billCreationAbortControllerRef.current?.abort()
+    billCreationAbortControllerRef.current = controller
+
+    try {
+      const token = localStorage.getItem("accessToken")
+      const response = await fetchWithRetry(
+        `${API_URL}/sales/invoices/${parentInvoice.id}/settle/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({}),
+          signal: controller.signal,
+        },
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(
+          errorData.detail || errorData.message || t("outstandingToasts.settleFailed"),
+        )
+      }
+
+      const body = await response.json()
+      const childId = body?.settlement?.child_invoice_id || body?.child_invoice?.id
+      const childSummary = body?.child_invoice
+
+      setActiveDialog(null)
+      setSettleTargetInvoice(null)
+      toast.success(t("outstandingToasts.settleSuccess"), {
+        description: body?.settlement?.child_composite_id
+          ? `#${body.settlement.child_composite_id}`
+          : undefined,
+      })
+
+      await fetchInvoices({
+        search: searchQuery,
+        customerId: selectedCustomerId,
+        page: currentPage,
+      })
+
+      if (childId && childSummary) {
+        try {
+          const receiptWarehouse =
+            childSummary.warehouse ??
+            parentInvoice.warehouse ??
+            warehouses.find(
+              (w) =>
+                w.id === parentInvoice.warehouse?.id ||
+                (!!childSummary.warehouse_name &&
+                  (w.name_en === childSummary.warehouse_name ||
+                    String(childSummary.warehouse_name).includes(w.name_en || ""))),
+            ) ??
+            null
+
+          const receiptItems = (childSummary.items || []).map(
+            (item: {
+              product_name?: string
+              quantity?: number | string
+              unit_price?: number | string
+              discount_percent?: number | string
+              total_price?: number | string
+              paid_amount?: number | string
+              is_paid?: boolean
+              product?: unknown
+            }) => ({
+              product_name: item.product_name || "—",
+              quantity: Number(item.quantity) || 0,
+              unit_price: Number(item.unit_price) || 0,
+              discount_percent: Number(item.discount_percent) || 0,
+              total_price: Number(item.total_price) || 0,
+              paid_amount: Number(item.paid_amount ?? item.total_price) || 0,
+              is_paid: item.is_paid ?? true,
+              product: item.product,
+            }),
+          )
+
+          const { payload, currencyLabel } = await buildReceiptPayloadForDisplayAsync(
+            {
+              ...childSummary,
+              id: childId,
+              total_paid:
+                body?.settlement?.settled_amount ??
+                childSummary.total_paid ??
+                childSummary.total_amount,
+              remaining_amount: 0,
+            },
+            receiptWarehouse,
+            warehouses,
+            receiptItems,
+            token ?? "",
+            controller.signal,
+          )
+          setReceiptPayload(payload)
+          setReceiptCurrencyLabel(currencyLabel)
+          setReopenMainInvoiceAfterReceipt(false)
+          setActiveDialog("receipt")
+        } catch (receiptError) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("Settle receipt failed:", receiptError)
+          }
+          toast.success(t("outstandingToasts.childCreated"), {
+            description: t("outstandingToasts.childCreatedNoReceipt"),
+          })
+        }
+      }
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") return
+      handleError(error, t("outstandingToasts.settleFailed"))
+    } finally {
+      setIsSettling(false)
+      setLoadingAction(null)
+    }
   }
 
   const fetchInvoiceForCombined = useCallback(
@@ -1935,6 +2074,7 @@ export default function OutstandingPaymentPage() {
               onSelectAllInvoices={handleSelectAllInvoices}
               onInvoiceSelect={handleInvoiceSelect}
               onViewInvoice={handleViewInvoice}
+              onSettleInvoice={handleRequestSettle}
               onViewCombined={handleViewCombined}
               isCombinedLoading={isLoadingCombined}
               onPageChange={(page) =>
@@ -1956,6 +2096,20 @@ export default function OutstandingPaymentPage() {
           </div>
         </div>
       </SidebarInset>
+
+      <SettleConfirmDialog
+        open={activeDialog === "settle"}
+        invoice={settleTargetInvoice}
+        warehouses={warehouses}
+        isSettling={isSettling}
+        onOpenChange={(open) => {
+          if (!open && !isSettling) {
+            setActiveDialog(null)
+            setSettleTargetInvoice(null)
+          }
+        }}
+        onConfirm={handleConfirmSettle}
+      />
 
       <CombinedStatementDialog
         open={activeDialog === "combined"}
