@@ -27,6 +27,7 @@ import type { ReceiptData } from "@/components/receipt/ReceiptContent"
 import { OutstandingFilters } from "./components/outstanding-filters"
 import { OutstandingTable } from "./components/outstanding-table"
 import { PaymentAllocationDialogs } from "./components/payment-allocation-dialog"
+import { CombinedStatementDialog } from "./components/combined-statement-dialog"
 import type {
   AllocationDialogType,
   Customer,
@@ -177,11 +178,13 @@ export default function OutstandingPaymentPage() {
   const [isCreatingBill, setIsCreatingBill] = useState(false)
 
   // Consolidated dialog state - only one dialog can be open at a time
-  type DialogType = AllocationDialogType | "receipt"
+  type DialogType = AllocationDialogType | "receipt" | "combined"
   const [activeDialog, setActiveDialog] = useState<DialogType>(null)
   const [receiptPayload, setReceiptPayload] = useState<ReceiptData | null>(null)
   const [receiptCurrencyLabel, setReceiptCurrencyLabel] = useState("$")
   const [reopenMainInvoiceAfterReceipt, setReopenMainInvoiceAfterReceipt] = useState(false)
+  const [combinedInvoices, setCombinedInvoices] = useState<Invoice[]>([])
+  const [isLoadingCombined, setIsLoadingCombined] = useState(false)
 
   // AbortController refs for request cancellation
   const warehousesAbortControllerRef = useRef<AbortController | null>(null)
@@ -884,6 +887,171 @@ export default function OutstandingPaymentPage() {
       ...invoice,
       selected: checked,
     })))
+  }
+
+  const fetchInvoiceForCombined = useCallback(
+    async (invoice: Invoice, signal: AbortSignal): Promise<Invoice> => {
+      const summaryRes = await fetchWithRetry(
+        `${API_URL}/sales/invoices/${invoice.id}/summary/`,
+        { headers, signal },
+      )
+      if (!summaryRes.ok) {
+        throw new Error(`Failed to load invoice ${invoice.id}`)
+      }
+      const summary: InvoiceSummaryResponse = await summaryRes.json()
+
+      let detailedItems: InvoiceItemResponse[] = []
+      try {
+        const itemsRes = await fetchWithRetry(
+          `${API_URL}/sales/invoices/${invoice.id}/items/`,
+          { headers, signal },
+        )
+        if (itemsRes.ok) {
+          const itemsData:
+            | { results?: InvoiceItemResponse[]; items?: InvoiceItemResponse[] }
+            | InvoiceItemResponse[] = await itemsRes.json()
+          detailedItems = Array.isArray(itemsData)
+            ? itemsData
+            : itemsData.results || itemsData.items || []
+        }
+      } catch {
+        // Summary items are enough for read-only display
+      }
+
+      const summaryItems = summary.items || []
+      const mergedItems: InvoiceItem[] = (
+        summaryItems.length > 0 ? summaryItems : detailedItems
+      ).map((summaryItem, index) => {
+        const detailedItem =
+          detailedItems.find((item) => item.id === summaryItem.id) ||
+          detailedItems[index]
+        const total = Number(detailedItem?.total_price ?? summaryItem.total_price ?? 0) || 0
+        const paid = Number(detailedItem?.paid_amount ?? summaryItem.paid_amount ?? 0) || 0
+        return {
+          ...summaryItem,
+          id: detailedItem?.id ?? summaryItem.id,
+          product_name:
+            summaryItem.product_name ||
+            (typeof detailedItem?.product === "object" && detailedItem?.product
+              ? detailedItem.product.title ||
+                detailedItem.product.title_ar ||
+                detailedItem.product.name_en ||
+                detailedItem.product.name_ar ||
+                "—"
+              : "—"),
+          quantity: detailedItem?.quantity ?? summaryItem.quantity,
+          unit_price: detailedItem?.unit_price ?? summaryItem.unit_price,
+          discount_percent: detailedItem?.discount_percent ?? summaryItem.discount_percent,
+          total_price: total,
+          paid_amount: paid,
+          remaining_amount:
+            Number(detailedItem?.remaining_amount ?? detailedItem?.item_remaining_amount) ||
+            Math.max(0, total - paid),
+          is_paid: detailedItem?.is_paid ?? summaryItem.is_paid ?? paid >= total,
+          product: detailedItem?.product ?? summaryItem.product,
+        }
+      })
+
+      const calculatedTotal = mergedItems.reduce(
+        (sum, item) => sum + (Number(item.total_price) || 0),
+        0,
+      )
+      const calculatedPaid = mergedItems.reduce(
+        (sum, item) => sum + (Number(item.paid_amount) || 0),
+        0,
+      )
+
+      return {
+        ...invoice,
+        composite_id:
+          summary.composite_id || invoice.composite_id || invoice.id?.toString(),
+        customer_name:
+          summary.customer_name ||
+          summary.customer?.institution_name ||
+          invoice.customer_name,
+        customer_contact:
+          summary.customer_contact ||
+          summary.customer?.contact_person ||
+          invoice.customer_contact,
+        warehouse_name:
+          summary.warehouse_name ||
+          summary.warehouse?.name_en ||
+          invoice.warehouse_name,
+        customer: summary.customer || invoice.customer,
+        warehouse: summary.warehouse || invoice.warehouse,
+        total_amount: calculatedTotal || Number(summary.total_amount) || invoice.total_amount,
+        total_paid: calculatedPaid || Number(summary.total_paid) || invoice.total_paid,
+        remaining_amount: Math.max(
+          0,
+          (calculatedTotal || Number(summary.total_amount) || invoice.total_amount) -
+            (calculatedPaid || Number(summary.total_paid) || invoice.total_paid),
+        ),
+        created_at: summary.created_at || invoice.created_at,
+        items: mergedItems,
+      }
+    },
+    [headers],
+  )
+
+  const handleViewCombined = async () => {
+    const selected = invoices.filter((invoice) => invoice.selected)
+    if (selected.length < 1) {
+      toast.error(t("outstandingToasts.selectInvoices"), {
+        description: t("outstandingToasts.selectInvoicesDesc"),
+      })
+      return
+    }
+
+    const customerKeys = new Set(
+      selected.map(
+        (inv) =>
+          inv.customer?.id?.toString() ||
+          inv.customer_name?.trim().toLowerCase() ||
+          "",
+      ),
+    )
+    if (customerKeys.size > 1 || (customerKeys.size === 1 && customerKeys.has(""))) {
+      toast.error(t("outstandingToasts.sameCustomer"), {
+        description: t("outstandingToasts.sameCustomerDesc"),
+      })
+      return
+    }
+
+    const warehouseKeys = new Set(
+      selected.map(
+        (inv) =>
+          inv.warehouse?.id?.toString() ||
+          inv.warehouse_name?.trim().toLowerCase() ||
+          "",
+      ),
+    )
+    if (warehouseKeys.size > 1 || (warehouseKeys.size === 1 && warehouseKeys.has(""))) {
+      toast.error(t("outstandingToasts.sameWarehouse"), {
+        description: t("outstandingToasts.sameWarehouseDesc"),
+      })
+      return
+    }
+
+    invoiceDetailsAbortControllerRef.current?.abort()
+    invoiceDetailsAbortControllerRef.current = new AbortController()
+    const signal = invoiceDetailsAbortControllerRef.current.signal
+
+    setIsLoadingCombined(true)
+    setCombinedInvoices([])
+    setActiveDialog("combined")
+
+    try {
+      const detailed = await Promise.all(
+        selected.map((invoice) => fetchInvoiceForCombined(invoice, signal)),
+      )
+      setCombinedInvoices(detailed)
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") return
+      setActiveDialog(null)
+      toast.error(t("outstandingToasts.combinedLoadFailed"))
+    } finally {
+      setIsLoadingCombined(false)
+    }
   }
 
   const handleSelectAllItems = (checked: boolean) => {
@@ -1739,6 +1907,8 @@ export default function OutstandingPaymentPage() {
               onSelectAllInvoices={handleSelectAllInvoices}
               onInvoiceSelect={handleInvoiceSelect}
               onViewInvoice={handleViewInvoice}
+              onViewCombined={handleViewCombined}
+              isCombinedLoading={isLoadingCombined}
               onPageChange={(page) =>
                 fetchInvoices({
                   search: searchQuery,
@@ -1758,6 +1928,19 @@ export default function OutstandingPaymentPage() {
           </div>
         </div>
       </SidebarInset>
+
+      <CombinedStatementDialog
+        open={activeDialog === "combined"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setActiveDialog(null)
+            setCombinedInvoices([])
+          }
+        }}
+        invoices={combinedInvoices}
+        warehouses={warehouses}
+        isLoading={isLoadingCombined}
+      />
 
       <PaymentAllocationDialogs
         activeDialog={

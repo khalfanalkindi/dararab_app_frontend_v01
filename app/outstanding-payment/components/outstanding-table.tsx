@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { FileText, Loader2 } from "lucide-react"
+import { FileText, Loader2, Printer } from "lucide-react"
 import { format } from "date-fns"
 import { ListPagination } from "@/components/list-pagination"
 import { TableSkeleton } from "@/components/table-skeleton"
@@ -32,6 +32,8 @@ type OutstandingTableProps = {
   onSelectAllInvoices: (checked: boolean) => void
   onInvoiceSelect: (invoiceId: number) => void
   onViewInvoice: (invoice: Invoice) => void
+  onViewCombined: () => void
+  isCombinedLoading?: boolean
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
 }
@@ -64,18 +66,42 @@ export function OutstandingTable({
   onSelectAllInvoices,
   onInvoiceSelect,
   onViewInvoice,
+  onViewCombined,
+  isCombinedLoading = false,
   onPageChange,
   onPageSizeChange,
 }: OutstandingTableProps) {
   const { t } = useLanguage()
+  const selectedCount = invoices.filter((invoice) => invoice.selected).length
 
   return (
     <>
       {selectedTotal > 0 && (
-        <div className="mb-4 p-4 bg-primary/10 rounded-md">
+        <div className="mb-4 flex flex-col gap-3 rounded-md bg-primary/10 p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-lg font-semibold">
             {t("outstanding.table.outstanding")}: {selectedTotalDisplay}
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
+              ({selectedCount})
+            </span>
           </p>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={onViewCombined}
+            disabled={selectedCount < 1 || isCombinedLoading}
+          >
+            {isCombinedLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {t("common.loading")}
+              </>
+            ) : (
+              <>
+                <Printer className="mr-2 h-4 w-4" />
+                {t("outstanding.combined.viewPrint")}
+              </>
+            )}
+          </Button>
         </div>
       )}
 
