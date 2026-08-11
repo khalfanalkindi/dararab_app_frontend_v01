@@ -68,6 +68,7 @@ function buildNavGroups(t: TranslateFn): NavMainGroup[] {
           items: [
             { title: t("nav.products"), url: "/products" },
             { title: t("nav.inventory"), url: "/inventory" },
+            { title: t("nav.stockWriteoffs"), url: "/inventory/writeoffs" },
             { title: t("nav.transfer"), url: "/transfer" },
           ],
         },
@@ -87,6 +88,7 @@ function buildNavGroups(t: TranslateFn): NavMainGroup[] {
           items: [
             { title: t("nav.reportsOverview"), url: "/reports" },
             { title: t("nav.warehouseStatistics"), url: "/reports/warehouse-stat" },
+            { title: t("nav.bookSalesAnalytics"), url: "/reports/book-sales" },
             { title: t("nav.royaltiesCalculation"), url: "/reports/royalties" },
           ],
         },

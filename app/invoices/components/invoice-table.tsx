@@ -76,7 +76,7 @@ export function InvoiceTable({
 
       {!hasSearched ? (
         <div className="text-center text-muted-foreground py-12">
-          Please select at least one filter (Warehouse, Date Range, Invoice/Composite ID, or Customer) to view invoices.
+          Please select at least one filter (Warehouse, Date Range, Invoice ID, or Customer) to view invoices.
         </div>
       ) : (
         <div className="border rounded-md">
@@ -91,7 +91,6 @@ export function InvoiceTable({
                   />
                 </TableHead>
                 <TableHead>{t("invoices.table.invoiceNumber")}</TableHead>
-                <TableHead>{t("invoices.table.compositeId")}</TableHead>
                 <TableHead>{t("invoices.table.customer")}</TableHead>
                 <TableHead>{t("invoices.table.warehouse")}</TableHead>
                 <TableHead>{t("invoices.table.type")}</TableHead>
@@ -102,10 +101,10 @@ export function InvoiceTable({
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableSkeleton columns={9} rows={5} hasActions />
+                <TableSkeleton columns={8} rows={5} hasActions />
               ) : invoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-8 text-center">
+                  <TableCell colSpan={8} className="py-8 text-center">
                     {t("invoices.table.empty")}
                   </TableCell>
                 </TableRow>
@@ -127,7 +126,6 @@ export function InvoiceTable({
                       />
                     </TableCell>
                     <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
-                    <TableCell className="font-mono text-sm">{invoice.composite_id || t("common.na")}</TableCell>
                     <TableCell>{invoice.customer?.institution_name || t("outstanding.table.noCustomer")}</TableCell>
                     <TableCell>{invoice.warehouse?.name_en || t("outstanding.table.noWarehouse")}</TableCell>
                     <TableCell>

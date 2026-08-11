@@ -1462,7 +1462,7 @@ export default function POSPage() {
       const validationErrors = []
 
       for (const result of inventoryResults) {
-        if (result.status === 'fulfilled') {
+        if (result.status === "fulfilled") {
           const { productId, productName, quantity, inventory } = result.value
           
           if (!inventory) {
@@ -1476,12 +1476,17 @@ export default function POSPage() {
             continue
           }
 
+          const cartItem = cart.find((c) => c.product.id === productId)
+          const isComplimentary = Number(cartItem?.discount_percent || 0) >= 100
+
           inventoryUpdates.push({
             id: inventory.id,
             product_id: productId,
             warehouse_id: selectedWarehouse,
             quantity: newQuantity,
-            notes: inventory.notes || ''
+            movement_type: isComplimentary ? "complimentary" : "sale",
+            invoice_id: invoiceId,
+            notes: inventory.notes || "",
           })
         }
       }

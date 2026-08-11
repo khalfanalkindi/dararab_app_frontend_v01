@@ -86,4 +86,4 @@ export interface InvoiceItem {
 
 export type AllocationDialogType = "view" | "generate" | "confirm" | null
 
-export type RowAction = "view"
+export type RowAction = "view" | "settle"
