@@ -513,7 +513,9 @@ useEffect(() => {
         total,
         label: `Individual transfer (fallback): 0 of ${total}`,
       })
-      toast.success("Using individual transfers", { description: "${reason} Falling back to one request per product." })
+      toast.success("Using individual transfers", {
+        description: `${reason} Falling back to one request per product.`,
+      })
 
       let successCount = 0
       let failedCount = 0
@@ -711,12 +713,14 @@ useEffect(() => {
       }
 
       if (failedCount > 0) {
-        toast.error(
-          mode === "bulk"
-            ? t("transferToasts.partialBulk", { ok: successCount, total })
-            : t("transferToasts.partialBulk", { ok: successCount, total }),
-          { description: t("toasts.tryAgain") },
-        )
+        const failureDetail =
+          errorMessages.length > 0
+            ? errorMessages.slice(0, 3).join(" · ")
+            : t("toasts.tryAgain")
+        toast.error(t("transferToasts.partialBulk", { ok: successCount, total }), {
+          description: failureDetail,
+          duration: 8000,
+        })
       } else {
         toast.success(t("transferToasts.complete"), {
           description: t("transferToasts.completeDesc", { count: successCount }),
