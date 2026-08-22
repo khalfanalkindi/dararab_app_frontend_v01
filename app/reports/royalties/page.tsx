@@ -38,6 +38,11 @@ interface RoyaltiesCalculationDetails {
   Y?: number
   actual_paid?: number
   free_copies?: number
+  fully_discounted_copies?: number
+  damaged_copies?: number
+  lost_copies?: number
+  complimentary_stock_copies?: number
+  stock_excluded_copies?: number
   royalties_type_id?: number
   royalties_type?: string
   commission_percent?: number
@@ -473,6 +478,36 @@ const fetchAllPaginated = useCallback(async <T,>(
                                             <div className="text-lg font-semibold">{result.details.free_copies} books</div>
                                           </div>
                                         )}
+                                        {result.details.fully_discounted_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">100% Discount Copies</div>
+                                            <div className="text-lg font-semibold">{result.details.fully_discounted_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.damaged_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Damaged (Stock)</div>
+                                            <div className="text-lg font-semibold">{result.details.damaged_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.lost_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Lost (Stock)</div>
+                                            <div className="text-lg font-semibold">{result.details.lost_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.complimentary_stock_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Complimentary (Stock)</div>
+                                            <div className="text-lg font-semibold">{result.details.complimentary_stock_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.stock_excluded_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Stock Excluded Total</div>
+                                            <div className="text-lg font-semibold">{result.details.stock_excluded_copies} books</div>
+                                          </div>
+                                        )}
                                         {result.details.commission_percent !== undefined && (
                                           <div>
                                             <div className="text-sm font-medium text-muted-foreground">Commission</div>
@@ -568,6 +603,36 @@ const fetchAllPaginated = useCallback(async <T,>(
                                           <div>
                                             <div className="text-sm font-medium text-muted-foreground">Free Copies</div>
                                             <div className="text-lg font-semibold">{result.details.free_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.fully_discounted_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">100% Discount Copies</div>
+                                            <div className="text-lg font-semibold">{result.details.fully_discounted_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.damaged_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Damaged (Stock)</div>
+                                            <div className="text-lg font-semibold">{result.details.damaged_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.lost_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Lost (Stock)</div>
+                                            <div className="text-lg font-semibold">{result.details.lost_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.complimentary_stock_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Complimentary (Stock)</div>
+                                            <div className="text-lg font-semibold">{result.details.complimentary_stock_copies} books</div>
+                                          </div>
+                                        )}
+                                        {result.details.stock_excluded_copies !== undefined && (
+                                          <div>
+                                            <div className="text-sm font-medium text-muted-foreground">Stock Excluded Total</div>
+                                            <div className="text-lg font-semibold">{result.details.stock_excluded_copies} books</div>
                                           </div>
                                         )}
                                         {result.details.fixed_amount !== undefined && (
