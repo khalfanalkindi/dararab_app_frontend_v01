@@ -35,6 +35,13 @@ function normalizeListItemValue(value: string | null | undefined): string {
   return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
+/** USD / API money fields accept 2 decimal places only (OMR display may stay at 3). */
+function roundMoney2(value: number): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Number(n.toFixed(2))
+}
+
 /** Replace one line so totals that depend on the whole cart (e.g. store + global discount split) stay consistent. */
 function replaceCartItemForTotals(cart: CartItem[], replacement: CartItem): CartItem[] {
   return cart.map((c) => (c.product.id === replacement.product.id ? replacement : c))
@@ -1308,10 +1315,9 @@ export default function POSPage() {
         Authorization: `Bearer ${token}`,
       }
 
-      // Round to 3 decimal places to match display
-      const roundedTotal = Number(total.toFixed(3));
-      // Use memoized totalPaidAmount (already calculated and rounded)
-      const finalPaidAmount = Number(totalPaidAmount.toFixed(3));
+      // API money fields are USD with 2 decimals; UI may still show OMR with 3.
+      const roundedTotal = roundMoney2(total)
+      const finalPaidAmount = roundMoney2(totalPaidAmount)
 
       // 1. Create the invoice with updated field names
       const invoiceData = {
@@ -1321,8 +1327,10 @@ export default function POSPage() {
         payment_method_id: selectedPaymentMethod,
         is_returnable: true,
         notes: invoiceNotes,
-        global_discount_percent: appliesGlobalDiscountPerLine ? 0 : discountPercentage,
-        tax_percent: taxPercentage,
+        global_discount_percent: roundMoney2(
+          appliesGlobalDiscountPerLine ? 0 : discountPercentage,
+        ),
+        tax_percent: roundMoney2(taxPercentage),
         total_amount: roundedTotal, // Grand total after global discount and tax
         total_paid: finalPaidAmount, // Sum of individual item paid amounts (from memoized totalPaidAmount)
         remaining_amount: 0, // When fully paid, remaining is 0
@@ -1355,7 +1363,7 @@ export default function POSPage() {
       
       // Effective line discount % vs list gross (unit_price × qty) so API discount_percent matches total_price (line + global % on line)
       for (const item of cart) {
-        const itemTotal = calculateItemTotal(item, cart);
+        const itemTotal = roundMoney2(calculateItemTotal(item, cart))
         const unitPrice = (() => {
           const price = item.product.price || item.product.latest_price;
           return price ? parseFloat(price) : 0;
@@ -1365,20 +1373,19 @@ export default function POSPage() {
         if (gross > 1e-9) {
           effectiveDiscountPercent = getEffectiveLineDiscountPercent(item, cart);
         }
+        const paidAmount = roundMoney2(item.paid_amount)
+        const remainingAmount = roundMoney2(itemTotal - paidAmount)
         
         const itemData = {
           invoice: invoiceId,
           product: item.product.id,
           quantity: item.quantity,
-          unit_price: (() => {
-            const price = item.product.price || item.product.latest_price;
-            return price ? parseFloat(price) : 0;
-          })(),
-          discount_percent: effectiveDiscountPercent,
+          unit_price: roundMoney2(unitPrice),
+          discount_percent: roundMoney2(effectiveDiscountPercent),
           total_price: itemTotal,
-          paid_amount: item.paid_amount,
-          remaining_amount: itemTotal - item.paid_amount,
-          is_paid: item.is_paid,
+          paid_amount: paidAmount,
+          remaining_amount: remainingAmount,
+          is_paid: paidAmount + 0.001 >= itemTotal,
         }
 
         const itemResponse = await fetchWithRetry(`${API_URL}/sales/invoice-items/`, {
@@ -1532,7 +1539,7 @@ export default function POSPage() {
       
       const paymentData = {
         invoice: invoiceId,
-        amount: parseFloat(finalPaidAmount.toFixed(2)), // sum of individual item payments (matches total when fully paid)
+        amount: finalPaidAmount, // sum of individual item payments (matches total when fully paid)
         payment_date: format(new Date(), "yyyy-MM-dd"),
       };
 
@@ -1562,7 +1569,7 @@ export default function POSPage() {
 
       const cartSnapshot = [...cart]
 
-      const remainingAmount = roundedTotal - finalPaidAmount;
+      const remainingAmount = roundMoney2(roundedTotal - finalPaidAmount)
       const displayRemaining =
         isMuscatWarehouse && roundedTotal > 0
           ? Number(((remainingAmount / roundedTotal) * displayCartCalcs.total).toFixed(3))
@@ -1614,9 +1621,11 @@ export default function POSPage() {
           items: cartSnapshot.map((item) => ({
             product_name: item.product.title_ar || item.product.title_en,
             quantity: item.quantity,
-            unit_price: parseFloat(item.product.price || item.product.latest_price || "0"),
-            discount_percent: item.discount_percent,
-            total_price: calculateItemTotal(item, cartSnapshot),
+            unit_price: roundMoney2(
+              parseFloat(item.product.price || item.product.latest_price || "0"),
+            ),
+            discount_percent: roundMoney2(item.discount_percent),
+            total_price: roundMoney2(calculateItemTotal(item, cartSnapshot)),
           })),
         }
         toast.success(t("posToasts.saleSaved"))
