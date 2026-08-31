@@ -92,7 +92,9 @@ export const en = {
     reports: "Reports",
     reportsOverview: "Overview",
     warehouseStatistics: "Warehouse Statistics",
-    royaltiesCalculation: "Royalties Calculation",
+    royalties: "Royalties",
+    royaltiesCalculation: "Calculate & Settle",
+    royaltiesHistory: "Settlement History",
     bookSalesAnalytics: "Book Sales Analytics",
     definitions: "Definitions",
     definitionsOverview: "Overview",
@@ -885,9 +887,10 @@ export const en = {
     page: "Page",
     rulesNote:
       "Transfers are not sales. Complimentary = 100% discount. Child invoices excluded. Currency is USD ($). Stock opening/closing comes from the stock ledger.",
-    hubIntro: "Choose a report to explore warehouse performance, book sales, or royalties.",
+    hubIntro: "Choose a report to explore warehouse performance or book sales.",
     hubWarehouseDesc: "Sales and stock performance by warehouse and date range.",
     hubRoyaltiesDesc: "Calculate royalties for contracts and projects.",
+    hubRoyaltiesHistoryDesc: "Browse past settled royalty cycles and re-download reports.",
     metric: {
       invoiced: "Invoiced",
       netSold: "Net sold",

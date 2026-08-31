@@ -89,7 +89,9 @@ export const ar: MessageTree = {
     reports: "التقارير",
     reportsOverview: "نظرة عامة",
     warehouseStatistics: "إحصاءات المستودع",
-    royaltiesCalculation: "حساب العوائد",
+    royalties: "الإتاوات",
+    royaltiesCalculation: "حساب وتسوية",
+    royaltiesHistory: "سجل التسويات",
     bookSalesAnalytics: "تحليل مبيعات الكتب",
     definitions: "التعريفات",
     definitionsOverview: "نظرة عامة",
@@ -881,9 +883,10 @@ export const ar: MessageTree = {
     page: "صفحة",
     rulesNote:
       "التحويلات ليست مبيعات. المجاني = خصم 100%. الفواتير الفرعية مستبعدة. العملة دولار ($). الافتتاحي/الختامي من دفتر المخزون.",
-    hubIntro: "اختر تقريراً لاستكشاف أداء المستودع أو مبيعات الكتب أو العوائد.",
+    hubIntro: "اختر تقريراً لاستكشاف أداء المستودع أو مبيعات الكتب.",
     hubWarehouseDesc: "أداء المبيعات والمخزون حسب المستودع ونطاق التاريخ.",
     hubRoyaltiesDesc: "حساب العوائد للعقود والمشاريع.",
+    hubRoyaltiesHistoryDesc: "عرض التسويات السابقة وإعادة تحميل التقارير.",
     metric: {
       invoiced: "مفوتر",
       netSold: "صافي المباع",

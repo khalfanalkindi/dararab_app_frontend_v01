@@ -6,6 +6,7 @@ import {
   Blocks,
   BookCopy,
   BookMarked,
+  DollarSign,
   FileText,
   LayoutDashboard,
   Settings2,
@@ -89,7 +90,15 @@ function buildNavGroups(t: TranslateFn): NavMainGroup[] {
             { title: t("nav.reportsOverview"), url: "/reports" },
             { title: t("nav.warehouseStatistics"), url: "/reports/warehouse-stat" },
             { title: t("nav.bookSalesAnalytics"), url: "/reports/book-sales" },
-            { title: t("nav.royaltiesCalculation"), url: "/reports/royalties" },
+          ],
+        },
+        {
+          title: t("nav.royalties"),
+          url: "/royalties",
+          icon: DollarSign,
+          items: [
+            { title: t("nav.royaltiesCalculation"), url: "/royalties" },
+            { title: t("nav.royaltiesHistory"), url: "/royalties/history" },
           ],
         },
         {

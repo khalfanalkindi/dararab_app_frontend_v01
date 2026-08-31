@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { BarChart3, BookOpen, Calculator, Warehouse } from "lucide-react"
+import { BarChart3, BookOpen, Warehouse } from "lucide-react"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
 import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
@@ -24,12 +24,6 @@ export default function ReportsHubPage() {
       title: t("nav.bookSalesAnalytics"),
       description: t("bookSales.description"),
       icon: BookOpen,
-    },
-    {
-      href: "/reports/royalties",
-      title: t("nav.royaltiesCalculation"),
-      description: t("bookSales.hubRoyaltiesDesc"),
-      icon: Calculator,
     },
   ]
 

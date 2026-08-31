@@ -54,6 +54,13 @@ export function canAccessPath(
   const exact = payload.permissions.find((p) => normalizePath(p.url) === normalized)
   if (exact?.[action]) return true
 
+  // Parent grant: /royalties covers /royalties/history (matches backend user_can)
+  const parentAllowed = payload.permissions.some((p) => {
+    const url = normalizePath(p.url)
+    return normalized.startsWith(`${url}/`) && Boolean(p[action])
+  })
+  if (parentAllowed) return true
+
   // Parent path allowed if any child page under it is allowed
   // e.g. /admin allowed when /admin/users has can_view
   const childAllowed = payload.permissions.some((p) => {
