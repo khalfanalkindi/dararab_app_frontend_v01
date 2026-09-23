@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
 import Link from "next/link"
 import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
@@ -48,11 +48,25 @@ interface RoyaltiesCalculationDetails {
   royalties_type_id?: number
   royalties_type?: string
   commission_percent?: number
+  /** Legacy list-price field; prefer book_price when present */
   price?: number
+  book_price?: number
   print_run_id?: number
   edition_number?: number
   avg_total_price?: number | null
   fixed_amount?: number
+  // Shared / cycle metadata
+  version?: string
+  formula?: string
+  period_start?: string | null
+  prior_settled?: boolean
+  // Retail (id=53)
+  paid_net_revenue?: number
+  royalty_earned?: number
+  unrecovered_advance?: number
+  amount_due?: number
+  period_start_date?: string | null
+  period_end_date?: string | null
 }
 
 interface RoyaltySettlementInfo {
@@ -93,11 +107,183 @@ function formatDateTime(value?: string | null): string {
   return d.toLocaleString()
 }
 
+function formatDateOnly(value?: string | null): string {
+  if (!value) return "—"
+  // YYYY-MM-DD from backend — avoid timezone shift for date-only strings
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleDateString()
+}
+
+function formatMoneyUsd(value: number): string {
+  return `$${Number(value).toFixed(2)}`
+}
+
 function statusBadgeVariant(status: string): "default" | "secondary" | "outline" | "destructive" {
   if (status === "open") return "default"
   if (status === "settled") return "secondary"
   if (status === "cancelled") return "destructive"
   return "outline"
+}
+
+function DetailField({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: ReactNode
+  hint?: string
+}) {
+  return (
+    <div>
+      <div className="text-sm font-medium text-muted-foreground">{label}</div>
+      <div className="text-lg font-semibold">{value}</div>
+      {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  )
+}
+
+function CalculationDetailsGrid({
+  details,
+  royaltyTypeLabel,
+}: {
+  details: RoyaltiesCalculationDetails
+  royaltyTypeLabel: string
+}) {
+  const bookPrice =
+    details.book_price !== undefined
+      ? details.book_price
+      : details.price !== undefined
+        ? details.price
+        : undefined
+
+  const formulaText =
+    details.formula ||
+    (details.royalties_type_id === 52
+      ? "RA = Y × book_price × (commission_percent / 100)"
+      : details.royalties_type_id === 53
+        ? "amount_due = max(0, paid_net_revenue × % − unrecovered_advance)"
+        : null)
+
+  const periodStartRaw = details.period_start ?? details.period_start_date ?? null
+
+  return (
+    <div className="grid grid-cols-2 gap-4 pt-2">
+      {details.X !== undefined && (
+        <DetailField label="X (Advance Coverage)" value={`${details.X} books`} />
+      )}
+      {details.Y !== undefined && (
+        <DetailField label="Y (Eligible Books)" value={`${details.Y} books`} />
+      )}
+      {details.actual_paid !== undefined && (
+        <DetailField label="Actual Paid" value={`${details.actual_paid} books`} />
+      )}
+      {details.free_copies !== undefined && (
+        <DetailField label="Free Copies" value={`${details.free_copies} books`} />
+      )}
+      {details.fully_discounted_copies !== undefined && (
+        <DetailField
+          label="100% Discount Copies"
+          value={`${details.fully_discounted_copies} books`}
+        />
+      )}
+      {details.damaged_copies !== undefined && (
+        <DetailField label="Damaged (Stock)" value={`${details.damaged_copies} books`} />
+      )}
+      {details.lost_copies !== undefined && (
+        <DetailField label="Lost (Stock)" value={`${details.lost_copies} books`} />
+      )}
+      {details.complimentary_stock_copies !== undefined && (
+        <DetailField
+          label="Complimentary (Stock)"
+          value={`${details.complimentary_stock_copies} books`}
+        />
+      )}
+      {details.stock_excluded_copies !== undefined && (
+        <DetailField
+          label="Stock Excluded Total"
+          value={`${details.stock_excluded_copies} books`}
+        />
+      )}
+
+      {details.paid_net_revenue !== undefined && (
+        <DetailField
+          label="Paid Net Revenue"
+          value={formatMoneyUsd(details.paid_net_revenue)}
+        />
+      )}
+      {details.royalty_earned !== undefined && (
+        <DetailField label="Royalty Earned" value={formatMoneyUsd(details.royalty_earned)} />
+      )}
+      {details.unrecovered_advance !== undefined && (
+        <DetailField
+          label="Unrecovered Advance"
+          value={formatMoneyUsd(details.unrecovered_advance)}
+        />
+      )}
+      {details.amount_due !== undefined && (
+        <DetailField label="Amount Due (calc)" value={formatMoneyUsd(details.amount_due)} />
+      )}
+      {details.fixed_amount !== undefined && (
+        <DetailField label="Advance Payment" value={formatMoneyUsd(details.fixed_amount)} />
+      )}
+
+      {details.commission_percent !== undefined && (
+        <DetailField label="Commission" value={`${details.commission_percent}%`} />
+      )}
+      {details.royalties_type_id ? (
+        <DetailField label="Royalty Type" value={royaltyTypeLabel} />
+      ) : null}
+
+      {bookPrice !== undefined && (
+        <DetailField label="Book Price" value={formatMoneyUsd(bookPrice)} />
+      )}
+      {details.avg_total_price !== undefined && details.avg_total_price !== null && (
+        <DetailField
+          label="Average Total Price"
+          value={formatMoneyUsd(details.avg_total_price)}
+        />
+      )}
+
+      {periodStartRaw != null && periodStartRaw !== "" && (
+        <DetailField
+          label="Period Start"
+          value={
+            details.period_start_date
+              ? formatDateOnly(details.period_start_date)
+              : formatDateTime(details.period_start)
+          }
+          hint="Counting from project created date or last settle — not contract start_date."
+        />
+      )}
+      {details.period_end_date != null && details.period_end_date !== "" && (
+        <DetailField
+          label="Period End"
+          value={formatDateOnly(details.period_end_date)}
+        />
+      )}
+      {details.prior_settled !== undefined && (
+        <DetailField label="Prior Settled" value={details.prior_settled ? "Yes" : "No"} />
+      )}
+      {details.version && <DetailField label="Formula Version" value={details.version} />}
+
+      {details.print_run_id !== undefined && (
+        <DetailField label="Print Run ID" value={`#${details.print_run_id}`} />
+      )}
+      {details.edition_number !== undefined && (
+        <DetailField label="Edition Number" value={details.edition_number} />
+      )}
+
+      {formulaText && (
+        <div className="col-span-2">
+          <div className="text-sm font-medium text-muted-foreground">Formula</div>
+          <div className="text-sm font-semibold font-mono mt-0.5">{formulaText}</div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function RoyaltiesReport() {
@@ -841,100 +1027,12 @@ const fetchAllPaginated = useCallback(async <T,>(
                                   <AccordionItem value="details">
                                     <AccordionTrigger>Calculation Details</AccordionTrigger>
                                     <AccordionContent>
-                                      <div className="grid grid-cols-2 gap-4 pt-2">
-                                        {result.details.X !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">X (Advance Coverage)</div>
-                                            <div className="text-lg font-semibold">{result.details.X} books</div>
-                                          </div>
+                                      <CalculationDetailsGrid
+                                        details={result.details}
+                                        royaltyTypeLabel={getRoyaltyTypeDisplay(
+                                          result.details.royalties_type_id,
                                         )}
-                                        {result.details.Y !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Y (Eligible Books)</div>
-                                            <div className="text-lg font-semibold">{result.details.Y} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.actual_paid !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Actual Paid</div>
-                                            <div className="text-lg font-semibold">{result.details.actual_paid} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.free_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Free Copies</div>
-                                            <div className="text-lg font-semibold">{result.details.free_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.fully_discounted_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">100% Discount Copies</div>
-                                            <div className="text-lg font-semibold">{result.details.fully_discounted_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.damaged_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Damaged (Stock)</div>
-                                            <div className="text-lg font-semibold">{result.details.damaged_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.lost_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Lost (Stock)</div>
-                                            <div className="text-lg font-semibold">{result.details.lost_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.complimentary_stock_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Complimentary (Stock)</div>
-                                            <div className="text-lg font-semibold">{result.details.complimentary_stock_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.stock_excluded_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Stock Excluded Total</div>
-                                            <div className="text-lg font-semibold">{result.details.stock_excluded_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.commission_percent !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Commission</div>
-                                            <div className="text-lg font-semibold">{result.details.commission_percent}%</div>
-                                          </div>
-                                        )}
-                                        {result.details.royalties_type_id && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Royalty Type</div>
-                                            <div className="text-lg font-semibold">
-                                              {getRoyaltyTypeDisplay(result.details.royalties_type_id)}
-                                            </div>
-                                          </div>
-                                        )}
-                                        {result.details.price !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Price</div>
-                                            <div className="text-lg font-semibold">{result.details.price.toFixed(2)}</div>
-                                          </div>
-                                        )}
-                                        {result.details.avg_total_price !== undefined && result.details.avg_total_price !== null && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Average Total Price</div>
-                                            <div className="text-lg font-semibold">{result.details.avg_total_price.toFixed(2)}</div>
-                                          </div>
-                                        )}
-                                        {result.details.print_run_id !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Print Run ID</div>
-                                            <div className="text-lg font-semibold">#{result.details.print_run_id}</div>
-                                          </div>
-                                        )}
-                                        {result.details.edition_number !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Edition Number</div>
-                                            <div className="text-lg font-semibold">{result.details.edition_number}</div>
-                                          </div>
-                                        )}
-                </div>
+                                      />
                                     </AccordionContent>
                                   </AccordionItem>
                                 </Accordion>
@@ -968,92 +1066,12 @@ const fetchAllPaginated = useCallback(async <T,>(
                                   <AccordionItem value="details">
                                     <AccordionTrigger>Calculation Details</AccordionTrigger>
                                     <AccordionContent>
-                                      <div className="grid grid-cols-2 gap-4 pt-2">
-                                        {result.details.X !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">X</div>
-                                            <div className="text-lg font-semibold">{result.details.X} books</div>
-                                          </div>
+                                      <CalculationDetailsGrid
+                                        details={result.details}
+                                        royaltyTypeLabel={getRoyaltyTypeDisplay(
+                                          result.details.royalties_type_id,
                                         )}
-                                        {result.details.Y !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Y</div>
-                                            <div className="text-lg font-semibold">{result.details.Y} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.actual_paid !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Actual Paid</div>
-                                            <div className="text-lg font-semibold">{result.details.actual_paid} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.free_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Free Copies</div>
-                                            <div className="text-lg font-semibold">{result.details.free_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.fully_discounted_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">100% Discount Copies</div>
-                                            <div className="text-lg font-semibold">{result.details.fully_discounted_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.damaged_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Damaged (Stock)</div>
-                                            <div className="text-lg font-semibold">{result.details.damaged_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.lost_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Lost (Stock)</div>
-                                            <div className="text-lg font-semibold">{result.details.lost_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.complimentary_stock_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Complimentary (Stock)</div>
-                                            <div className="text-lg font-semibold">{result.details.complimentary_stock_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.stock_excluded_copies !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Stock Excluded Total</div>
-                                            <div className="text-lg font-semibold">{result.details.stock_excluded_copies} books</div>
-                                          </div>
-                                        )}
-                                        {result.details.fixed_amount !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Advance Payment</div>
-                                            <div className="text-lg font-semibold">${result.details.fixed_amount.toFixed(2)}</div>
-                                          </div>
-                                        )}
-                                        {result.details.commission_percent !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Commission</div>
-                                            <div className="text-lg font-semibold">{result.details.commission_percent}%</div>
-                                          </div>
-                                        )}
-                                        {result.details.price !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Price</div>
-                                            <div className="text-lg font-semibold">{result.details.price.toFixed(2)}</div>
-                                          </div>
-                                        )}
-                                        {result.details.print_run_id !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Print Run ID</div>
-                                            <div className="text-lg font-semibold">#{result.details.print_run_id}</div>
-                                          </div>
-                                        )}
-                                        {result.details.edition_number !== undefined && (
-                                          <div>
-                                            <div className="text-sm font-medium text-muted-foreground">Edition Number</div>
-                                            <div className="text-lg font-semibold">{result.details.edition_number}</div>
-                                          </div>
-                                        )}
-                                      </div>
+                                      />
                                     </AccordionContent>
                                   </AccordionItem>
                                 </Accordion>

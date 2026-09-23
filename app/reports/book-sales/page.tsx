@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
-import { PageBreadcrumb, REPORTS_CRUMB, useAppCrumbs } from "@/components/page-breadcrumb"
+import { PageBreadcrumb, useAppCrumbs } from "@/components/page-breadcrumb"
 import { useLanguage } from "@/components/language-context"
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
@@ -274,7 +274,7 @@ export default function BookSalesAnalyticsPage() {
             <PageBreadcrumb
               items={[
                 crumbs.dashboard,
-                REPORTS_CRUMB,
+                crumbs.reports,
                 { label: t("bookSales.title") },
               ]}
             />
