@@ -156,7 +156,7 @@ export default function RoyaltiesSettlementHistoryPage() {
       setIsLoadingContracts(true)
       try {
         const data = await fetchAllPaginated<Contract>(
-          `${API_URL}/inventory/contracts/?project=${projectId}&page_size=100`,
+          `${API_URL}/inventory/contracts/?project_id=${projectId}&page_size=100`,
           abortController.signal,
         )
         setContracts(data)
