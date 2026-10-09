@@ -1619,6 +1619,19 @@ async function handleUpdateInventory() {
         'Content-Type': 'application/json',
       };
 
+      // Only send cover when it actually changed — the loaded value may be an
+      // absolute backend URL for uploaded files, which must not be written back.
+      const coverUrlChanged =
+        editCoverInputType === 'url' &&
+        !!selectedBook.cover_url &&
+        selectedBook.cover_url !== selectedBook.cover_design;
+      const newCoverUpload =
+        editCoverInputType === 'upload' &&
+        typeof selectedBook.cover_image === 'string' &&
+        selectedBook.cover_image.startsWith('data:')
+          ? selectedBook.cover_image
+          : null;
+
       // Update book details
       const bookRes = await fetchWithRetry(`${API_URL}/inventory/products/${selectedBook.id}/`, {
         method: 'PATCH',
@@ -1635,15 +1648,36 @@ async function handleUpdateInventory() {
           rights_owner_id: selectedBook.rights_owner?.id,
           reviewer_id: selectedBook.reviewer?.id,
           is_direct_product: selectedBook.is_direct_product,
+          ...(coverUrlChanged ? { cover_design: selectedBook.cover_url } : {}),
         }),
       });
 
       if (!bookRes.ok) {
         const errorData = await bookRes.json().catch(() => ({}));
-        throw new Error(errorData.message || "Failed to update book");
+        throw new Error(errorData.message || errorData.cover_design?.[0] || "Failed to update book");
       }
       
-      const bookResData = await bookRes.json();
+      let bookResData = await bookRes.json();
+
+      // File uploads can't go in the JSON body — send them as a separate multipart PATCH.
+      if (newCoverUpload) {
+        const blob = await (await fetch(newCoverUpload)).blob();
+        const coverForm = new FormData();
+        coverForm.append(
+          "cover_design",
+          new File([blob], `cover.${blob.type.split('/')[1] || 'jpg'}`, { type: blob.type || 'image/jpeg' }),
+        );
+        const coverRes = await fetchWithRetry(`${API_URL}/inventory/products/${selectedBook.id}/`, {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: coverForm,
+        });
+        if (!coverRes.ok) {
+          const errorData = await coverRes.json().catch(() => ({}));
+          throw new Error(errorData.cover_design?.[0] || errorData.message || "Failed to update cover image");
+        }
+        bookResData = await coverRes.json();
+      }
 
       // Update print runs using bulk endpoint
       if (selectedBook.print_runs && selectedBook.print_runs.length > 0) {

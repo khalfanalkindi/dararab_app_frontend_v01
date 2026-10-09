@@ -425,6 +425,11 @@ export const en = {
       empty: "No warehouses found",
       editTitle: "Edit Warehouse",
       editDescription: "Update warehouse information.",
+      showInPos: "Show in POS",
+      posShown: "{name} is now shown in the POS warehouse list.",
+      posHidden: "{name} is now hidden from the POS warehouse list.",
+      posToggleFailed:
+        "Could not update POS visibility. This needs add/delete permission on Common Definitions.",
     },
     customers: {
       management: "Customer Management",
@@ -936,6 +941,18 @@ export const en = {
     recent: "Recent write-offs",
     empty: "No write-offs recorded yet.",
     date: "Date",
+    addBooks: "Search and add books...",
+    selectedBooks: "Selected books ({count})",
+    noBooksSelected: "No books selected yet. Use the search above to add one or more books.",
+    available: "Available",
+    remove: "Remove",
+    clearAll: "Clear all",
+    selectWarehouseForStock: "Select a warehouse",
+    bookQuantityInvalid: "{book}: enter a valid quantity greater than 0",
+    bookQuantityExceeds: "{book}: quantity exceeds available stock ({stock})",
+    bookStockUnknown: "{book}: available stock could not be loaded",
+    confirmSummary: "{count} book(s), {qty} copies in total.",
+    savedBatchDesc: "Deducted {qty} copies across {count} book(s).",
   },
 } as const
 

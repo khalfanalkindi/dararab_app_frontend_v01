@@ -6,6 +6,7 @@ import {
   ChevronsUpDown,
   ClipboardList,
   Loader2,
+  X,
 } from "lucide-react"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DocumentTitle } from "@/components/document-title"
@@ -83,6 +84,9 @@ type WriteoffRow = {
   occurred_at: string | null
   created_by: string | null
 }
+type SelectedItem = { product: ProductOption; quantity: string }
+/** Per-product stock for the current warehouse; "loading" while fetching. */
+type StockState = number | null | "loading"
 
 const ALLOWED_TYPES = new Set(["damage", "loss", "reserved"])
 
@@ -101,13 +105,13 @@ export default function StockWriteoffsPage() {
   const [productQuery, setProductQuery] = useState("")
   const [productOptions, setProductOptions] = useState<ProductOption[]>([])
   const [isSearchingProducts, setIsSearchingProducts] = useState(false)
-  const [selectedProduct, setSelectedProduct] = useState<ProductOption | null>(null)
+
+  const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([])
+  const [stockMap, setStockMap] = useState<Record<number, StockState>>({})
+  const [failedProductId, setFailedProductId] = useState<number | null>(null)
 
   const [warehouseId, setWarehouseId] = useState<string>("")
   const [reasonItemId, setReasonItemId] = useState<string>("")
-  const [quantity, setQuantity] = useState("")
-  const [availableStock, setAvailableStock] = useState<number | null>(null)
-  const [isLoadingStock, setIsLoadingStock] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -115,7 +119,8 @@ export default function StockWriteoffsPage() {
   const [isLoadingRows, setIsLoadingRows] = useState(false)
 
   const productAbortRef = useRef<AbortController | null>(null)
-  const stockAbortRef = useRef<AbortController | null>(null)
+  // Guards against stale stock responses after the warehouse changes.
+  const warehouseRef = useRef("")
 
   const headers = useMemo(
     () => ({
@@ -148,6 +153,19 @@ export default function StockWriteoffsPage() {
       return type
     },
     [reasonOptions, reasonLabel, t],
+  )
+
+  const isAnyStockLoading = useMemo(
+    () => selectedItems.some((item) => stockMap[item.product.id] === "loading"),
+    [selectedItems, stockMap],
+  )
+  const totalQuantity = useMemo(
+    () =>
+      selectedItems.reduce((sum, item) => {
+        const qty = Number(item.quantity)
+        return sum + (Number.isFinite(qty) && qty > 0 ? qty : 0)
+      }, 0),
+    [selectedItems],
   )
 
   const loadRows = useCallback(async () => {
@@ -234,50 +252,76 @@ export default function StockWriteoffsPage() {
     return () => clearTimeout(timer)
   }, [productOpen, productQuery, headers])
 
-  useEffect(() => {
-    if (!selectedProduct || !warehouseId) {
-      setAvailableStock(null)
+  const loadStock = useCallback(
+    async (productId: number, wid: string) => {
+      setStockMap((prev) => ({ ...prev, [productId]: "loading" }))
+      let qty: number | null = null
+      try {
+        const params = new URLSearchParams({
+          product_id: String(productId),
+          warehouse_id: wid,
+          page_size: "10",
+        })
+        const res = await fetchWithRetry(`${API_URL}/inventory/inventory/?${params}`, {
+          headers,
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const list = Array.isArray(data) ? data : data.results || []
+          const match =
+            list.find(
+              (row: { product_id?: number; warehouse_id?: number; product?: { id?: number }; warehouse?: { id?: number } }) =>
+                (row.product_id === productId || row.product?.id === productId) &&
+                (row.warehouse_id === Number(wid) || row.warehouse?.id === Number(wid)),
+            ) ?? list[0]
+          qty = typeof match?.quantity === "number" ? match.quantity : 0
+        }
+      } catch {
+        qty = null
+      }
+      if (warehouseRef.current !== wid) return
+      setStockMap((prev) => ({ ...prev, [productId]: qty }))
+    },
+    [headers],
+  )
+
+  const handleWarehouseChange = (wid: string) => {
+    setWarehouseId(wid)
+    warehouseRef.current = wid
+    setStockMap({})
+    setFailedProductId(null)
+    selectedItems.forEach((item) => void loadStock(item.product.id, wid))
+  }
+
+  const toggleProduct = (product: ProductOption) => {
+    setFailedProductId(null)
+    const exists = selectedItems.some((item) => item.product.id === product.id)
+    if (exists) {
+      removeProduct(product.id)
       return
     }
-    stockAbortRef.current?.abort()
-    stockAbortRef.current = new AbortController()
-    const signal = stockAbortRef.current.signal
-    setIsLoadingStock(true)
-    const params = new URLSearchParams({
-      product_id: String(selectedProduct.id),
-      warehouse_id: warehouseId,
-      page_size: "10",
+    setSelectedItems((prev) => [...prev, { product, quantity: "" }])
+    if (warehouseRef.current) void loadStock(product.id, warehouseRef.current)
+  }
+
+  const removeProduct = (productId: number) => {
+    setSelectedItems((prev) => prev.filter((item) => item.product.id !== productId))
+    setStockMap((prev) => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
     })
-    void fetchWithRetry(`${API_URL}/inventory/inventory/?${params}`, {
-      headers,
-      signal,
-    })
-      .then(async (res) => {
-        if (!res.ok) return null
-        const data = await res.json()
-        const rows = Array.isArray(data) ? data : data.results || []
-        const match =
-          rows.find(
-            (row: { product_id?: number; warehouse_id?: number; product?: { id?: number }; warehouse?: { id?: number } }) =>
-              (row.product_id === selectedProduct.id || row.product?.id === selectedProduct.id) &&
-              (row.warehouse_id === Number(warehouseId) ||
-                row.warehouse?.id === Number(warehouseId)),
-          ) ?? rows[0]
-        return typeof match?.quantity === "number" ? match.quantity : 0
-      })
-      .then((qty) => {
-        if (!signal.aborted) setAvailableStock(qty)
-      })
-      .catch(() => {
-        if (!signal.aborted) setAvailableStock(null)
-      })
-      .finally(() => {
-        if (!signal.aborted) setIsLoadingStock(false)
-      })
-  }, [selectedProduct, warehouseId, headers])
+    if (failedProductId === productId) setFailedProductId(null)
+  }
+
+  const updateQuantity = (productId: number, value: string) => {
+    setSelectedItems((prev) =>
+      prev.map((item) => (item.product.id === productId ? { ...item, quantity: value } : item)),
+    )
+  }
 
   const validateForm = () => {
-    if (!selectedProduct) {
+    if (selectedItems.length === 0) {
       toast.error(t("writeoffs.selectBookFirst"))
       return null
     }
@@ -289,27 +333,30 @@ export default function StockWriteoffsPage() {
       toast.error(t("writeoffs.reasonRequired"))
       return null
     }
-    const qty = Number(quantity)
-    if (!Number.isFinite(qty) || qty <= 0) {
-      toast.error(t("writeoffs.invalidQuantity"))
-      return null
-    }
-    if (availableStock == null) {
-      toast.error(t("writeoffs.stockUnknown"))
-      return null
-    }
-    if (qty > availableStock) {
-      toast.error(t("writeoffs.quantityExceedsStock"), {
-        description: t("writeoffs.availableStock", { stock: String(availableStock) }),
-      })
-      return null
+    const items: { product_id: number; quantity: number }[] = []
+    for (const item of selectedItems) {
+      const book = productLabel(item.product)
+      const qty = Number(item.quantity)
+      if (!Number.isInteger(qty) || qty <= 0) {
+        toast.error(t("writeoffs.bookQuantityInvalid", { book }))
+        return null
+      }
+      const stock = stockMap[item.product.id]
+      if (typeof stock !== "number") {
+        toast.error(t("writeoffs.bookStockUnknown", { book }))
+        return null
+      }
+      if (qty > stock) {
+        toast.error(t("writeoffs.bookQuantityExceeds", { book, stock: String(stock) }))
+        return null
+      }
+      items.push({ product_id: item.product.id, quantity: qty })
     }
     return {
-      product: selectedProduct,
+      items,
       warehouseId: Number(warehouseId),
       movementType: selectedReason.value as WriteoffType,
       reasonText: reasonLabel(selectedReason),
-      qty,
     }
   }
 
@@ -326,46 +373,37 @@ export default function StockWriteoffsPage() {
     }
 
     setIsSaving(true)
+    setFailedProductId(null)
     try {
       const res = await fetchWithRetry(`${API_URL}/inventory/stock-writeoffs/`, {
         method: "POST",
         headers,
         body: JSON.stringify({
-          product_id: payload.product.id,
           warehouse_id: payload.warehouseId,
           movement_type: payload.movementType,
-          quantity: payload.qty,
           reason: payload.reasonText,
+          items: payload.items,
         }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const detail =
-          typeof data.detail === "string"
-            ? data.detail
-            : typeof data.quantity === "string"
-              ? data.quantity
-              : Array.isArray(data.quantity)
-                ? data.quantity.join(", ")
-                : t("writeoffs.saveFailed")
-        throw new Error(detail)
+        if (typeof data.product_id === "number") setFailedProductId(data.product_id)
+        throw new Error(typeof data.detail === "string" ? data.detail : t("writeoffs.saveFailed"))
       }
+      const savedQty = payload.items.reduce((sum, item) => sum + item.quantity, 0)
       toast.success(t("writeoffs.saved"), {
-        description: t("writeoffs.savedDesc", {
-          qty: String(payload.qty),
-          stock: String(data.movement?.current_stock ?? ""),
+        description: t("writeoffs.savedBatchDesc", {
+          qty: String(savedQty),
+          count: String(payload.items.length),
         }),
       })
-      setQuantity("")
+      setSelectedItems([])
+      setStockMap({})
       setReasonItemId("")
       setConfirmOpen(false)
-      setAvailableStock(
-        typeof data.movement?.current_stock === "number"
-          ? data.movement.current_stock
-          : availableStock,
-      )
       void loadRows()
     } catch (error) {
+      setConfirmOpen(false)
       toast.error(t("writeoffs.saveFailed"), {
         description: error instanceof Error ? error.message : undefined,
       })
@@ -399,67 +437,9 @@ export default function StockWriteoffsPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2 md:col-span-2">
-                <Label>{t("writeoffs.book")}</Label>
-                <Popover open={productOpen} onOpenChange={setProductOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      className="w-full justify-between"
-                    >
-                      <span className="truncate">
-                        {selectedProduct
-                          ? productLabel(selectedProduct)
-                          : t("writeoffs.searchBook")}
-                      </span>
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[360px] p-0" align="start">
-                    <Command shouldFilter={false}>
-                      <CommandInput
-                        placeholder={t("writeoffs.searchBook")}
-                        value={productQuery}
-                        onValueChange={setProductQuery}
-                      />
-                      <CommandList>
-                        <CommandEmpty>
-                          {isSearchingProducts
-                            ? t("common.loading")
-                            : t("writeoffs.noBook")}
-                        </CommandEmpty>
-                        <CommandGroup>
-                          {productOptions.map((product) => (
-                            <CommandItem
-                              key={product.id}
-                              value={String(product.id)}
-                              onSelect={() => {
-                                setSelectedProduct(product)
-                                setProductOpen(false)
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  selectedProduct?.id === product.id
-                                    ? "opacity-100"
-                                    : "opacity-0",
-                                )}
-                              />
-                              {productLabel(product)}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              </div>
-
               <div className="space-y-2">
                 <Label>{t("writeoffs.warehouse")}</Label>
-                <Select value={warehouseId} onValueChange={setWarehouseId}>
+                <Select value={warehouseId} onValueChange={handleWarehouseChange}>
                   <SelectTrigger>
                     <SelectValue placeholder={t("writeoffs.selectWarehouse")} />
                   </SelectTrigger>
@@ -495,29 +475,166 @@ export default function StockWriteoffsPage() {
                 </Select>
               </div>
 
-              <div className="space-y-2">
-                <Label>{t("writeoffs.quantity")}</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={availableStock ?? undefined}
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                />
-                {selectedProduct && warehouseId && (
-                  <p className="text-xs text-muted-foreground">
-                    {isLoadingStock
-                      ? t("common.loading")
-                      : availableStock == null
-                        ? t("writeoffs.stockUnknown")
-                        : t("writeoffs.availableStock", { stock: String(availableStock) })}
-                  </p>
-                )}
+              <div className="space-y-2 md:col-span-2">
+                <Label>{t("writeoffs.book")}</Label>
+                <Popover open={productOpen} onOpenChange={setProductOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      className="w-full justify-between font-normal"
+                    >
+                      <span className="truncate text-muted-foreground">
+                        {t("writeoffs.addBooks")}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        placeholder={t("writeoffs.searchBook")}
+                        value={productQuery}
+                        onValueChange={setProductQuery}
+                      />
+                      <CommandList>
+                        <CommandEmpty>
+                          {isSearchingProducts
+                            ? t("common.loading")
+                            : t("writeoffs.noBook")}
+                        </CommandEmpty>
+                        <CommandGroup>
+                          {productOptions.map((product) => {
+                            const isSelected = selectedItems.some(
+                              (item) => item.product.id === product.id,
+                            )
+                            return (
+                              <CommandItem
+                                key={product.id}
+                                value={String(product.id)}
+                                onSelect={() => toggleProduct(product)}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    isSelected ? "opacity-100" : "opacity-0",
+                                  )}
+                                />
+                                {productLabel(product)}
+                              </CommandItem>
+                            )
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
 
+            <div className="mt-4 rounded-md border bg-background">
+              <div className="flex items-center justify-between border-b px-4 py-2">
+                <span className="text-sm font-medium">
+                  {t("writeoffs.selectedBooks", { count: String(selectedItems.length) })}
+                </span>
+                {selectedItems.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedItems([])
+                      setStockMap({})
+                      setFailedProductId(null)
+                    }}
+                    disabled={isSaving}
+                  >
+                    {t("writeoffs.clearAll")}
+                  </Button>
+                )}
+              </div>
+              {selectedItems.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-muted-foreground">
+                  {t("writeoffs.noBooksSelected")}
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("writeoffs.book")}</TableHead>
+                      <TableHead className="w-[140px]">{t("writeoffs.available")}</TableHead>
+                      <TableHead className="w-[140px]">{t("writeoffs.quantity")}</TableHead>
+                      <TableHead className="w-[60px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedItems.map((item) => {
+                      const stock = stockMap[item.product.id]
+                      const qty = Number(item.quantity)
+                      const exceeds =
+                        typeof stock === "number" && Number.isFinite(qty) && qty > stock
+                      return (
+                        <TableRow
+                          key={item.product.id}
+                          className={cn(failedProductId === item.product.id && "bg-destructive/10")}
+                        >
+                          <TableCell>
+                            <div className="min-w-0">
+                              <p className="truncate">
+                                {item.product.title_en || item.product.title_ar || item.product.name || `Product ${item.product.id}`}
+                              </p>
+                              {item.product.isbn && (
+                                <p className="text-xs text-muted-foreground">{item.product.isbn}</p>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {!warehouseId ? (
+                              <span className="text-muted-foreground">
+                                {t("writeoffs.selectWarehouseForStock")}
+                              </span>
+                            ) : stock === "loading" || stock === undefined ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            ) : stock === null ? (
+                              <span className="text-destructive">—</span>
+                            ) : (
+                              stock
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={typeof stock === "number" ? stock : undefined}
+                              value={item.quantity}
+                              onChange={(e) => updateQuantity(item.product.id, e.target.value)}
+                              className={cn("h-8", exceeds && "border-destructive")}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => removeProduct(item.product.id)}
+                              disabled={isSaving}
+                              aria-label={t("writeoffs.remove")}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+
             <div className="mt-4">
-              <Button onClick={handleSaveClick} disabled={isSaving || isLoadingStock}>
+              <Button
+                onClick={handleSaveClick}
+                disabled={isSaving || isAnyStockLoading || selectedItems.length === 0}
+              >
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t("writeoffs.save")}
               </Button>
@@ -583,6 +700,10 @@ export default function StockWriteoffsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t("writeoffs.confirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
+              {t("writeoffs.confirmSummary", {
+                count: String(selectedItems.length),
+                qty: String(totalQuantity),
+              })}{" "}
               {t("writeoffs.confirmDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
