@@ -1568,7 +1568,12 @@ async function handleUpdateInventory() {
     if (!selectedBook?.id) return;
     
     // Validate cover URL if using URL input type
-    if (editCoverInputType === 'url' && selectedBook?.cover_url && !selectedBook.cover_url.startsWith("https://dararab.co.uk/")) {
+    if (
+      editCoverInputType === 'url' &&
+      selectedBook?.cover_url &&
+      selectedBook.cover_url !== selectedBook.cover_design &&
+      !selectedBook.cover_url.startsWith("https://dararab.co.uk/")
+    ) {
       showAlert("error", "Cover URL must start with https://dararab.co.uk/");
       return;
     }

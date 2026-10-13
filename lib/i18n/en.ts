@@ -47,6 +47,7 @@ export const en = {
     saveChanges: "Save Changes",
     confirmDelete: "Confirm Delete",
     noResults: "No results found",
+    typeToSearch: "Type to search...",
     processing: "Processing...",
     creating: "Creating...",
     success: "Success",

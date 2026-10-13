@@ -158,6 +158,10 @@ export async function fetchWithAuth(
   const headers = skipAuth
     ? new Headers(init.headers || {})
     : (authHeaders(init.headers || {}) as Headers)
+  // The browser must set multipart Content-Type itself (it includes the boundary).
+  if (typeof FormData !== "undefined" && init.body instanceof FormData) {
+    headers.delete("Content-Type")
+  }
 
   const response = await fetch(url, { ...init, headers })
 

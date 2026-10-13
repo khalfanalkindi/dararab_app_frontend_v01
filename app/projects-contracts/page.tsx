@@ -39,6 +39,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { SearchableSelect } from "@/components/searchable-select"
 import { API_URL } from "@/lib/config"
 
 interface Project {
@@ -1895,37 +1896,23 @@ export default function ProjectContract() {
               ) : null
             })()}
           </div>
-          <Select
+          <SearchableSelect
+            id="contracted_party_id"
             name="contracted_party_id"
-            defaultValue={selectedContract?.contracted_party_id_value?.toString() || ""}
             required
-            onValueChange={(value) => {
-              const partyId = Number.parseInt(value)
-              setSelectedContractedParty(partyId)
-            }}
-            onOpenChange={(open) => {
-              if (!open) {
-                // Remove focus when closing the select
-                const select = formRef.current?.querySelector('[name="contracted_party_id"]') as HTMLSelectElement
-                if (select) {
-                  select.blur()
-                }
-              }
-            }}
-          >
-            <SelectTrigger id="contracted_party_id">
-              <SelectValue placeholder={t("contracts.selectParty")} />
-            </SelectTrigger>
-            <SelectContent className="z-[100]">
-              {getContractedPartyOptions(
-                selectedContract?.contracted_party_type_value
-              ).map((party: any) => (
-                <SelectItem key={party.id} value={party.id.toString()}>
-                  {party.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            contentClassName="z-[100]"
+            value={selectedContractedParty != null ? selectedContractedParty.toString() : null}
+            onChange={(value) => setSelectedContractedParty(Number.parseInt(value))}
+            placeholder={t("contracts.selectParty")}
+            searchPlaceholder={t("common.typeToSearch")}
+            emptyText={t("common.noResults")}
+            options={getContractedPartyOptions(
+              selectedContract?.contracted_party_type_value
+            ).map((party: any) => ({
+              value: party.id.toString(),
+              label: party.name,
+            }))}
+          />
         </div>
       )}
 

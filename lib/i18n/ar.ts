@@ -44,6 +44,7 @@ export const ar: MessageTree = {
     saveChanges: "حفظ التغييرات",
     confirmDelete: "تأكيد الحذف",
     noResults: "لا توجد نتائج",
+    typeToSearch: "اكتب للبحث...",
     processing: "جاري المعالجة...",
     creating: "جاري الإنشاء...",
     success: "نجاح",
