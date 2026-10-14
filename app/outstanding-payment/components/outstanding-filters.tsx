@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePickerWithRange } from "@/components/ui/date-range-picker"
+import { SearchableSelect } from "@/components/searchable-select"
 import { Search } from "lucide-react"
 import { DateRange } from "react-day-picker"
 import { useLanguage } from "@/components/language-context"
@@ -99,26 +100,23 @@ export function OutstandingFilters({
 
         <div className="space-y-2">
           <Label>{t("outstanding.filters.customer")}</Label>
-          <Select
+          <SearchableSelect
+            className="h-10"
             value={selectedCustomerId?.toString() || "all"}
-            onValueChange={(value) => onCustomerChange(value === "all" ? null : Number(value))}
+            onChange={(value) => onCustomerChange(value === "all" ? null : Number(value))}
             disabled={isLoadingCustomers}
-          >
-            <SelectTrigger className="w-full h-10">
-              <SelectValue
-                placeholder={isLoadingCustomers ? t("common.loading") : t("common.allCustomers")}
-              />
-            </SelectTrigger>
-            <SelectContent className="max-h-[300px]">
-              <SelectItem value="all">{t("common.allCustomers")}</SelectItem>
-              {customers.map((customer) => (
-                <SelectItem key={customer.id} value={customer.id.toString()}>
-                  {customer.institution_name || customer.name_en || `Customer #${customer.id}`}
-                  {customer.contact_person ? ` (${customer.contact_person})` : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            placeholder={isLoadingCustomers ? t("common.loading") : t("common.allCustomers")}
+            searchPlaceholder={t("common.typeToSearch")}
+            emptyText={t("common.noResults")}
+            options={[
+              { value: "all", label: t("common.allCustomers") },
+              ...customers.map((customer) => ({
+                value: customer.id.toString(),
+                label: customer.institution_name || customer.name_en || `Customer #${customer.id}`,
+                description: customer.contact_person || undefined,
+              })),
+            ]}
+          />
         </div>
       </div>
 

@@ -18,6 +18,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
+import { ProjectCombobox } from "./components/project-combobox"
 
 interface Project {
   id: number
@@ -754,22 +755,12 @@ const fetchAllPaginated = useCallback(async <T,>(
                   <div className="flex flex-col md:flex-row gap-4">
                     <div className="flex-1">
                       <label className="text-sm font-medium mb-2 block">Project (Optional)</label>
-                      <Select 
-                        value={selectedProjectId ?? undefined} 
-                        onValueChange={(value) => setSelectedProjectId(value || null)}
-                        disabled={isLoadingProjects}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={isLoadingProjects ? "Loading projects..." : "Select a project"} />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[300px]">
-                          {projects.map((project) => (
-                            <SelectItem key={project.id} value={project.id.toString()}>
-                              {project.title_ar || project.title_original || `Project #${project.id}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <ProjectCombobox
+                        projects={projects}
+                        value={selectedProjectId}
+                        onChange={setSelectedProjectId}
+                        isLoading={isLoadingProjects}
+                      />
                     </div>
 
                     <div className="flex-1">

@@ -13,6 +13,7 @@ import { toast } from "sonner"
 import { format } from "date-fns"
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
+import { fetchPosHiddenWarehouses } from "@/lib/pos-warehouse-visibility"
 import { PosMetrics } from "./components/pos-metrics"
 import { PosProductGrid } from "./components/pos-product-grid"
 import { PosCart } from "./components/pos-cart"
@@ -201,6 +202,7 @@ export default function POSPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [genres, setGenres] = useState<Genre[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [posHiddenWarehouseIds, setPosHiddenWarehouseIds] = useState<Set<number>>(new Set())
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([])
   const [searchInput, setSearchInput] = useState("")
@@ -239,7 +241,7 @@ export default function POSPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isAddingCustomer, setIsAddingCustomer] = useState(false)
   const [processingItems, setProcessingItems] = useState<Set<number>>(new Set())
-  const [discountPercentage, setDiscountPercentage] = useState<number>(30)
+  const [discountPercentage, setDiscountPercentage] = useState<number>(0)
   const [taxPercentage, setTaxPercentage] = useState<number>(0)
   const [invoiceNotes, setInvoiceNotes] = useState("")
   const [todaySales, setTodaySales] = useState(0)
@@ -317,6 +319,7 @@ export default function POSPage() {
         invoiceTypesRes,
         customerTypesRes,
         warehouseTypesRes,
+        posHiddenWarehouses,
       ] = await Promise.all([
         fetchWithRetry(`${API_URL}/common/list-items/genre/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/inventory/warehouses/`, { headers, signal: controller.signal }),
@@ -324,6 +327,7 @@ export default function POSPage() {
         fetchWithRetry(`${API_URL}/common/list-items/invoice_type/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/customer_type/`, { headers, signal: controller.signal }),
         fetchWithRetry(`${API_URL}/common/list-items/warehouse_type/`, { headers, signal: controller.signal }),
+        fetchPosHiddenWarehouses(headers, controller.signal).catch(() => new Map<number, number>()),
       ]);
 
       if (!genresRes.ok) throw new Error("Failed to fetch genres");
@@ -367,6 +371,7 @@ export default function POSPage() {
       setCustomers(customersArray);
       setGenres(genresArray);
       setWarehouses(warehousesArray);
+      setPosHiddenWarehouseIds(new Set(posHiddenWarehouses.keys()));
       setPaymentMethods(paymentMethodsArray);
       setInvoiceTypes(invoiceTypesArray);
       setCustomerTypes(customerTypesArray);
@@ -860,6 +865,14 @@ export default function POSPage() {
       return syncItemPaymentStatus(updatedItem, paymentTarget);
     });
   }
+
+  const posWarehouses = useMemo(
+    () =>
+      warehouses.filter(
+        (w) => !posHiddenWarehouseIds.has(w.id) || w.id === selectedWarehouse,
+      ),
+    [warehouses, posHiddenWarehouseIds, selectedWarehouse],
+  );
 
   // Check if selected warehouse is in Muscat (for OMR price display)
   const isMuscatWarehouse = useMemo(() => {
@@ -1946,7 +1959,7 @@ export default function POSPage() {
     setSelectedWarehouse(null)
     setProducts([])
     setInvoiceNotes("")
-    setDiscountPercentage(30)
+    setDiscountPercentage(0)
     setTaxPercentage(0)
     setSearchInput("")
     setSelectedGenre(null)
@@ -2122,7 +2135,7 @@ export default function POSPage() {
               searchInput={searchInput}
               onSearchInputChange={setSearchInput}
               selectedWarehouse={selectedWarehouse}
-              warehouses={warehouses}
+              warehouses={posWarehouses}
               isWarehouseDropdownOpen={isWarehouseDropdownOpen}
               onWarehouseDropdownOpenChange={setIsWarehouseDropdownOpen}
               onSelectWarehouse={(id) => setSelectedWarehouse(id)}

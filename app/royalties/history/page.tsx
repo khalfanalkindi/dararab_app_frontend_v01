@@ -23,6 +23,7 @@ import { FileDown, FileSpreadsheet, History, Loader2 } from "lucide-react"
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
+import { ProjectCombobox } from "../components/project-combobox"
 
 interface Project {
   id: number
@@ -319,25 +320,12 @@ export default function RoyaltiesSettlementHistoryPage() {
                 <div className="flex flex-col gap-4 md:flex-row">
                   <div className="flex-1">
                     <label className="mb-2 block text-sm font-medium">Project</label>
-                    <Select
-                      value={selectedProjectId ?? undefined}
-                      onValueChange={(value) => setSelectedProjectId(value || null)}
-                      disabled={isLoadingProjects}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={isLoadingProjects ? "Loading projects..." : "Select a project"}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {projects.map((p) => (
-                          <SelectItem key={p.id} value={String(p.id)}>
-                            {p.title_ar}
-                            {p.title_original ? ` / ${p.title_original}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <ProjectCombobox
+                      projects={projects}
+                      value={selectedProjectId}
+                      onChange={setSelectedProjectId}
+                      isLoading={isLoadingProjects}
+                    />
                   </div>
                   <div className="flex-1">
                     <label className="mb-2 block text-sm font-medium">Contract</label>

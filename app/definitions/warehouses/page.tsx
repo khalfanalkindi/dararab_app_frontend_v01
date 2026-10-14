@@ -51,6 +51,12 @@ import {
 } from "@/components/ui/select"
 import { API_URL } from "@/lib/config"
 import { ListPagination } from "@/components/list-pagination"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  fetchPosHiddenWarehouses,
+  hideWarehouseInPos,
+  showWarehouseInPos,
+} from "@/lib/pos-warehouse-visibility"
 
 interface ListItem {
   id: number
@@ -86,6 +92,9 @@ export default function WarehouseManagement() {
     message: "",
   })
   const [isLoading, setIsLoading] = useState(true)
+  const [posHidden, setPosHidden] = useState<Map<number, number>>(new Map())
+  const [isPosHiddenLoaded, setIsPosHiddenLoaded] = useState(false)
+  const [posTogglingId, setPosTogglingId] = useState<number | null>(null)
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -154,6 +163,7 @@ export default function WarehouseManagement() {
   useEffect(() => {
     fetchWarehouses(currentPage, pageSize)
     fetchWarehouseTypes()
+    void loadPosHidden()
 
     // Cleanup: abort pending requests on unmount
     return () => {
@@ -192,6 +202,39 @@ export default function WarehouseManagement() {
       setWarehouseTypes([])
     } finally {
       setIsLoadingWarehouseTypes(false)
+    }
+  }
+
+  const loadPosHidden = async () => {
+    try {
+      setPosHidden(await fetchPosHiddenWarehouses(headers))
+      setIsPosHiddenLoaded(true)
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") console.error("Error:", error)
+      setIsPosHiddenLoaded(false)
+    }
+  }
+
+  const handleTogglePosVisibility = async (warehouse: Warehouse, show: boolean) => {
+    setPosTogglingId(warehouse.id)
+    try {
+      const listItemId = posHidden.get(warehouse.id)
+      if (show) {
+        if (listItemId != null) await showWarehouseInPos(headers, listItemId)
+      } else if (listItemId == null) {
+        await hideWarehouseInPos(headers, warehouse)
+      }
+      await loadPosHidden()
+      toast.success(
+        t(show ? "definitions.warehouses.posShown" : "definitions.warehouses.posHidden", {
+          name: language === "ar" ? warehouse.name_ar : warehouse.name_en,
+        }),
+      )
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") console.error("Error:", error)
+      toast.error(t("toasts.error"), { description: t("definitions.warehouses.posToggleFailed") })
+    } finally {
+      setPosTogglingId(null)
     }
   }
 
@@ -531,15 +574,16 @@ export default function WarehouseManagement() {
                       <TableHead>{t("common.name")}</TableHead>
                       <TableHead>{t("definitions.warehouses.type")}</TableHead>
                       <TableHead>{t("definitions.warehouses.location")}</TableHead>
+                      <TableHead className="text-center">{t("definitions.warehouses.showInPos")}</TableHead>
                       <TableHead className="text-right">{t("common.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading ? (
-                      <TableSkeleton columns={4} rows={5} hasActions />
+                      <TableSkeleton columns={5} rows={5} hasActions />
                     ) : warehouses.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-8 text-center">
+                        <TableCell colSpan={5} className="py-8 text-center">
                           {t("definitions.warehouses.empty")}
                         </TableCell>
                       </TableRow>
@@ -551,6 +595,16 @@ export default function WarehouseManagement() {
                           </TableCell>
                           <TableCell>{getWarehouseTypeLabel(warehouse.type)}</TableCell>
                           <TableCell>{warehouse.location || "No location"}</TableCell>
+                          <TableCell className="text-center">
+                            <Checkbox
+                              checked={!posHidden.has(warehouse.id)}
+                              disabled={!isPosHiddenLoaded || posTogglingId === warehouse.id}
+                              onChange={(e) =>
+                                void handleTogglePosVisibility(warehouse, e.target.checked)
+                              }
+                              aria-label={t("definitions.warehouses.showInPos")}
+                            />
+                          </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
                               {/* Desktop view - separate buttons */}
