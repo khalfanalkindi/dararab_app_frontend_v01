@@ -718,7 +718,6 @@ const fetchAllPaginated = useCallback(async <T,>(
   }
 
   const currentSettlement = openSettlement ?? result?.settlement ?? null
-  const statementId = lastSettledId ?? currentSettlement?.id ?? null
   const canShowSettle =
     currentSettlement?.status === "open" &&
     Boolean(currentSettlement.eligible) &&
@@ -938,19 +937,19 @@ const fetchAllPaginated = useCallback(async <T,>(
                 </Card>
               )}
 
-              {statementId != null && (
+              {lastSettledId != null && (
                 <Card className="border-blue-200 bg-blue-50/40">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg">Sales and royalty statement</CardTitle>
                     <CardDescription>
-                      Statement #{statementId}. The PDF uses the invoice header (logo, Seeb address,
-                      telephone, email, website) and the detailed sales and royalty sections.
+                      Settlement #{lastSettledId} is locked. Download the detailed statement from
+                      this page.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-3">
                     <Button
                       variant="outline"
-                      onClick={() => void downloadSettlementReport(statementId, "pdf")}
+                      onClick={() => void downloadSettlementReport(lastSettledId, "pdf")}
                       disabled={isDownloadingReport !== null}
                     >
                       {isDownloadingReport === "pdf" ? (
@@ -962,7 +961,7 @@ const fetchAllPaginated = useCallback(async <T,>(
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={() => void downloadSettlementReport(statementId, "xlsx")}
+                      onClick={() => void downloadSettlementReport(lastSettledId, "xlsx")}
                       disabled={isDownloadingReport !== null}
                     >
                       {isDownloadingReport === "xlsx" ? (
