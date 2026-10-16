@@ -718,6 +718,7 @@ const fetchAllPaginated = useCallback(async <T,>(
   }
 
   const currentSettlement = openSettlement ?? result?.settlement ?? null
+  const statementId = lastSettledId ?? currentSettlement?.id ?? null
   const canShowSettle =
     currentSettlement?.status === "open" &&
     Boolean(currentSettlement.eligible) &&
@@ -937,21 +938,19 @@ const fetchAllPaginated = useCallback(async <T,>(
                 </Card>
               )}
 
-              {/* Post-settle report downloads (generated on backend) */}
-              {lastSettledId != null && (
+              {statementId != null && (
                 <Card className="border-blue-200 bg-blue-50/40">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-lg">Settlement Report</CardTitle>
+                    <CardTitle className="text-lg">Sales and royalty statement</CardTitle>
                     <CardDescription>
-                      Settlement #{lastSettledId} locked. Download a simple bilingual PDF (logo +
-                      signature) or an accounting Excel summary. Official preamble text can be
-                      swapped in later.
+                      Statement #{statementId}. The PDF uses the invoice header (logo, Seeb address,
+                      telephone, email, website) and the detailed sales and royalty sections.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-3">
                     <Button
                       variant="outline"
-                      onClick={() => void downloadSettlementReport(lastSettledId, "pdf")}
+                      onClick={() => void downloadSettlementReport(statementId, "pdf")}
                       disabled={isDownloadingReport !== null}
                     >
                       {isDownloadingReport === "pdf" ? (
@@ -959,11 +958,11 @@ const fetchAllPaginated = useCallback(async <T,>(
                       ) : (
                         <FileDown className="mr-2 h-4 w-4" />
                       )}
-                      Download PDF
+                      Download detailed PDF
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={() => void downloadSettlementReport(lastSettledId, "xlsx")}
+                      onClick={() => void downloadSettlementReport(statementId, "xlsx")}
                       disabled={isDownloadingReport !== null}
                     >
                       {isDownloadingReport === "xlsx" ? (
