@@ -11,12 +11,27 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DollarSign, Calculator, AlertCircle, CheckCircle2, Loader2, FileDown } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
 import { ProjectCombobox } from "./components/project-combobox"
+import {
+  downloadRoyaltySettlementExcel,
+  downloadRoyaltySettlementPdf,
+  type RoyaltyReportInput,
+} from "@/lib/royaltySettlementReport"
 
 interface Project {
   id: number
@@ -294,7 +309,9 @@ export default function RoyaltiesReport() {
   const [showCalculation, setShowCalculation] = useState(false)
 
   const [isSettling, setIsSettling] = useState(false)
+  const [settleConfirmOpen, setSettleConfirmOpen] = useState(false)
   const [lastSettledId, setLastSettledId] = useState<number | null>(null)
+  const [settledReport, setSettledReport] = useState<RoyaltyReportInput | null>(null)
   const [isDownloadingReport, setIsDownloadingReport] = useState<"pdf" | "xlsx" | null>(null)
 
   // AbortController refs for request cancellation
@@ -436,6 +453,7 @@ const fetchAllPaginated = useCallback(async <T,>(
     if (mode === "eligibility") {
       setShowCalculation(false)
       setLastSettledId(null)
+      setSettledReport(null)
     }
     
     try {
@@ -524,15 +542,6 @@ const fetchAllPaginated = useCallback(async <T,>(
       })
       return
     }
-    const amountDue = Number(result?.RA ?? 0)
-    if (
-      !window.confirm(
-        `Settle this royalty for $${amountDue.toFixed(2)}?\n\nThis saves the settlement and locks the current cycle.`,
-      )
-    ) {
-      return
-    }
-
     setIsSettling(true)
     setError(null)
     try {
@@ -560,7 +569,25 @@ const fetchAllPaginated = useCallback(async <T,>(
         description: `Settlement #${data.settled?.id} saved. You can open the report below.`,
       })
       if (data.settled?.id) {
+        const project = projects.find((item) => String(item.id) === selectedProjectId)
+        const contract = contracts.find((item) => String(item.id) === selectedContractId)
         setLastSettledId(data.settled.id)
+        setSettledReport({
+          id: data.settled.id,
+          amount_due: data.settled.amount_due,
+          amount_paid: data.settled.amount_paid,
+          currency: data.settled.currency,
+          period_start: data.settled.period_start,
+          period_end: data.settled.period_end,
+          settled_at: data.settled.settled_at,
+          settled_by_name: data.settled.settled_by_name,
+          contract_id: data.settled.contract_id,
+          contract_title: contract?.title ?? null,
+          project_id: data.settled.project_id,
+          project_title_ar: project?.title_ar ?? null,
+          project_title_en: project?.title_original ?? null,
+          product_id: data.settled.product_id,
+        })
       }
       setResult(data)
       setHasChecked(true)
@@ -572,37 +599,17 @@ const fetchAllPaginated = useCallback(async <T,>(
       toast.error("Error", { description: msg })
     } finally {
       setIsSettling(false)
+      setSettleConfirmOpen(false)
     }
-  }, [selectedContractId, selectedProjectId, result, headers, fetchWithRetry, handleError])
+  }, [selectedContractId, selectedProjectId, projects, contracts, result, headers, fetchWithRetry, handleError])
 
   const downloadSettlementReport = useCallback(
-    async (settlementId: number, format: "pdf" | "xlsx") => {
+    async (format: "pdf" | "xlsx") => {
+      if (!settledReport) return
       setIsDownloadingReport(format)
       try {
-        const res = await fetchWithRetry(
-          `${API_URL}/sales/royalty-settlements/${settlementId}/report/?format=${format}`,
-          { headers },
-        )
-        if (!res.ok) {
-          let msg = `Download failed (${res.status})`
-          try {
-            const data = await res.json()
-            if (typeof data.error === "string") msg = data.error
-          } catch {
-            /* ignore */
-          }
-          toast.error("Download failed", { description: msg })
-          return
-        }
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `royalty-settlement-${settlementId}.${format}`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
+        if (format === "pdf") await downloadRoyaltySettlementPdf(settledReport)
+        else downloadRoyaltySettlementExcel(settledReport)
         toast.success(format === "pdf" ? "PDF downloaded" : "Excel downloaded")
       } catch (error) {
         handleError(error, "Failed to download settlement report")
@@ -611,7 +618,7 @@ const fetchAllPaginated = useCallback(async <T,>(
         setIsDownloadingReport(null)
       }
     },
-    [headers, fetchWithRetry, handleError],
+    [settledReport, handleError],
   )
 
   // Fetch projects on mount
@@ -659,6 +666,7 @@ const fetchAllPaginated = useCallback(async <T,>(
     setHasChecked(false)
     setShowCalculation(false)
     setLastSettledId(null)
+    setSettledReport(null)
   }, [selectedContractId, selectedProjectId])
 
   const getRoyaltyTypeDisplay = (typeId?: number) => {
@@ -855,7 +863,7 @@ const fetchAllPaginated = useCallback(async <T,>(
                         )}
                       </Button>
                       <Button
-                        onClick={() => void settleRoyalties()}
+                        onClick={() => setSettleConfirmOpen(true)}
                         disabled={isSettling || isLoading || settleFrozen}
                         className="min-w-[180px]"
                       >
@@ -911,7 +919,7 @@ const fetchAllPaginated = useCallback(async <T,>(
                         <div className="flex flex-wrap gap-2">
                           <Button
                             variant="outline"
-                            onClick={() => void downloadSettlementReport(lastSettledId, "pdf")}
+                            onClick={() => void downloadSettlementReport("pdf")}
                             disabled={isDownloadingReport !== null}
                           >
                             {isDownloadingReport === "pdf" ? (
@@ -923,7 +931,7 @@ const fetchAllPaginated = useCallback(async <T,>(
                           </Button>
                           <Button
                             variant="outline"
-                            onClick={() => void downloadSettlementReport(lastSettledId, "xlsx")}
+                            onClick={() => void downloadSettlementReport("xlsx")}
                             disabled={isDownloadingReport !== null}
                           >
                             {isDownloadingReport === "xlsx" ? (
@@ -943,6 +951,43 @@ const fetchAllPaginated = useCallback(async <T,>(
                 </div>
           </div>
         </div>
+      <AlertDialog
+        open={settleConfirmOpen}
+        onOpenChange={(open) => {
+          if (isSettling) return
+          setSettleConfirmOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Settle this royalty?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This saves settlement
+              {result?.RA != null ? ` for $${Number(result.RA).toFixed(2)}` : ""} and locks the current cycle.
+              You can open the PDF and Excel report after it is saved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSettling}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault()
+                void settleRoyalties()
+              }}
+              disabled={isSettling}
+            >
+              {isSettling ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Settling...
+                </>
+              ) : (
+                "Confirm settle"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       </SidebarInset>
 )
 }

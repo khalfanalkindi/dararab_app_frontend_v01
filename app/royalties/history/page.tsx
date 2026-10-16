@@ -15,6 +15,10 @@ import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
 import { ProjectCombobox } from "../components/project-combobox"
+import {
+  downloadRoyaltySettlementExcel,
+  downloadRoyaltySettlementPdf,
+} from "@/lib/royaltySettlementReport"
 
 interface Project {
   id: number
@@ -200,34 +204,12 @@ export default function RoyaltiesSettlementHistoryPage() {
   )
 
   const downloadReport = useCallback(
-    async (settlementId: number, format: "pdf" | "xlsx") => {
-      const key = `${settlementId}-${format}`
+    async (row: SettlementHistoryRow, format: "pdf" | "xlsx") => {
+      const key = `${row.id}-${format}`
       setDownloading(key)
       try {
-        const res = await fetchWithRetry(
-          `${API_URL}/sales/royalty-settlements/${settlementId}/report/?format=${format}`,
-          { headers },
-        )
-        if (!res.ok) {
-          let msg = `Download failed (${res.status})`
-          try {
-            const data = await res.json()
-            if (typeof data.error === "string") msg = data.error
-          } catch {
-            /* ignore */
-          }
-          toast.error("Download failed", { description: msg })
-          return
-        }
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `royalty-settlement-${settlementId}.${format}`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
+        if (format === "pdf") await downloadRoyaltySettlementPdf(row)
+        else downloadRoyaltySettlementExcel(row)
       } catch (error) {
         handleError(error, "Failed to download settlement report")
         toast.error("Error", { description: "Failed to download report." })
@@ -235,7 +217,7 @@ export default function RoyaltiesSettlementHistoryPage() {
         setDownloading(null)
       }
     },
-    [headers, handleError],
+    [handleError],
   )
 
   useEffect(() => {
@@ -397,7 +379,7 @@ export default function RoyaltiesSettlementHistoryPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => void downloadReport(row.id, "pdf")}
+                                onClick={() => void downloadReport(row, "pdf")}
                                 disabled={downloading !== null}
                               >
                                 {downloading === `${row.id}-pdf` ? (
@@ -410,7 +392,7 @@ export default function RoyaltiesSettlementHistoryPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => void downloadReport(row.id, "xlsx")}
+                                onClick={() => void downloadReport(row, "xlsx")}
                                 disabled={downloading !== null}
                               >
                                 {downloading === `${row.id}-xlsx` ? (
