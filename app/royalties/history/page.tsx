@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import Link from "next/link"
 import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
 import { fetchWithRetry } from "@/lib/apiClient"
@@ -9,7 +8,6 @@ import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { History, Loader2 } from "lucide-react"
 import { API_URL } from "@/lib/config"
@@ -252,13 +250,9 @@ export default function RoyaltiesSettlementHistoryPage() {
                   Settlement History
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  A timeline of locked settlements for one contract. Statements stay on Calculate
-                  &amp; Settle.
+                  A timeline of locked settlements for one contract.
                 </p>
               </div>
-              <Button variant="outline" asChild>
-                <Link href="/royalties">Calculate &amp; Settle</Link>
-              </Button>
             </div>
 
             <Card>

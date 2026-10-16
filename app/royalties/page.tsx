@@ -9,7 +9,7 @@ import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { DollarSign, Calculator, AlertCircle, CheckCircle2, Info, Loader2, FileDown, FileSpreadsheet } from "lucide-react"
+import { DollarSign, Calculator, AlertCircle, CheckCircle2, Info, Loader2, FileDown } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -738,9 +738,24 @@ const fetchAllPaginated = useCallback(async <T,>(
             <div className="flex flex-col gap-6">
               <div className="flex justify-between items-center gap-3 flex-wrap">
                 <h2 className="text-2xl font-semibold">Royalties Calculation</h2>
-                <Button variant="outline" asChild>
-                  <Link href="/royalties/history">Settlement History</Link>
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => lastSettledId != null && void downloadSettlementReport(lastSettledId, "pdf")}
+                    disabled={lastSettledId == null || isDownloadingReport !== null}
+                    title={lastSettledId == null ? "Available after you settle" : "Download the detailed statement"}
+                  >
+                    {isDownloadingReport === "pdf" ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileDown className="mr-2 h-4 w-4" />
+                    )}
+                    Report
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/royalties/history">Settlement History</Link>
+                  </Button>
+                </div>
               </div>
 
               {/* Selection Form */}
@@ -933,44 +948,6 @@ const fetchAllPaginated = useCallback(async <T,>(
                         )}
                       </div>
                     ) : null}
-                  </CardContent>
-                </Card>
-              )}
-
-              {lastSettledId != null && (
-                <Card className="border-blue-200 bg-blue-50/40">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg">Sales and royalty statement</CardTitle>
-                    <CardDescription>
-                      Settlement #{lastSettledId} is locked. Download the detailed statement from
-                      this page.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-wrap gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => void downloadSettlementReport(lastSettledId, "pdf")}
-                      disabled={isDownloadingReport !== null}
-                    >
-                      {isDownloadingReport === "pdf" ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <FileDown className="mr-2 h-4 w-4" />
-                      )}
-                      Download detailed PDF
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => void downloadSettlementReport(lastSettledId, "xlsx")}
-                      disabled={isDownloadingReport !== null}
-                    >
-                      {isDownloadingReport === "xlsx" ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      )}
-                      Download Excel
-                    </Button>
                   </CardContent>
                 </Card>
               )}
