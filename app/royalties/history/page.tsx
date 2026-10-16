@@ -9,7 +9,8 @@ import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { History, Loader2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { History, Loader2, FileDown } from "lucide-react"
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
@@ -75,6 +76,7 @@ export default function RoyaltiesSettlementHistoryPage() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(false)
   const [isLoadingContracts, setIsLoadingContracts] = useState(false)
   const [isLoadingRows, setIsLoadingRows] = useState(false)
+  const [downloading, setDownloading] = useState<string | null>(null)
 
   const projectsAbortControllerRef = useRef<AbortController | null>(null)
   const contractsAbortControllerRef = useRef<AbortController | null>(null)
@@ -197,6 +199,45 @@ export default function RoyaltiesSettlementHistoryPage() {
     [headers, handleError],
   )
 
+  const downloadReport = useCallback(
+    async (settlementId: number, format: "pdf" | "xlsx") => {
+      const key = `${settlementId}-${format}`
+      setDownloading(key)
+      try {
+        const res = await fetchWithRetry(
+          `${API_URL}/sales/royalty-settlements/${settlementId}/report/?format=${format}`,
+          { headers },
+        )
+        if (!res.ok) {
+          let msg = `Download failed (${res.status})`
+          try {
+            const data = await res.json()
+            if (typeof data.error === "string") msg = data.error
+          } catch {
+            /* ignore */
+          }
+          toast.error("Download failed", { description: msg })
+          return
+        }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `royalty-settlement-${settlementId}.${format}`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      } catch (error) {
+        handleError(error, "Failed to download settlement report")
+        toast.error("Error", { description: "Failed to download report." })
+      } finally {
+        setDownloading(null)
+      }
+    },
+    [headers, handleError],
+  )
+
   useEffect(() => {
     void fetchProjects()
     return () => {
@@ -250,7 +291,7 @@ export default function RoyaltiesSettlementHistoryPage() {
                   Settlement History
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  A timeline of locked settlements for one contract.
+                  Select a project and a contract. Each settled record keeps a link back to its report.
                 </p>
               </div>
             </div>
@@ -259,7 +300,7 @@ export default function RoyaltiesSettlementHistoryPage() {
               <CardHeader>
                 <CardTitle>Select Contract</CardTitle>
                 <CardDescription>
-                  Choose a project, then a contract to load settled royalty records.
+                  Both a project and a contract are required before the history loads.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -349,6 +390,37 @@ export default function RoyaltiesSettlementHistoryPage() {
                                 {row.product_title_ar}
                               </p>
                             ) : null}
+                            <p className="mt-3 text-lg font-semibold">
+                              ${Number(row.amount_due ?? 0).toFixed(2)}
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void downloadReport(row.id, "pdf")}
+                                disabled={downloading !== null}
+                              >
+                                {downloading === `${row.id}-pdf` ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileDown className="mr-2 h-4 w-4" />
+                                )}
+                                PDF
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void downloadReport(row.id, "xlsx")}
+                                disabled={downloading !== null}
+                              >
+                                {downloading === `${row.id}-xlsx` ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileDown className="mr-2 h-4 w-4" />
+                                )}
+                                Excel
+                              </Button>
+                            </div>
                             <dl className="mt-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
                               <div>
                                 <dt className="text-xs uppercase tracking-wide">Period</dt>
