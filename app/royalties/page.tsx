@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
-import Link from "next/link"
 import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
 
@@ -9,16 +8,30 @@ import { fetchWithRetry } from "@/lib/apiClient"
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { DollarSign, Calculator, AlertCircle, CheckCircle2, Info, Loader2, FileDown, FileSpreadsheet } from "lucide-react"
+import { DollarSign, Calculator, AlertCircle, CheckCircle2, Loader2, FileDown } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
 import { ProjectCombobox } from "./components/project-combobox"
+import {
+  downloadRoyaltySettlementExcel,
+  downloadRoyaltySettlementPdf,
+  type RoyaltyReportInput,
+} from "@/lib/royaltySettlementReport"
 
 interface Project {
   id: number
@@ -99,6 +112,7 @@ interface RoyaltiesCalculationResult {
   details?: RoyaltiesCalculationDetails
   settlement?: RoyaltySettlementInfo
   saved?: boolean
+  settle_gate?: RoyaltySettlementInfo["settle_gate"]
 }
 
 function formatDateTime(value?: string | null): string {
@@ -119,13 +133,6 @@ function formatDateOnly(value?: string | null): string {
 
 function formatMoneyUsd(value: number): string {
   return `$${Number(value).toFixed(2)}`
-}
-
-function statusBadgeVariant(status: string): "default" | "secondary" | "outline" | "destructive" {
-  if (status === "open") return "default"
-  if (status === "settled") return "secondary"
-  if (status === "cancelled") return "destructive"
-  return "outline"
 }
 
 function DetailField({
@@ -293,23 +300,24 @@ export default function RoyaltiesReport() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null)
   const [result, setResult] = useState<RoyaltiesCalculationResult | null>(null)
-  const [openSettlement, setOpenSettlement] = useState<RoyaltySettlementInfo | null>(null)
-  const [isLoadingOpenSettlement, setIsLoadingOpenSettlement] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [busyAction, setBusyAction] = useState<"eligibility" | "calculation" | null>(null)
   const [isLoadingProjects, setIsLoadingProjects] = useState(false)
   const [isLoadingContracts, setIsLoadingContracts] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [hasCalculated, setHasCalculated] = useState(false)
+  const [hasChecked, setHasChecked] = useState(false)
+  const [showCalculation, setShowCalculation] = useState(false)
 
   const [isSettling, setIsSettling] = useState(false)
+  const [settleConfirmOpen, setSettleConfirmOpen] = useState(false)
   const [lastSettledId, setLastSettledId] = useState<number | null>(null)
+  const [settledReport, setSettledReport] = useState<RoyaltyReportInput | null>(null)
   const [isDownloadingReport, setIsDownloadingReport] = useState<"pdf" | "xlsx" | null>(null)
 
   // AbortController refs for request cancellation
   const projectsAbortControllerRef = useRef<AbortController | null>(null)
   const contractsAbortControllerRef = useRef<AbortController | null>(null)
   const calculationAbortControllerRef = useRef<AbortController | null>(null)
-  const openSettlementAbortControllerRef = useRef<AbortController | null>(null)
 
   // Memoized headers to avoid recreating on every render
   const headers = useMemo(() => ({
@@ -420,10 +428,12 @@ const fetchAllPaginated = useCallback(async <T,>(
     }
   }, [fetchAllPaginated, handleError])
 
-  // Calculate royalties
-  const calculateRoyalties = useCallback(async () => {
-    if (!selectedContractId && !selectedProjectId) {
-      toast.error("Error", { description: "Please select either a contract or a project." })
+  const bothSelected = Boolean(selectedProjectId && selectedContractId)
+
+  // Eligibility check and Calculate are previews. Nothing is written until Settle.
+  const runPreview = useCallback(async (mode: "eligibility" | "calculation") => {
+    if (!selectedContractId || !selectedProjectId) {
+      toast.error("Error", { description: "Select a project and a contract first." })
       return
     }
     
@@ -437,16 +447,20 @@ const fetchAllPaginated = useCallback(async <T,>(
     calculationAbortControllerRef.current = abortController
     
     setIsLoading(true)
+    setBusyAction(mode)
     setError(null)
-    setHasCalculated(true)
+    setHasChecked(true)
+    if (mode === "eligibility") {
+      setShowCalculation(false)
+      setLastSettledId(null)
+      setSettledReport(null)
+    }
     
     try {
-      const requestBody: { contract_id?: number; project_id?: number } = {}
-      if (selectedContractId) {
-        requestBody.contract_id = parseInt(selectedContractId)
-      }
-      if (selectedProjectId) {
-        requestBody.project_id = parseInt(selectedProjectId)
+      const requestBody = {
+        contract_id: parseInt(selectedContractId, 10),
+        project_id: parseInt(selectedProjectId, 10),
+        preview: true,
       }
       
       const res = await fetchWithRetry(`${API_URL}/sales/calculate-royalties/`, {
@@ -477,26 +491,22 @@ const fetchAllPaginated = useCallback(async <T,>(
         return
       }
       
-      // Handle success responses
       setResult(data)
       setError(null)
-      if (data.settlement) {
-        setOpenSettlement(data.settlement)
+      if (mode === "calculation") {
+        setShowCalculation(true)
       }
       
       if (data.eligible) {
-        const savedNote = data.settlement?.id
-          ? ` Saved to open settlement #${data.settlement.id}.`
-          : ""
-        toast.success("Calculation Complete", {
-          description: `Royalty Amount: $${Number(data.RA ?? 0).toFixed(2)}.${savedNote}`,
+        toast.success(mode === "calculation" ? "Calculation complete" : "Eligible", {
+          description:
+            mode === "calculation"
+              ? `Royalty amount: $${Number(data.RA ?? 0).toFixed(2)}. Nothing was saved.`
+              : "This contract can be calculated and settled.",
         })
       } else {
-        const savedNote = data.settlement?.id
-          ? ` Saved to open settlement #${data.settlement.id}.`
-          : ""
-        toast.success("Not Eligible", {
-          description: `${data.reason || "This contract/project is not eligible for royalties."}${savedNote}`,
+        toast.message("Not eligible", {
+          description: data.reason || "This contract is not eligible for royalties.",
         })
       }
       
@@ -512,136 +522,94 @@ const fetchAllPaginated = useCallback(async <T,>(
       toast.error("Error", { description: "Failed to calculate royalties. Please try again." })
     } finally {
       setIsLoading(false)
+      setBusyAction(null)
     }
   }, [selectedContractId, selectedProjectId, headers, fetchWithRetry, handleError])
 
-  const fetchOpenSettlement = useCallback(async (contractId: number) => {
-    if (openSettlementAbortControllerRef.current) {
-      openSettlementAbortControllerRef.current.abort()
-    }
-    const abortController = new AbortController()
-    openSettlementAbortControllerRef.current = abortController
-    setIsLoadingOpenSettlement(true)
-    try {
-      const res = await fetchWithRetry(
-        `${API_URL}/sales/royalty-settlements/open/?contract_id=${contractId}`,
-        { headers, signal: abortController.signal },
-      )
-      if (!res.ok) {
-        setOpenSettlement(null)
-        return
-      }
-      const data = await res.json()
-      setOpenSettlement(data.settlement ?? null)
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") return
-      handleError(error, "Failed to load open settlement")
-      setOpenSettlement(null)
-    } finally {
-      setIsLoadingOpenSettlement(false)
-    }
-  }, [headers, fetchWithRetry, handleError])
-
   const settleRoyalties = useCallback(async () => {
-    const settlement = openSettlement ?? result?.settlement ?? null
-    const settlementId = settlement?.id
-    if (!settlementId) {
-      toast.error("Error", { description: "No open settlement to settle. Calculate first." })
+    if (!selectedContractId || !selectedProjectId) {
+      toast.error("Error", { description: "Select a project and a contract first." })
       return
     }
-    const amountDue = Number(settlement?.amount_due ?? result?.RA ?? 0)
-    const eligible = Boolean(settlement?.eligible ?? result?.eligible)
-    if (!eligible || !(amountDue > 0)) {
-      toast.error("Error", { description: "Settlement must be eligible with amount > 0." })
+    const gate = result?.settle_gate ?? result?.settlement?.settle_gate
+    if (!result?.eligible) {
+      toast.error("Not eligible", { description: result?.reason || "Settle stays locked." })
       return
     }
-    if (settlement?.settle_gate && settlement.settle_gate.can_settle === false) {
+    if (gate && gate.can_settle === false) {
       toast.error("Settle not allowed yet", {
-        description:
-          settlement.settle_gate.reason ||
-          "First settlement requires 12 months from project creation.",
+        description: gate.reason || "First settlement requires 12 months from project creation.",
       })
       return
     }
-    if (
-      !window.confirm(
-        `Settle royalty #${settlementId} for $${amountDue.toFixed(2)}?\n\nThis locks the current cycle and opens a new one.`,
-      )
-    ) {
-      return
-    }
-
     setIsSettling(true)
+    setError(null)
     try {
-      const res = await fetchWithRetry(
-        `${API_URL}/sales/royalty-settlements/${settlementId}/settle/`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({}),
-        },
-      )
+      const res = await fetchWithRetry(`${API_URL}/sales/calculate-royalties/`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          contract_id: parseInt(selectedContractId, 10),
+          project_id: parseInt(selectedProjectId, 10),
+          settle: true,
+        }),
+      })
       const data = await res.json()
       if (!res.ok) {
         const msg =
           typeof data.error === "string"
             ? data.error
             : JSON.stringify(data.error || data) || `Settle failed (${res.status})`
+        setError(msg)
         toast.error("Settle failed", { description: msg })
         return
       }
 
       toast.success("Settled", {
-        description: `Settlement #${data.settled?.id} locked. New open cycle #${data.next_open?.id}.`,
+        description: `Settlement #${data.settled?.id} saved. You can open the report below.`,
       })
       if (data.settled?.id) {
+        const project = projects.find((item) => String(item.id) === selectedProjectId)
+        const contract = contracts.find((item) => String(item.id) === selectedContractId)
         setLastSettledId(data.settled.id)
+        setSettledReport({
+          id: data.settled.id,
+          amount_due: data.settled.amount_due,
+          amount_paid: data.settled.amount_paid,
+          currency: data.settled.currency,
+          period_start: data.settled.period_start,
+          period_end: data.settled.period_end,
+          settled_at: data.settled.settled_at,
+          settled_by_name: data.settled.settled_by_name,
+          contract_id: data.settled.contract_id,
+          contract_title: contract?.title ?? null,
+          project_id: data.settled.project_id,
+          project_title_ar: project?.title_ar ?? null,
+          project_title_en: project?.title_original ?? null,
+          product_id: data.settled.product_id,
+        })
       }
-      setOpenSettlement(data.next_open ?? null)
-      setResult({
-        eligible: false,
-        RA: null,
-        reason: "Settled — new cycle is open. Run Calculate again when ready.",
-        settlement: data.next_open,
-        saved: true,
-      })
-      setHasCalculated(true)
+      setResult(data)
+      setHasChecked(true)
+      setShowCalculation(true)
     } catch (error) {
       handleError(error, "Failed to settle royalties")
-      toast.error("Error", { description: "Failed to settle royalties. Please try again." })
+      const msg = error instanceof Error ? error.message : "Failed to settle royalties. Please try again."
+      setError(msg)
+      toast.error("Error", { description: msg })
     } finally {
       setIsSettling(false)
+      setSettleConfirmOpen(false)
     }
-  }, [openSettlement, result, headers, fetchWithRetry, handleError])
+  }, [selectedContractId, selectedProjectId, projects, contracts, result, headers, fetchWithRetry, handleError])
 
   const downloadSettlementReport = useCallback(
-    async (settlementId: number, format: "pdf" | "xlsx") => {
+    async (format: "pdf" | "xlsx") => {
+      if (!settledReport) return
       setIsDownloadingReport(format)
       try {
-        const res = await fetchWithRetry(
-          `${API_URL}/sales/royalty-settlements/${settlementId}/report/?format=${format}`,
-          { headers },
-        )
-        if (!res.ok) {
-          let msg = `Download failed (${res.status})`
-          try {
-            const data = await res.json()
-            if (typeof data.error === "string") msg = data.error
-          } catch {
-            /* ignore */
-          }
-          toast.error("Download failed", { description: msg })
-          return
-        }
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `royalty-settlement-${settlementId}.${format}`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
+        if (format === "pdf") await downloadRoyaltySettlementPdf(settledReport)
+        else downloadRoyaltySettlementExcel(settledReport)
         toast.success(format === "pdf" ? "PDF downloaded" : "Excel downloaded")
       } catch (error) {
         handleError(error, "Failed to download settlement report")
@@ -650,7 +618,7 @@ const fetchAllPaginated = useCallback(async <T,>(
         setIsDownloadingReport(null)
       }
     },
-    [headers, fetchWithRetry, handleError],
+    [settledReport, handleError],
   )
 
   // Fetch projects on mount
@@ -676,15 +644,6 @@ const fetchAllPaginated = useCallback(async <T,>(
     }
   }, [selectedProjectId, fetchContracts])
 
-  // Load current open settlement when contract is selected
-  useEffect(() => {
-    if (selectedContractId) {
-      void fetchOpenSettlement(parseInt(selectedContractId, 10))
-    } else {
-      setOpenSettlement(null)
-    }
-  }, [selectedContractId, fetchOpenSettlement])
-
   // Cleanup: Cancel all pending requests on component unmount
   useEffect(() => {
     return () => {
@@ -697,9 +656,6 @@ const fetchAllPaginated = useCallback(async <T,>(
       if (calculationAbortControllerRef.current) {
         calculationAbortControllerRef.current.abort()
       }
-      if (openSettlementAbortControllerRef.current) {
-        openSettlementAbortControllerRef.current.abort()
-      }
     }
   }, [])
 
@@ -707,8 +663,10 @@ const fetchAllPaginated = useCallback(async <T,>(
   useEffect(() => {
     setResult(null)
     setError(null)
-    setHasCalculated(false)
+    setHasChecked(false)
+    setShowCalculation(false)
     setLastSettledId(null)
+    setSettledReport(null)
   }, [selectedContractId, selectedProjectId])
 
   const getRoyaltyTypeDisplay = (typeId?: number) => {
@@ -717,11 +675,13 @@ const fetchAllPaginated = useCallback(async <T,>(
     return "Unknown"
   }
 
-  const currentSettlement = openSettlement ?? result?.settlement ?? null
-  const canShowSettle =
-    currentSettlement?.status === "open" &&
-    Boolean(currentSettlement.eligible) &&
-    Number(currentSettlement.amount_due ?? 0) > 0
+  const settleGate = result?.settle_gate ?? result?.settlement?.settle_gate ?? null
+  const settleFrozen = !result?.eligible || settleGate?.can_settle === false
+  const settleFrozenReason = !result?.eligible
+    ? result?.reason || "This contract is not eligible, so settle stays locked."
+    : settleGate?.can_settle === false
+      ? settleGate.reason || "First settlement is allowed only after 12 months from project creation."
+      : null
 
   return (
       <SidebarInset>
@@ -736,25 +696,25 @@ const fetchAllPaginated = useCallback(async <T,>(
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <div className="min-h-[50vh] flex-1 rounded-xl bg-muted/50 p-6 md:min-h-min">
             <div className="flex flex-col gap-6">
-              <div className="flex justify-between items-center gap-3 flex-wrap">
-                <h2 className="text-2xl font-semibold">Royalties Calculation</h2>
-                <Button variant="outline" asChild>
-                  <Link href="/royalties/history">Settlement History</Link>
-                </Button>
+              <div>
+                <h2 className="text-2xl font-semibold">Royalties</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Select a project and a contract. Check eligibility, then calculate a preview. Nothing is saved until you settle.
+                </p>
               </div>
 
               {/* Selection Form */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Select Contract or Project</CardTitle>
+                  <CardTitle>Project and contract</CardTitle>
                   <CardDescription>
-                    Select either a contract or a project to calculate royalties. Contract selection takes priority over project.
+                    Both are required before you can check eligibility, calculate, or settle.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="flex flex-col md:flex-row gap-4">
                     <div className="flex-1">
-                      <label className="text-sm font-medium mb-2 block">Project (Optional)</label>
+                      <label className="text-sm font-medium mb-2 block">Project</label>
                       <ProjectCombobox
                         projects={projects}
                         value={selectedProjectId}
@@ -764,7 +724,7 @@ const fetchAllPaginated = useCallback(async <T,>(
                     </div>
 
                     <div className="flex-1">
-                      <label className="text-sm font-medium mb-2 block">Contract (Optional)</label>
+                      <label className="text-sm font-medium mb-2 block">Contract</label>
                       <Select 
                         value={selectedContractId ?? undefined} 
                         onValueChange={(value) => setSelectedContractId(value || null)}
@@ -791,13 +751,106 @@ const fetchAllPaginated = useCallback(async <T,>(
                 </Select>
                     </div>
 
-                    <div className="flex items-end">
-                <Button
-                        onClick={calculateRoyalties}
-                        disabled={(!selectedContractId && !selectedProjectId) || isLoading}
+                    {bothSelected && (
+                      <div className="flex items-end">
+                        <Button
+                          onClick={() => void runPreview("eligibility")}
+                          disabled={isLoading || isSettling}
+                          className="min-w-[180px]"
+                        >
+                          {busyAction === "eligibility" ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Checking...
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="mr-2 h-4 w-4" />
+                              Check eligibility
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+            </div>
+                    </CardContent>
+                  </Card>
+
+              {!bothSelected && (
+                <Card>
+                  <CardContent className="py-10">
+                    <div className="text-center text-muted-foreground">
+                      <DollarSign className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                      <p>Select a project and a contract. Both are required.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {bothSelected && !hasChecked && !error && (
+                <Card>
+                  <CardContent className="py-10">
+                    <div className="text-center text-muted-foreground">
+                      <Calculator className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                      <p>Check eligibility to continue. The next actions appear only after that.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {error && (
+                <Alert variant="destructive" className="border-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Could not complete this step</AlertTitle>
+                  <AlertDescription className="text-base leading-relaxed">{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {hasChecked && result && !error && !result.eligible && (
+                <Card className="border-2 border-yellow-500">
+                  <CardHeader>
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5 text-yellow-600" />
+                      <CardTitle className="text-yellow-800">Not eligible</CardTitle>
+                    </div>
+                    <CardDescription>This contract cannot be settled. The reason is below.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="rounded-md border border-yellow-300 bg-yellow-50 p-4">
+                      <p className="text-sm font-semibold text-yellow-950">Reason</p>
+                      <p className="mt-2 text-sm leading-relaxed text-yellow-950">
+                        {result.reason || "This contract is not eligible for royalties."}
+                      </p>
+                    </div>
+                    <Button disabled className="min-w-[180px]">
+                      <DollarSign className="mr-2 h-4 w-4" />
+                      Settle
+                    </Button>
+                    <p className="max-w-xl text-sm text-muted-foreground">{settleFrozenReason}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {hasChecked && result && !error && result.eligible && (
+                <Card className="border-2 border-green-600">
+                  <CardHeader>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                      <CardTitle className="text-green-800">Eligible</CardTitle>
+                    </div>
+                    <CardDescription>
+                      Calculate shows the amount and does not save. Settle saves the record and unlocks the report.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => void runPreview("calculation")}
+                        disabled={isLoading || isSettling}
                         className="min-w-[180px]"
                       >
-                        {isLoading ? (
+                        {busyAction === "calculation" ? (
                           <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             Calculating...
@@ -805,291 +858,136 @@ const fetchAllPaginated = useCallback(async <T,>(
                         ) : (
                           <>
                             <Calculator className="mr-2 h-4 w-4" />
-                            Calculate Royalties
+                            Calculate
                           </>
                         )}
-                </Button>
-              </div>
-            </div>
-                    </CardContent>
-                  </Card>
-
-              {/* Current open settlement status (loaded by contract / updated by Calculate) */}
-              {selectedContractId && (
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <CardTitle className="text-lg">Current Accrual Record</CardTitle>
-                        <CardDescription>
-                          Manual Calculate saves/updates this open settlement. Settle locks it and opens a new cycle.
-                        </CardDescription>
-                      </div>
-                      {isLoadingOpenSettlement && (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      )}
+                      </Button>
+                      <Button
+                        onClick={() => setSettleConfirmOpen(true)}
+                        disabled={isSettling || isLoading || settleFrozen}
+                        className="min-w-[180px]"
+                      >
+                        {isSettling ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Settling...
+                          </>
+                        ) : (
+                          <>
+                            <DollarSign className="mr-2 h-4 w-4" />
+                            Settle
+                          </>
+                        )}
+                      </Button>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    {!isLoadingOpenSettlement && !currentSettlement ? (
-                      <p className="text-sm text-muted-foreground">
-                        No open settlement yet. Press <strong>Calculate Royalties</strong> to create and save one.
-                      </p>
-                    ) : currentSettlement ? (
-                      <div className="space-y-4">
-                        {result?.saved && hasCalculated && (
-                          <Alert>
-                            <CheckCircle2 className="h-4 w-4" />
-                            <AlertTitle>Amount saved</AlertTitle>
-                            <AlertDescription>
-                              Calculation was written to open settlement #{currentSettlement.id}.
-                            </AlertDescription>
-                          </Alert>
-                        )}
-                        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Status</p>
-                            <div className="mt-1">
-                              <Badge variant={statusBadgeVariant(currentSettlement.status)}>
-                                {currentSettlement.status}
-                              </Badge>
-                            </div>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Amount due</p>
-                            <p className="text-lg font-semibold">
-                              ${Number(currentSettlement.amount_due ?? 0).toFixed(2)}
-                            </p>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Eligible</p>
-                            <p className="text-lg font-semibold">
-                              {currentSettlement.eligible ? "Yes" : "No"}
-                            </p>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Last calculated</p>
-                            <p className="text-sm font-medium">
-                              {formatDateTime(currentSettlement.calculated_at)}
-                            </p>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Record ID</p>
-                            <p className="text-lg font-semibold">#{currentSettlement.id}</p>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Product</p>
-                            <p className="text-lg font-semibold">#{currentSettlement.product_id}</p>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Period start</p>
-                            <p className="text-sm font-medium">
-                              {formatDateTime(currentSettlement.period_start)}
-                            </p>
-                          </div>
-                          <div className="rounded-md border p-3">
-                            <p className="text-xs text-muted-foreground">Period end</p>
-                            <p className="text-sm font-medium">
-                              {formatDateTime(currentSettlement.period_end)}
-                            </p>
-                          </div>
-                        </div>
-
-                        {canShowSettle && (
-                          <div className="flex flex-col items-start gap-2 border-t pt-4">
-                            <Button
-                              onClick={() => void settleRoyalties()}
-                              disabled={
-                                isSettling ||
-                                isLoading ||
-                                currentSettlement.settle_gate?.can_settle === false
-                              }
-                              className="min-w-[180px]"
-                            >
-                              {isSettling ? (
-                                <>
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Settling...
-                                </>
-                              ) : (
-                                <>
-                                  <DollarSign className="mr-2 h-4 w-4" />
-                                  Settle Royalties
-                                </>
-                              )}
-                            </Button>
-                            {currentSettlement.settle_gate?.can_settle === false && (
-                              <p className="text-xs text-muted-foreground max-w-xl">
-                                {currentSettlement.settle_gate.reason ||
-                                  "First settle allowed after 12 months from project creation."}
-                                {currentSettlement.settle_gate.settle_available_at
-                                  ? ` Available: ${formatDateTime(
-                                      currentSettlement.settle_gate.settle_available_at,
-                                    )}`
-                                  : ""}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                    {settleFrozen && settleFrozenReason ? (
+                      <p className="max-w-xl text-sm text-muted-foreground">{settleFrozenReason}</p>
                     ) : null}
+
+                    {showCalculation && result.RA !== null && (
+                      <div className="space-y-4 border-t pt-4">
+                        <div className="rounded-lg border border-green-200 bg-green-50 py-4 text-center">
+                          <div className="mb-1 text-sm text-muted-foreground">Royalty amount</div>
+                          <div className="text-4xl font-bold text-green-700">
+                            ${result.RA.toFixed(2)}
+                          </div>
+                          {lastSettledId == null ? (
+                            <p className="mt-2 text-xs text-muted-foreground">Preview only. Not saved.</p>
+                          ) : null}
+                        </div>
+                        {result.details && (
+                          <Accordion type="single" collapsible className="w-full">
+                            <AccordionItem value="details">
+                              <AccordionTrigger>Calculation details</AccordionTrigger>
+                              <AccordionContent>
+                                <CalculationDetailsGrid
+                                  details={result.details}
+                                  royaltyTypeLabel={getRoyaltyTypeDisplay(result.details.royalties_type_id)}
+                                />
+                              </AccordionContent>
+                            </AccordionItem>
+                          </Accordion>
+                        )}
+                      </div>
+                    )}
+
+                    {lastSettledId != null && (
+                      <div className="space-y-3 border-t pt-4">
+                        <p className="text-sm font-medium">
+                          Settlement #{lastSettledId} is saved. Open the report:
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => void downloadSettlementReport("pdf")}
+                            disabled={isDownloadingReport !== null}
+                          >
+                            {isDownloadingReport === "pdf" ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <FileDown className="mr-2 h-4 w-4" />
+                            )}
+                            PDF
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => void downloadSettlementReport("xlsx")}
+                            disabled={isDownloadingReport !== null}
+                          >
+                            {isDownloadingReport === "xlsx" ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <FileDown className="mr-2 h-4 w-4" />
+                            )}
+                            Excel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
 
-              {/* Post-settle report downloads (generated on backend) */}
-              {lastSettledId != null && (
-                <Card className="border-blue-200 bg-blue-50/40">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg">Settlement Report</CardTitle>
-                    <CardDescription>
-                      Settlement #{lastSettledId} locked. Download a simple bilingual PDF (logo +
-                      signature) or an accounting Excel summary. Official preamble text can be
-                      swapped in later.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-wrap gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => void downloadSettlementReport(lastSettledId, "pdf")}
-                      disabled={isDownloadingReport !== null}
-                    >
-                      {isDownloadingReport === "pdf" ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <FileDown className="mr-2 h-4 w-4" />
-                      )}
-                      Download PDF
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => void downloadSettlementReport(lastSettledId, "xlsx")}
-                      disabled={isDownloadingReport !== null}
-                    >
-                      {isDownloadingReport === "xlsx" ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      )}
-                      Download Excel
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Results */}
-              {hasCalculated && (
-                <>
-                  {error && (
-                    <Alert variant="destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertTitle>Error</AlertTitle>
-                      <AlertDescription>{error}</AlertDescription>
-                    </Alert>
-                  )}
-
-                  {result && !error && (
-                    <>
-                      {/* Eligible State */}
-                      {result.eligible && result.RA !== null && (
-                        <Card className="border-green-500">
-                          <CardHeader>
-                            <div className="flex items-center gap-2">
-                              <CheckCircle2 className="h-5 w-5 text-green-500" />
-                              <CardTitle className="text-green-700">✅ Eligible for Royalties</CardTitle>
-                            </div>
-                    </CardHeader>
-                    <CardContent>
-                            <div className="space-y-4">
-                              <div className="text-center py-4 bg-green-50 rounded-lg border border-green-200">
-                                <div className="text-sm text-muted-foreground mb-1">Royalty Amount</div>
-                                <div className="text-4xl font-bold text-green-700">
-                                  ${result.RA.toFixed(2)}
-                                </div>
-                                {result.saved && (
-                                  <p className="mt-2 text-xs text-green-700">
-                                    Saved to open settlement #{currentSettlement?.id ?? result.settlement?.id}
-                                  </p>
-                                )}
-                              </div>
-
-                              {result.details && (
-                                <Accordion type="single" collapsible className="w-full">
-                                  <AccordionItem value="details">
-                                    <AccordionTrigger>Calculation Details</AccordionTrigger>
-                                    <AccordionContent>
-                                      <CalculationDetailsGrid
-                                        details={result.details}
-                                        royaltyTypeLabel={getRoyaltyTypeDisplay(
-                                          result.details.royalties_type_id,
-                                        )}
-                                      />
-                                    </AccordionContent>
-                                  </AccordionItem>
-                                </Accordion>
-                              )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                      )}
-
-                      {/* Not Eligible State */}
-                      {!result.eligible && (
-                        <Card className="border-yellow-500">
-                    <CardHeader>
-                            <div className="flex items-center gap-2">
-                              <AlertCircle className="h-5 w-5 text-yellow-500" />
-                              <CardTitle className="text-yellow-700">❌ Not Eligible for Royalties</CardTitle>
-                            </div>
-                    </CardHeader>
-                    <CardContent>
-                            <div className="space-y-4">
-                              {result.reason && (
-                                <Alert>
-                                  <Info className="h-4 w-4" />
-                                  <AlertTitle>Reason</AlertTitle>
-                                  <AlertDescription>{result.reason}</AlertDescription>
-                                </Alert>
-                              )}
-
-                              {result.details && (
-                                <Accordion type="single" collapsible className="w-full">
-                                  <AccordionItem value="details">
-                                    <AccordionTrigger>Calculation Details</AccordionTrigger>
-                                    <AccordionContent>
-                                      <CalculationDetailsGrid
-                                        details={result.details}
-                                        royaltyTypeLabel={getRoyaltyTypeDisplay(
-                                          result.details.royalties_type_id,
-                                        )}
-                                      />
-                                    </AccordionContent>
-                                  </AccordionItem>
-                                </Accordion>
-                              )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-
-              {/* Initial State */}
-              {!hasCalculated && (
-                <Card>
-                  <CardContent className="py-12">
-                    <div className="text-center text-muted-foreground">
-                      <DollarSign className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>Please select a contract or project, then click "Calculate Royalties" to see the results.</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-              )}
                 </div>
           </div>
         </div>
+      <AlertDialog
+        open={settleConfirmOpen}
+        onOpenChange={(open) => {
+          if (isSettling) return
+          setSettleConfirmOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Settle this royalty?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This saves settlement
+              {result?.RA != null ? ` for $${Number(result.RA).toFixed(2)}` : ""} and locks the current cycle.
+              You can open the PDF and Excel report after it is saved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSettling}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault()
+                void settleRoyalties()
+              }}
+              disabled={isSettling}
+            >
+              {isSettling ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Settling...
+                </>
+              ) : (
+                "Confirm settle"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       </SidebarInset>
 )
 }

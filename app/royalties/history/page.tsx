@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import Link from "next/link"
 import { PageBreadcrumb, DASHBOARD_CRUMB } from "@/components/page-breadcrumb"
 import { DocumentTitle } from "@/components/document-title"
 import { fetchWithRetry } from "@/lib/apiClient"
@@ -9,21 +8,17 @@ import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { FileDown, FileSpreadsheet, History, Loader2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { History, Loader2, FileDown } from "lucide-react"
 import { API_URL } from "@/lib/config"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { toast } from "sonner"
 import { ProjectCombobox } from "../components/project-combobox"
+import {
+  downloadRoyaltySettlementExcel,
+  downloadRoyaltySettlementPdf,
+} from "@/lib/royaltySettlementReport"
 
 interface Project {
   id: number
@@ -85,7 +80,7 @@ export default function RoyaltiesSettlementHistoryPage() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(false)
   const [isLoadingContracts, setIsLoadingContracts] = useState(false)
   const [isLoadingRows, setIsLoadingRows] = useState(false)
-  const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<string | null>(null)
 
   const projectsAbortControllerRef = useRef<AbortController | null>(null)
   const contractsAbortControllerRef = useRef<AbortController | null>(null)
@@ -209,43 +204,20 @@ export default function RoyaltiesSettlementHistoryPage() {
   )
 
   const downloadReport = useCallback(
-    async (settlementId: number, format: "pdf" | "xlsx") => {
-      const key = `${settlementId}-${format}`
-      setDownloadingKey(key)
+    async (row: SettlementHistoryRow, format: "pdf" | "xlsx") => {
+      const key = `${row.id}-${format}`
+      setDownloading(key)
       try {
-        const res = await fetchWithRetry(
-          `${API_URL}/sales/royalty-settlements/${settlementId}/report/?format=${format}`,
-          { headers },
-        )
-        if (!res.ok) {
-          let msg = `Download failed (${res.status})`
-          try {
-            const data = await res.json()
-            if (typeof data.error === "string") msg = data.error
-          } catch {
-            /* ignore */
-          }
-          toast.error("Download failed", { description: msg })
-          return
-        }
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `royalty-settlement-${settlementId}.${format}`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
-        toast.success(format === "pdf" ? "PDF downloaded" : "Excel downloaded")
+        if (format === "pdf") await downloadRoyaltySettlementPdf(row)
+        else downloadRoyaltySettlementExcel(row)
       } catch (error) {
-        handleError(error, "Failed to download report")
+        handleError(error, "Failed to download settlement report")
         toast.error("Error", { description: "Failed to download report." })
       } finally {
-        setDownloadingKey(null)
+        setDownloading(null)
       }
     },
-    [headers, handleError],
+    [handleError],
   )
 
   useEffect(() => {
@@ -301,19 +273,16 @@ export default function RoyaltiesSettlementHistoryPage() {
                   Settlement History
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Past settled royalty cycles for a contract. Re-download PDF or Excel anytime.
+                  Select a project and a contract. Each settled record keeps a link back to its report.
                 </p>
               </div>
-              <Button variant="outline" asChild>
-                <Link href="/royalties">Calculate &amp; Settle</Link>
-              </Button>
             </div>
 
             <Card>
               <CardHeader>
                 <CardTitle>Select Contract</CardTitle>
                 <CardDescription>
-                  Choose a project, then a contract to load settled royalty records.
+                  Both a project and a contract are required before the history loads.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -361,13 +330,13 @@ export default function RoyaltiesSettlementHistoryPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Settled Settlements</CardTitle>
+                <CardTitle>Contract timeline</CardTitle>
                 <CardDescription>
                   {selectedContractId
                     ? isLoadingRows
                       ? "Loading..."
-                      : `${rows.length} settled record(s)`
-                    : "Select a contract to view history."}
+                      : `${rows.length} locked settlement${rows.length === 1 ? "" : "s"}`
+                    : "Select a contract to see its settlement timeline."}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -380,93 +349,80 @@ export default function RoyaltiesSettlementHistoryPage() {
                   </div>
                 ) : rows.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No settled royalty settlements for this contract yet.
+                    No locked settlements for this contract yet.
                   </p>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>ID</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Product</TableHead>
-                          <TableHead>Period</TableHead>
-                          <TableHead className="text-right">Amount</TableHead>
-                          <TableHead>Settled</TableHead>
-                          <TableHead className="text-right">Reports</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {rows.map((row) => (
-                          <TableRow key={row.id}>
-                            <TableCell className="font-medium">#{row.id}</TableCell>
-                            <TableCell>
-                              <Badge variant={statusBadgeVariant(row.status)}>{row.status}</Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="max-w-[220px]">
-                                <div className="truncate text-sm">
-                                  {row.product_title_en || row.product_title_ar || `#${row.product_id}`}
-                                </div>
-                                {row.product_title_ar && row.product_title_en ? (
-                                  <div className="truncate text-xs text-muted-foreground" dir="rtl">
-                                    {row.product_title_ar}
-                                  </div>
-                                ) : null}
+                  <ol className="relative ms-3 border-s border-border">
+                    {rows.map((row, index) => {
+                      const title =
+                        row.product_title_en || row.product_title_ar || `Product #${row.product_id}`
+                      return (
+                        <li key={row.id} className="mb-8 ms-6 last:mb-0">
+                          <span className="absolute -start-3 flex h-6 w-6 items-center justify-center rounded-full border bg-background text-xs font-semibold">
+                            {rows.length - index}
+                          </span>
+                          <div className="rounded-lg border bg-background p-4 shadow-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-semibold">Settlement #{row.id}</p>
+                              <Badge variant={statusBadgeVariant(row.status)}>Locked</Badge>
+                            </div>
+                            <p className="mt-2 text-base font-medium">{title}</p>
+                            {row.product_title_ar && row.product_title_en ? (
+                              <p className="text-sm text-muted-foreground" dir="rtl">
+                                {row.product_title_ar}
+                              </p>
+                            ) : null}
+                            <p className="mt-3 text-lg font-semibold">
+                              ${Number(row.amount_due ?? 0).toFixed(2)}
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void downloadReport(row, "pdf")}
+                                disabled={downloading !== null}
+                              >
+                                {downloading === `${row.id}-pdf` ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileDown className="mr-2 h-4 w-4" />
+                                )}
+                                PDF
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void downloadReport(row, "xlsx")}
+                                disabled={downloading !== null}
+                              >
+                                {downloading === `${row.id}-xlsx` ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileDown className="mr-2 h-4 w-4" />
+                                )}
+                                Excel
+                              </Button>
+                            </div>
+                            <dl className="mt-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Period</dt>
+                                <dd>
+                                  {formatDateTime(row.period_start)} → {formatDateTime(row.period_end)}
+                                </dd>
                               </div>
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                              {formatDateTime(row.period_start)}
-                              <br />
-                              → {formatDateTime(row.period_end)}
-                            </TableCell>
-                            <TableCell className="text-right font-medium whitespace-nowrap">
-                              ${Number(row.amount_paid ?? row.amount_due ?? 0).toFixed(2)}{" "}
-                              <span className="text-xs text-muted-foreground">
-                                {row.currency || "USD"}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-xs whitespace-nowrap">
-                              {formatDateTime(row.settled_at)}
-                              {row.settled_by_name ? (
-                                <div className="text-muted-foreground">{row.settled_by_name}</div>
-                              ) : null}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => void downloadReport(row.id, "pdf")}
-                                  disabled={downloadingKey !== null}
-                                >
-                                  {downloadingKey === `${row.id}-pdf` ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <FileDown className="h-4 w-4" />
-                                  )}
-                                  <span className="sr-only">PDF</span>
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => void downloadReport(row.id, "xlsx")}
-                                  disabled={downloadingKey !== null}
-                                >
-                                  {downloadingKey === `${row.id}-xlsx` ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <FileSpreadsheet className="h-4 w-4" />
-                                  )}
-                                  <span className="sr-only">Excel</span>
-                                </Button>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Settled</dt>
+                                <dd>
+                                  {formatDateTime(row.settled_at)}
+                                  {row.settled_by_name ? ` · ${row.settled_by_name}` : ""}
+                                </dd>
                               </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                            </dl>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ol>
                 )}
               </CardContent>
             </Card>

@@ -228,7 +228,8 @@ export default function StockWriteoffsPage() {
       productAbortRef.current = new AbortController()
       const signal = productAbortRef.current.signal
       setIsSearchingProducts(true)
-      const params = new URLSearchParams({ page_size: "30", page: "1" })
+      const params = new URLSearchParams({ page_size: "30", page: "1", in_stock: "1" })
+      if (warehouseId) params.set("warehouse_id", warehouseId)
       if (productQuery.trim()) params.set("search", productQuery.trim())
       void fetchWithRetry(`${API_URL}/inventory/product-summary/?${params}`, {
         headers,
@@ -250,7 +251,7 @@ export default function StockWriteoffsPage() {
         })
     }, 250)
     return () => clearTimeout(timer)
-  }, [productOpen, productQuery, headers])
+  }, [productOpen, productQuery, warehouseId, headers])
 
   const loadStock = useCallback(
     async (productId: number, wid: string) => {
